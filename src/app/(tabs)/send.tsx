@@ -22,6 +22,7 @@ import { usePaymentDraft } from '@/state/paymentDraft';
 import { Avatar, Banner, Button, Caption, Card, Field, IconButton, ListItem, Row, Screen, Sheet } from '@/ui/components';
 import { lockOf, relativeDuration, sentence } from '@/ui/describe';
 import { QrScanner } from '@/ui/Qr';
+import { groupTyped, ungroupTyped } from '@/ui/amountInput';
 import { SaveContactSheet } from '@/ui/SaveContact';
 import { font, radius, spacing, tabular, type, useTheme } from '@/ui/theme';
 import { useConfirm } from '@/ui/confirm';
@@ -184,6 +185,10 @@ export default function SendScreen() {
   // The most that leaves the fee, and a scheduled run's tip, payable.
   const maxAmount = availableNow - ownFee - runFee;
   const recipientSet = isHex(to, 32);
+  const shown = groupTyped(amount || '0');
+  const amountSize = shown.length > 9 ? 38 : 52;
+  const marks = shown.replace(/\d/g, '').length;
+  const amountWidth = Math.min(320, Math.ceil(((shown.length - marks) * 0.58 + marks * 0.3) * amountSize) + 12);
   // The name this device knows the recipient by: a user's account or a contact.
   const toLabel = recipientSet ? (w.names.get(to) ?? null) : null;
 
@@ -303,14 +308,14 @@ export default function SendScreen() {
       <View style={{ alignItems: 'center', gap: 8, paddingVertical: spacing.md }}>
         <Row gap={8} style={{ alignItems: 'baseline', justifyContent: 'center' }}>
           <TextInput
-            value={amount}
-            onChangeText={setAmount}
+            value={groupTyped(amount)}
+            onChangeText={(v) => setAmount(ungroupTyped(v))}
             placeholder="0"
             placeholderTextColor={t.faint}
             keyboardType="decimal-pad"
             accessibilityLabel={`Amount in ${symbol}`}
-            // As wide as its figures, so the symbol sits beside them.
-            style={[{ color: t.text, fontSize: 52, letterSpacing: -2, ...font.extrabold, textAlign: 'center', width: Math.min(280, Math.max(1, (amount || '0').length) * 30 + 10), padding: 0, outlineWidth: 0 }, tabular]}
+            // As wide as its figures, so the symbol sits beside them; a long amount in smaller figures.
+            style={[{ color: t.text, fontSize: amountSize, letterSpacing: -2, ...font.extrabold, textAlign: 'center', width: amountWidth, padding: 0, outlineWidth: 0 }, tabular]}
           />
           <Text style={{ color: t.faint, fontSize: 20, ...font.bold }}>{symbol}</Text>
         </Row>

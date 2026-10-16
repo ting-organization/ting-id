@@ -72,6 +72,10 @@ export interface Settings {
   fee: string;
   /** Light or dark, or as the system is set. */
   theme: Theme;
+  /** The phone checks its owner when Ting ID opens or comes back after a while (ui/AppLock.tsx). On unless turned off. */
+  unlockApp?: boolean;
+  /** The phone checks its owner before a payment goes. On unless turned off. */
+  confirmPayments?: boolean;
 }
 
 export type Theme = 'system' | 'light' | 'dark';

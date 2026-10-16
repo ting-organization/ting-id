@@ -1,11 +1,14 @@
 // A payment once more before it goes: amount, both accounts, when, fees and
-// what is left, then the one button that sends it. Send stays beneath, and
-// Edit goes back to it with everything as entered.
+// what is left, then the one button that sends it, once the phone has
+// checked its owner (Settings → Security). Send stays beneath, and Edit goes
+// back to it with everything as entered.
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { formatAmount, formatClock } from '@/chain/format';
+import { checkOwner } from '@/state/ownerCheck';
 import { usePaymentDraft } from '@/state/paymentDraft';
+import { useStore } from '@/state/store';
 import { useWorkspace } from '@/state/workspace';
 import { CoinMark } from '@/ui/CoinPicker';
 import { Banner, Button, Caption, Detail, DetailCard, DetailValue, Row, Screen } from '@/ui/components';
@@ -19,6 +22,7 @@ export default function ReviewScreen() {
   const router = useRouter();
   const w = useWorkspace();
   const draft = usePaymentDraft((s) => s.draft);
+  const ownerCheck = useStore((s) => s.settings.confirmPayments !== false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -44,6 +48,11 @@ export default function ReviewScreen() {
     setBusy(true);
     setError(null);
     try {
+      if (ownerCheck) {
+        const r = await checkOwner(later ? 'Confirm the scheduled payment' : 'Confirm the payment', `${amount(draft.amount)} to ${toName ?? draft.to.account.slice(0, 10) + '…'}`);
+        if (r === 'cancelled') return setBusy(false);
+        if (r === 'failed') throw new Error('the phone did not confirm it is you');
+      }
       const id = await draft.submit();
       router.replace({ pathname: '/tx/[id]', params: { id, sent: '1' } });
     } catch (e) {

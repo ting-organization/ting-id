@@ -12,6 +12,7 @@ import { fetch as expoFetch } from 'expo/fetch';
 import { StatusBar } from 'expo-status-bar';
 import { Platform, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { AppLock } from '@/ui/AppLock';
 import { Loading } from '@/ui/components';
 import { LoadError } from '@/ui/LoadError';
 import { ConfirmProvider } from '@/ui/confirm';
@@ -72,6 +73,7 @@ export default function RootLayout() {
             <Stack.Screen name="sign" options={{ ...header, presentation: 'modal', title: 'Signing request' }} />
             <Stack.Screen name="phrase/[id]" options={{ ...header, presentation: 'modal', title: 'Recovery phrase' }} />
           </Stack>
+          <AppLock />
         </ConfirmProvider>
       ) : (
         <View style={{ flex: 1, backgroundColor: t.background, justifyContent: 'center' }}>

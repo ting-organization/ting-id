@@ -10,6 +10,7 @@ import { Platform } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { normalizePhrase } from '@/chain/phrase';
+import { checkOwner } from './ownerCheck';
 import type { User } from './types';
 
 const PREFIX = 'ting.phrase.';
@@ -99,7 +100,7 @@ export async function phoneHasLock(): Promise<boolean> {
 
 /** Asks for the phone's own unlock; a phone without one has nothing to ask. */
 async function confirmOwner(prompt: string): Promise<void> {
-  if (!(await phoneHasLock())) return;
-  const r = await LocalAuthentication.authenticateAsync({ promptMessage: prompt });
-  if (!r.success) throw new PhraseUnavailable(r.error === 'user_cancel' || r.error === 'system_cancel' || r.error === 'app_cancel' ? 'cancelled' : 'the phone did not confirm it is you');
+  const r = await checkOwner(prompt);
+  if (r === 'cancelled') throw new PhraseUnavailable('cancelled');
+  if (r === 'failed') throw new PhraseUnavailable('the phone did not confirm it is you');
 }
