@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import { hex, isHex, unhex } from '@/chain/bytes';
 import { policyFor } from '@/chain/contracts';
 import { DELAY_PRESETS, nowSeconds } from '@/chain/format';
 import * as idp from '@/chain/identity';
 import { SCHEME_LABEL, publicKey } from '@/chain/keys';
-import { newPhrase, phraseProblem, phraseSecret, phraseWords, suggestWords } from '@/chain/phrase';
+import { NEW_PHRASE_WORDS, newPhrase, phraseProblem, phraseSecret } from '@/chain/phrase';
 import { fetchIdentity, submitRegistryCall, useChainInfo } from '@/state/chain';
 import { findIdentitiesWithKey } from '@/state/identityScan';
 import { createDeviceKey, keyNameFor, phraseKey } from '@/state/keys';
@@ -14,9 +15,11 @@ import { randomBytes, uuid } from '@/state/keystore';
 import { deletePhrase, rememberFresh, savePhrase } from '@/state/phrases';
 import { userIdentity } from '@/state/registry';
 import { nextColor, useStore } from '@/state/store';
-import { Avatar, Banner, Button, Caption, Card, Field, Info, ListItem, Pill, Row, Screen, Segmented, Sub } from '@/ui/components';
+import { Avatar, Banner, Button, Caption, Card, Field, IconCircle, IconName, Info, ListItem, Pill, Row, Screen, Segmented, Sub } from '@/ui/components';
 import { relativeDuration, sentence } from '@/ui/describe';
-import { spacing } from '@/ui/theme';
+import { PhraseInput } from '@/ui/PhraseInput';
+import { phraseFields } from '@/ui/phraseEntry';
+import { spacing, useTheme } from '@/ui/theme';
 
 /**
  * A new identity, with a new recovery phrase; one restored from its recovery
@@ -25,10 +28,17 @@ import { spacing } from '@/ui/theme';
  */
 type Mode = 'new' | 'restore' | 'existing';
 
+/** The ways to restore: the words, or the ID that another device or the guardians hand over. */
+const RESTORE_BY: { value: 'phrase' | 'id'; label: string; hint: string; icon: IconName }[] = [
+  { value: 'phrase', label: 'Recovery phrase', hint: 'The words you wrote down', icon: 'document-lock-outline' },
+  { value: 'id', label: 'Identity ID', hint: 'Another of your devices or your guardians let this phone in', icon: 'finger-print-outline' },
+];
+
 /** A restore under way: the chain is read for identities that list the phrase's key. */
 type Restore = { stage: 'reading'; height: number; tip: number } | { stage: 'found'; ids: string[] } | { stage: 'none' };
 
 export default function NewUserScreen() {
+  const t = useTheme();
   const router = useRouter();
   const { info, node, error: nodeError } = useChainInfo();
   const users = useStore((s) => s.users);
@@ -44,7 +54,8 @@ export default function NewUserScreen() {
   const [top, setTop] = useState<'new' | 'restore'>('new');
   const [restoreBy, setRestoreBy] = useState<'phrase' | 'id'>('phrase');
   const mode: Mode = top === 'restore' ? (restoreBy === 'id' ? 'existing' : 'restore') : top;
-  const [phraseText, setPhraseText] = useState('');
+  const [words, setWords] = useState(() => phraseFields(NEW_PHRASE_WORDS));
+  const phraseText = words.join(' ');
   const [restore, setRestore] = useState<Restore | null>(null);
   const [extraKeys, setExtraKeys] = useState<string[]>([]);
   const [existingId, setExistingId] = useState('');
@@ -180,7 +191,7 @@ export default function NewUserScreen() {
       const kept = { keyId: key.id, phrase, phraseKeyId: key.id, phraseBackedUp: true };
       addUser({ id, name: userName, color: nextColor(users), kind: 'identity', identityId: identityHex, registry: hex(info.canonical.registry), chainId: hex(info.status.chainId), ...kept });
       setActive(id);
-      setPhraseText('');
+      setWords(phraseFields(NEW_PHRASE_WORDS));
       router.replace('/identity');
     } catch (e) {
       setError((e as Error).message);
@@ -192,43 +203,53 @@ export default function NewUserScreen() {
   return (
     <Screen belowHeader>
       {error ? <Banner tone="danger">{sentence(error)}</Banner> : null}
+      <Segmented options={modes} value={top} onChange={setTop} />
+      {top === 'restore' ? (
+        <Card padded={false} style={{ gap: 0 }}>
+          {RESTORE_BY.map((r, i) => {
+            const on = r.value === restoreBy;
+            return (
+              <View key={r.value} style={{ borderTopWidth: i === 0 ? 0 : 1, borderTopColor: t.border }}>
+                <ListItem
+                  left={<IconCircle name={r.icon} color={on ? t.primary : t.muted} bg={on ? t.card : t.cardAlt} />}
+                  title={r.label}
+                  subtitle={r.hint}
+                  selected={on}
+                  onPress={() => setRestoreBy(r.value)}
+                  right={<Ionicons name={on ? 'radio-button-on' : 'radio-button-off'} size={22} color={on ? t.primary : t.faint} />}
+                />
+              </View>
+            );
+          })}
+        </Card>
+      ) : null}
+
       <Card>
-        <Field label="Name" value={name} onChangeText={setName} placeholder="Your name" autoFocus />
-        <Segmented options={modes} value={top} onChange={setTop} />
-        {top === 'restore' ? (
-          <Segmented
-            options={[
-              { value: 'phrase', label: 'Recovery phrase' },
-              { value: 'id', label: 'Identity ID' },
-            ]}
-            value={restoreBy}
-            onChange={setRestoreBy}
-          />
-        ) : null}
-        <Caption>
-          {mode === 'new'
-            ? 'An instant spending account, a time-locked savings vault, a recovery phrase, and guardians who can restore access.'
-            : mode === 'restore'
-              ? 'Type or paste the 12 to 24 words of your recovery phrase. Ting ID finds the identity that lists their key.'
-              : 'Paste the ID of your identity. A device that has it adds this one, or your guardians recover it here with a new recovery phrase.'}
-        </Caption>
-        {mode === 'existing' ? (
-          <Field label="Identity ID" value={existingId} onChangeText={(v) => setExistingId(v.trim())} placeholder="64 hex digits" autoCapitalize="none" autoCorrect={false} />
-        ) : null}
+        <Field label="Name" value={name} onChangeText={setName} placeholder="Your name" autoFocus={top === 'new'} />
+        {mode === 'new' ? <Caption>An instant spending account, a time-locked savings vault, a recovery phrase, and guardians who can restore access.</Caption> : null}
       </Card>
 
       {mode === 'restore' ? (
-        <RestoreCard
-          text={phraseText}
-          onText={(v) => {
-            setPhraseText(v);
-            setRestore(null);
-          }}
-          restore={restore}
-          busy={busy}
-          onFind={findRestore}
-          onFinish={finishRestore}
-        />
+        <Card>
+          <PhraseInput
+            words={words}
+            onChange={(w) => {
+              setWords(w);
+              setRestore(null);
+            }}
+          />
+          <RestoreResult restore={restore} onFinish={finishRestore} />
+          {restore?.stage !== 'found' ? (
+            <Button title="Find my identity" onPress={findRestore} loading={busy} disabled={words.some((w) => !w) || phraseProblem(phraseText) !== null} />
+          ) : null}
+        </Card>
+      ) : null}
+
+      {mode === 'existing' ? (
+        <Card>
+          <Field label="Identity ID" value={existingId} onChangeText={(v) => setExistingId(v.trim())} placeholder="64 hex digits" autoCapitalize="none" autoCorrect={false} />
+          <Caption>The Identity tab then shows a code to add on a device that has the identity. Or your guardians recover it here, with a new recovery phrase.</Caption>
+        </Card>
       ) : null}
 
       {mode === 'new' ? (
@@ -340,7 +361,6 @@ export default function NewUserScreen() {
         />
       ) : null}
       {mode === 'new' ? <Caption>Next you write down its recovery phrase. The identity can receive funds as soon as it is created.</Caption> : null}
-      {mode === 'existing' ? <Caption>The Identity tab then shows a device code for your other device.</Caption> : null}
       <View style={{ height: spacing.lg }} />
     </Screen>
   );
@@ -357,70 +377,27 @@ function Presets({ value, onChange, min = 0, max }: { value: number; onChange: (
   );
 }
 
-/**
- * The words of a restore, with the list's words suggested for the one being
- * typed. Keyboards are told not to learn or suggest them: they are a secret.
- */
-function RestoreCard({
-  text,
-  onText,
-  restore,
-  busy,
-  onFind,
-  onFinish,
-}: {
-  text: string;
-  onText: (v: string) => void;
-  restore: Restore | null;
-  busy: boolean;
-  onFind: () => void;
-  onFinish: (identityHex: string) => void;
-}) {
-  const words = phraseWords(text);
-  const typing = text.endsWith(' ') ? '' : (words[words.length - 1] ?? '');
-  const suggestions = typing ? suggestWords(typing).filter((w) => w !== typing) : [];
-  const problem = words.length >= 12 ? phraseProblem(text) : null;
-  return (
-    <Card>
-      <Sub>Recovery phrase</Sub>
-      <Field
-        value={text}
-        onChangeText={onText}
-        placeholder="word word word …"
-        autoCapitalize="none"
-        autoCorrect={false}
-        autoComplete="off"
-        importantForAutofill="no"
-        spellCheck={false}
-        keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
-        multiline={Platform.OS !== 'android'}
-        error={problem ? sentence(problem) : null}
-        hint={`${words.length} ${words.length === 1 ? 'word' : 'words'}`}
-      />
-      {suggestions.length > 0 ? (
-        <Row gap={6} style={{ flexWrap: 'wrap' }}>
-          {suggestions.map((w) => (
-            <Button key={w} title={w} kind="secondary" small onPress={() => onText(`${[...words.slice(0, -1), w].join(' ')} `)} />
-          ))}
-        </Row>
-      ) : null}
-      {restore?.stage === 'reading' ? (
-        <Caption>
-          Looking for the identity · block {restore.height} of {restore.tip}
-        </Caption>
-      ) : null}
-      {restore?.stage === 'found' ? (
-        <View style={{ gap: spacing.sm }}>
-          <Caption>{restore.ids.length === 1 ? 'This phrase belongs to an identity:' : 'This phrase belongs to more than one identity. Choose one:'}</Caption>
-          {restore.ids.map((id) => (
-            <ListItem key={id} title={`Identity ${id.slice(0, 8)}…${id.slice(-6)}`} subtitle="its keys list this phrase’s key" chevron onPress={() => onFinish(id)} />
-          ))}
-        </View>
-      ) : null}
-      {restore?.stage === 'none' ? (
-        <Banner tone="warning">No identity on this network lists this phrase’s key. A recovery or a key change may have replaced it.</Banner>
-      ) : null}
-      {restore?.stage !== 'found' ? <Button title="Find my identity" onPress={onFind} loading={busy} disabled={words.length < 12} /> : null}
-    </Card>
-  );
+/** What reading the chain for the phrase's identity found. */
+function RestoreResult({ restore, onFinish }: { restore: Restore | null; onFinish: (identityHex: string) => void }) {
+  if (restore?.stage === 'reading') {
+    return (
+      <Caption>
+        Looking for the identity · block {restore.height} of {restore.tip}
+      </Caption>
+    );
+  }
+  if (restore?.stage === 'found') {
+    return (
+      <View style={{ gap: spacing.sm }}>
+        <Caption>{restore.ids.length === 1 ? 'This phrase belongs to an identity:' : 'This phrase belongs to more than one identity. Choose one:'}</Caption>
+        {restore.ids.map((id) => (
+          <ListItem key={id} title={`Identity ${id.slice(0, 8)}…${id.slice(-6)}`} subtitle="its keys list this phrase’s key" chevron onPress={() => onFinish(id)} />
+        ))}
+      </View>
+    );
+  }
+  if (restore?.stage === 'none') {
+    return <Banner tone="warning">No identity on this network lists this phrase’s key. A recovery or a key change may have replaced it.</Banner>;
+  }
+  return null;
 }

@@ -18,6 +18,7 @@ import { useWorkspace } from '@/state/workspace';
 import { CoinMark } from '@/ui/CoinPicker';
 import { FeeSettings } from '@/ui/FeeSettings';
 import { NodeSettings } from '@/ui/NodeSettings';
+import { PhraseCard } from '@/ui/PhraseCard';
 import { sentence, siteName } from '@/ui/describe';
 import { Banner, Button, Caption, Card, Field, IconCircle, IdChip, ListItem, Pill, Row, Screen, SectionHeader, Segmented, Sheet, Sub } from '@/ui/components';
 import { useConfirm } from '@/ui/confirm';
@@ -311,6 +312,8 @@ export default function SettingsScreen() {
           ) : null}
         </>
       ) : null}
+
+      {w.user ? <PhraseCard user={w.user} identity={w.identity} loading={w.identityLoading} c={w.info?.canonical ?? null} keys={w.keys} /> : null}
 
       <SectionHeader title="This device" />
       <Card>

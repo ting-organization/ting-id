@@ -35,7 +35,6 @@ import {
 } from '@/ui/components';
 import { useConfirm } from '@/ui/confirm';
 import { FeeRow } from '@/ui/FeeRow';
-import { PhraseCard } from '@/ui/PhraseCard';
 import { ProfileButton } from '@/ui/Profile';
 import { font, spacing, type, useTheme } from '@/ui/theme';
 
@@ -128,7 +127,6 @@ export default function IdentityScreen() {
           <Body muted>One account on this device, without guardians. An identity works from several devices, lets guardians restore access, and adds a time-locked savings vault.</Body>
           <Button title="Create an identity" icon="finger-print-outline" onPress={() => router.push('/user/new')} />
         </Card>
-        <PhraseCard user={w.user} identity={null} c={w.info?.canonical ?? null} keys={w.keys} />
       </Screen>
     );
   }
@@ -251,8 +249,6 @@ export default function IdentityScreen() {
               );
             })}
           </Card>
-
-          <PhraseCard user={w.user} identity={id} c={w.info?.canonical ?? null} keys={w.keys} />
 
           <SectionHeader
             title="Guardians"

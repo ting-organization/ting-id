@@ -1,5 +1,5 @@
-// The recovery phrase of the active user, on the Identity tab: whether the
-// words restore it, a reminder to write them down, and making one for an
+// The recovery phrase of the active user, near the end of Settings: whether
+// the words restore it, a reminder to write them down, and making one for an
 // identity that has none, or whose phrase key a recovery or change replaced.
 import React, { useState } from 'react';
 import { useRouter } from 'expo-router';
@@ -8,6 +8,7 @@ import { formatTime } from '@/chain/format';
 import type { IdentityInfo } from '@/state/chain';
 import { newUserPhrase } from '@/state/keys';
 import { linkedKeyId } from '@/state/registry';
+import { useStore } from '@/state/store';
 import type { KeyMeta, User } from '@/state/types';
 import type { Canonical } from '@/chain/contracts';
 import { Banner, Button, Caption, Card, SectionHeader } from './components';
@@ -16,8 +17,23 @@ import { sentence } from './describe';
 const INFO =
   'Twelve words that restore this identity on a new phone. Your guardians can restore it too, and replace the words if someone else got hold of them.';
 
-export function PhraseCard({ user, identity, c, keys }: { user: User; identity: IdentityInfo | null; c: Canonical | null; keys: KeyMeta[] }) {
+export function PhraseCard({
+  user,
+  identity,
+  loading,
+  c,
+  keys,
+}: {
+  user: User;
+  identity: IdentityInfo | null;
+  loading?: boolean;
+  c: Canonical | null;
+  keys: KeyMeta[];
+}) {
   const router = useRouter();
+  // With several users, whose words these are.
+  const several = useStore((s) => s.users.length > 1);
+  const title = several ? `${user.name}’s recovery phrase` : 'Recovery phrase';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const key = keys.find((k) => k.id === user.phraseKeyId) ?? null;
@@ -41,7 +57,7 @@ export function PhraseCard({ user, identity, c, keys }: { user: User; identity: 
   if (user.kind === 'key') {
     return (
       <>
-        <SectionHeader title="Recovery phrase" />
+        <SectionHeader title={title} />
         <Card>
           <Caption>This account has no recovery phrase: its key exists only on this phone.</Caption>
         </Card>
@@ -58,7 +74,7 @@ export function PhraseCard({ user, identity, c, keys }: { user: User; identity: 
 
   return (
     <>
-      <SectionHeader title="Recovery phrase" info={INFO} />
+      <SectionHeader title={title} info={INFO} />
       <Card>
         {error ? <Banner tone="danger">{sentence(error)}</Banner> : null}
         {user.phrase && listed ? (
@@ -81,8 +97,16 @@ export function PhraseCard({ user, identity, c, keys }: { user: User; identity: 
             <Caption>No recovery phrase on this phone. Your guardians can still restore the identity.</Caption>
             <Button title="Add a recovery phrase" kind="secondary" icon="add" onPress={add} loading={busy} />
           </>
+        ) : loading ? (
+          <Caption>Reading the identity…</Caption>
+        ) : user.phrase ? (
+          // Not on the chain yet, or no node answers: the words are on this phone all the same.
+          <>
+            <Caption>The words restore this identity once a block includes it.</Caption>
+            <Button title={user.phraseBackedUp ? 'Show recovery phrase' : 'Write it down'} kind="secondary" icon="document-lock-outline" onPress={show} />
+          </>
         ) : (
-          <Caption>{user.phrase ? 'The words restore this identity once a block includes it.' : 'No recovery phrase on this phone.'}</Caption>
+          <Caption>No recovery phrase on this phone.</Caption>
         )}
       </Card>
     </>
