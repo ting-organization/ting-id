@@ -99,6 +99,8 @@ export interface SubmittedTx {
   coin?: string;
   account?: string;
   amount?: string;
+  /** For a payment: the account it goes to (hex). */
+  to?: string;
 }
 
 /** A submitted transaction's bytes, kept until a block includes it, to send again if the node loses it. */

@@ -18,24 +18,15 @@ import { useContactsHere, useStore } from '@/state/store';
 import { useWorkspace } from '@/state/workspace';
 import { AccountPicker, CoinMark, accountNote } from '@/ui/CoinPicker';
 import { FeeRow } from '@/ui/FeeRow';
-import { Avatar, Banner, Button, Caption, Card, Field, IconButton, ListItem, Row, Screen, Segmented, Sheet } from '@/ui/components';
-import { lockOf, relativeDuration, runsIn, sentence } from '@/ui/describe';
+import { usePaymentDraft } from '@/state/paymentDraft';
+import { Avatar, Banner, Button, Caption, Card, Field, IconButton, ListItem, Row, Screen, Sheet } from '@/ui/components';
+import { lockOf, relativeDuration, sentence } from '@/ui/describe';
 import { QrScanner } from '@/ui/Qr';
+import { SaveContactSheet } from '@/ui/SaveContact';
 import { font, radius, spacing, tabular, type, useTheme } from '@/ui/theme';
 import { useConfirm } from '@/ui/confirm';
-
-const SCHEDULE = [
-  { value: 'now', label: 'Now', seconds: 0 },
-  { value: '1h', label: '+1 hour', seconds: 3600 },
-  { value: '1d', label: '+1 day', seconds: 86_400 },
-  { value: '7d', label: '+7 days', seconds: 604_800 },
-] as const;
-
-type When = (typeof SCHEDULE)[number]['value'];
-
-function whenOf(value: string | undefined): When | null {
-  return SCHEDULE.find((s) => s.value === value)?.value ?? null;
-}
+import { When, WhenPicker } from '@/ui/WhenPicker';
+import { defaultLater, laterProblem } from '@/ui/when';
 
 export default function SendScreen() {
   const t = useTheme();
@@ -49,23 +40,24 @@ export default function SendScreen() {
   const activeCoin = useStore((s) => s.activeCoin);
   const setActiveCoin = useStore((s) => s.setActiveCoin);
   const addSubmitted = useStore((s) => s.addSubmitted);
+  const setDraft = usePaymentDraft((s) => s.setDraft);
   // The coin and account opened from, else the ones used last, else the first followed coin's Spending.
   const selectedCoin = (params.coin && w.coinById.get(params.coin)) || (activeCoin && w.coinById.get(activeCoin)) || w.coins[0] || null;
   const { views: allViews } = useAccountViews(w.coins, w.accounts);
   const views = (selectedCoin && allViews.get(selectedCoin.hex)) || [];
   const [fromSheet, setFromSheet] = useState(false);
   const [to, setTo] = useState('');
-  const [toLabel, setToLabel] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
-  const [schedule, setSchedule] = useState<When>(whenOf(params.when) ?? 'now');
-  // Opened again with a time, as the wallet's Schedule does: the new time is taken once.
+  const [when, setWhen] = useState<When>(params.when === 'later' ? 'later' : 'now');
+  const [at, setAt] = useState(() => defaultLater(nowSeconds()));
+  // Opened again for later, as the wallet's Schedule does: taken once.
   const [whenParam, setWhenParam] = useState(params.when);
   if (params.when !== whenParam) {
     setWhenParam(params.when);
-    const when = whenOf(params.when);
-    if (when) setSchedule(when);
+    if (params.when === 'later') setWhen('later');
   }
   const [picker, setPicker] = useState(false);
+  const [naming, setNaming] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [codeNotice, setCodeNotice] = useState<string | null>(null);
   /** The coin a payment code asked for: nothing is sent in another one. */
@@ -74,8 +66,6 @@ export default function SendScreen() {
     setCodeNotice(null);
     setCodeCoin(null);
   };
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const from = views.find((v) => v.account.slot === (params.slot !== undefined ? Number(params.slot) : activeSlot)) ?? views[0];
   // The fee goes in the fee coin from Settings. A time-locked account pays none
@@ -119,7 +109,6 @@ export default function SendScreen() {
     const request = parseRequest(text);
     if (!request) return 'This code does not hold a Ting account.';
     setTo(request.account);
-    setToLabel(recipients.find((r) => r.account === request.account)?.label ?? null);
     setCodeNotice(null);
     setCodeCoin(request.coin ?? null);
     if (request.coin && request.coin !== selectedCoin?.hex) {
@@ -173,8 +162,9 @@ export default function SendScreen() {
   })();
   // The fee the action carries itself, when its own account pays in this coin.
   const ownFee = fee.own ? fee.fee : 0n;
-  const delaySeconds = SCHEDULE.find((s) => s.value === schedule)!.seconds;
-  const willSchedule = delaySeconds > 0 || delayed;
+  const later = when === 'later';
+  const lock = from?.account.delay ?? 0;
+  const willSchedule = later || delayed;
   const availableNow = from ? coin.available(from.record) : 0n;
   // A scheduled action pays the fee's amount again when it runs, reserved until then.
   const runFee = willSchedule && selectedCoin ? runTip(fee.amount, selectedCoin) : 0n;
@@ -187,56 +177,78 @@ export default function SendScreen() {
   if (parsed !== null && parsed === 0n && amount) problems.push('amount must be above zero');
   if (fee.problem) problems.push(fee.problem);
   if (from && needed > availableNow) problems.push(`only ${formatAmount(availableNow, decimals)} ${symbol} available`);
+  const timeProblem = later ? laterProblem(at, nowSeconds()) : null;
+  if (timeProblem) problems.push(timeProblem);
   const coinMismatch = !!codeCoin && codeCoin !== selectedCoin?.hex;
   const ready = problems.length === 0 && to && parsed && parsed > 0n && !coinMismatch;
   // The most that leaves the fee, and a scheduled run's tip, payable.
   const maxAmount = availableNow - ownFee - runFee;
   const recipientSet = isHex(to, 32);
+  // The name this device knows the recipient by: a user's account or a contact.
+  const toLabel = recipientSet ? (w.names.get(to) ?? null) : null;
 
-  const send = async () => {
+  /** Hands the payment to the review page, with the submit that sends it from there. */
+  const review = () => {
     if (!ready || !w.user || !w.info || !selectedCoin || !from) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const signer = await resolveSigner(w.user, from.account.slot, w.info.canonical, w.keys, w.identity);
-      const action: coin.Action = {
-        effect: { kind: 'transfer', to: unhex(to), amount: parsed! },
-        timing: {
-          fee: 0n,
-          tip: runFee,
-          notBefore: delaySeconds ? BigInt(nowSeconds() + delaySeconds) : 0n,
-          validUntil: 0n,
-          within: null,
-        },
-      };
-      const payer = await fee.resolve();
-      const r = await submitCoinAction(w.node, w.info.status.chainId, selectedCoin.id, signer, action, undefined, payer);
-      let queued = false;
-      if (willSchedule) {
-        // The node runs it when due: hand it the run now, timed for the later of
-        // the chosen time and the account's own delay.
-        const due = nowSeconds() + Math.max(delaySeconds, from.account.delay);
-        queued = await queueRun(w.node, selectedCoin.id, r.account, r.nonce, due)
-          .then(() => true)
-          .catch(() => false);
-      }
-      const summary = `${willSchedule ? 'Schedule' : 'Send'} ${formatAmount(parsed!, decimals)} ${symbol} to ${toLabel ?? to.slice(0, 10)}${queued ? ' (run queued)' : ''}`;
-      addSubmitted({
-        id: r.txId,
-        at: nowSeconds(),
-        summary: withFee(summary, fee),
-        userId: w.user.id,
-        coin: selectedCoin.hex,
-        account: hex(from.account.account),
-        amount: needed.toString(),
-      });
-      setAmount('');
-      router.push({ pathname: '/tx/[id]', params: { id: r.txId } });
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    const user = w.user;
+    const info = w.info;
+    const c = selectedCoin;
+    const account = from.account;
+    const chosenAt = later ? at : null;
+    // It runs at the later of the chosen time and the end of the account's lock.
+    const runsAt = (now: number) => Math.max(chosenAt ?? 0, now + lock);
+    let sent = false;
+    setDraft({
+      coin: c,
+      amount: parsed!,
+      from: { label: `${user.name} · ${account.label}`, account: hex(account.account) },
+      to: { account: to },
+      runsAt: willSchedule ? runsAt(nowSeconds()) : null,
+      chosenAt,
+      lock,
+      fee: fee.summary,
+      runFee,
+      total: needed,
+      available: availableNow,
+      submit: async () => {
+        if (sent) throw new Error('this payment was sent already');
+        if (chosenAt !== null && chosenAt <= nowSeconds() + 60) throw new Error('the chosen time has passed: go back and choose a later one');
+        const signer = await resolveSigner(user, account.slot, info.canonical, w.keys, w.identity);
+        const action: coin.Action = {
+          effect: { kind: 'transfer', to: unhex(to), amount: parsed! },
+          timing: { fee: 0n, tip: runFee, notBefore: chosenAt !== null ? BigInt(chosenAt) : 0n, validUntil: 0n, within: null },
+        };
+        const payer = await fee.resolve();
+        const r = await submitCoinAction(w.node, info.status.chainId, c.id, signer, action, undefined, payer);
+        sent = true;
+        let queued = false;
+        if (willSchedule) {
+          // The node runs it when due: hand it the run now.
+          queued = await queueRun(w.node, c.id, r.account, r.nonce, runsAt(nowSeconds()))
+            .then(() => true)
+            .catch(() => false);
+        }
+        const summary = `${willSchedule ? 'Schedule' : 'Send'} ${formatAmount(parsed!, decimals)} ${symbol} to ${toLabel ?? shortId(to)}${queued ? ' (run queued)' : ''}`;
+        addSubmitted({
+          id: r.txId,
+          at: nowSeconds(),
+          summary: withFee(summary, fee),
+          userId: user.id,
+          coin: c.hex,
+          account: hex(account.account),
+          amount: needed.toString(),
+          to,
+        });
+        // Sent: the form is empty for the next payment.
+        setAmount('');
+        setTo('');
+        setWhen('now');
+        setAt(defaultLater(nowSeconds()));
+        forgetCode();
+        return r.txId;
+      },
+    });
+    router.push('/review');
   };
 
   return (
@@ -281,8 +293,7 @@ export default function SendScreen() {
             </Row>
             {from?.account.delay ? (
               <Caption>
-                Sending from {from.account.label} is scheduled {relativeDuration(from.account.delay)} ahead and can be cancelled until then; its fee comes from an
-                instant account.
+                Withdrawals from {from.account.label} wait {relativeDuration(from.account.delay)}; the fee comes from an instant account.
               </Caption>
             ) : null}
           </Card>
@@ -328,9 +339,10 @@ export default function SendScreen() {
             <View style={{ flex: 1, gap: 1 }}>
               <Caption>To</Caption>
               <Text style={{ color: t.text, fontSize: 15, ...font.bold }} numberOfLines={1}>
-                {toLabel ?? 'Account'}
+                {toLabel ?? 'New recipient'}
               </Text>
               <Text style={{ color: t.faint, fontSize: 12, fontFamily: type.mono.fontFamily }}>{to}</Text>
+              {!toLabel ? <Button title="Save as contact" kind="ghost" small icon="person-add-outline" onPress={() => setNaming(true)} /> : null}
             </View>
             <Button
               title="Change"
@@ -338,7 +350,6 @@ export default function SendScreen() {
               small
               onPress={() => {
                 setTo('');
-                setToLabel(null);
                 forgetCode();
               }}
             />
@@ -352,8 +363,7 @@ export default function SendScreen() {
                   value={to}
                   onChangeText={(v) => {
                     if (isPaymentCode(v) && applyCode(v) === null) return;
-                    setTo(v.trim());
-                    setToLabel(null);
+                    setTo(v.trim().toLowerCase());
                     forgetCode();
                   }}
                   placeholder="Account or payment code"
@@ -369,7 +379,7 @@ export default function SendScreen() {
         )}
       </Card>
 
-      <Segmented options={SCHEDULE.map((s) => ({ value: s.value, label: s.label }))} value={schedule} onChange={setSchedule} />
+      <WhenPicker when={when} at={at} lock={lock} onWhen={setWhen} onAt={setAt} />
 
       {w.user ? (
         <View style={{ paddingHorizontal: 4 }}>
@@ -383,22 +393,7 @@ export default function SendScreen() {
             <Banner tone="warning">The payment code asks for {w.coinById.get(codeCoin!)?.config.symbol ?? shortId(codeCoin!)}; choose that coin to send.</Banner>
           ) : null}
       {problems.length > 0 && (amount || to) ? <Banner tone="warning">{problems.map(sentence).join(' ')}</Banner> : null}
-      {error ? <Banner tone="danger">{sentence(error)}</Banner> : null}
-      {ready ? (
-        <Caption style={{ textAlign: 'center', paddingHorizontal: spacing.md }}>
-          {willSchedule
-            ? `${runsIn(delaySeconds, from?.account.delay ?? 0)}; ${formatAmount((parsed ?? 0n) + runFee, decimals)} ${symbol} is reserved until then.`
-            : 'Goes through as soon as a block includes it.'}
-          {fee.summary ? ` ${fee.summary}.` : ''}
-        </Caption>
-      ) : null}
-      <Button
-        title={`${willSchedule ? 'Schedule' : 'Send'}${parsed && parsed > 0n ? ` ${formatAmount(parsed, decimals)} ${symbol}` : ''}`}
-        large
-        onPress={send}
-        disabled={!ready}
-        loading={busy}
-      />
+      <Button title="Review" large onPress={review} disabled={!ready} />
 
       <QrScanner visible={scanning} onClose={() => setScanning(false)} onScan={scanned} />
       <Sheet visible={picker} onClose={() => setPicker(false)} title="Recipient">
@@ -411,13 +406,13 @@ export default function SendScreen() {
             subtitle={r.sub}
             onPress={() => {
               setTo(r.account);
-              setToLabel(r.label);
               forgetCode();
               setPicker(false);
             }}
           />
         ))}
       </Sheet>
+      {recipientSet ? <SaveContactSheet account={to} visible={naming} onClose={() => setNaming(false)} /> : null}
     </Screen>
   );
 }

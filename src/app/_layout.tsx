@@ -65,6 +65,7 @@ export default function RootLayout() {
             <Stack.Screen name="mint/[id]" options={{ ...header, presentation: 'modal', title: 'Mint' }} />
             <Stack.Screen name="minter/[id]" options={{ ...header, presentation: 'modal', title: 'Move minting' }} />
             <Stack.Screen name="user/new" options={{ ...header, presentation: 'modal', title: 'New user' }} />
+            <Stack.Screen name="review" options={{ ...header, presentation: 'modal', title: 'Review payment' }} />
             <Stack.Screen name="tx/[id]" options={{ ...header, presentation: 'modal', title: 'Transaction' }} />
             <Stack.Screen name="identity/propose" options={{ ...header, presentation: 'modal', title: 'Propose a change' }} />
             <Stack.Screen name="identity/recovery" options={{ ...header, presentation: 'modal', title: 'Recovery' }} />

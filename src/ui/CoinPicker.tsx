@@ -7,6 +7,7 @@ import * as coin from '@/chain/coin';
 import { formatAmount } from '@/chain/format';
 import type { AccountView, CoinGroup, CoinInfo } from '@/state/coins';
 import { coinColor } from '@/state/store';
+import { CoinIcon, coinIconOf } from './coinIcons';
 import { Caption, Card, Sheet } from './components';
 import { lockOf } from './describe';
 import { font, spacing, tabular, useTheme } from './theme';
@@ -18,9 +19,11 @@ function lighten(hex: string, amount: number): string {
   return `#${((1 << 24) | (f(n >> 16) << 16) | (f((n >> 8) & 255) << 8) | f(n & 255)).toString(16).slice(1)}`;
 }
 
-/** A coin's mark: its symbol in a ring of its colour. */
+/** A coin's mark: a listed coin's own, else its symbol in a ring of its colour. */
 export function CoinMark({ coin: c, size = 36 }: { coin: CoinInfo; size?: number }) {
   const t = useTheme();
+  const icon = coinIconOf(c.hex);
+  if (icon) return <CoinIcon name={icon} size={size} />;
   const color = t.dark ? lighten(coinColor(c.hex), 0.35) : coinColor(c.hex);
   const symbol = (c.config.symbol || c.config.name).slice(0, 4).toUpperCase();
   return (

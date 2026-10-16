@@ -18,6 +18,11 @@ export function nameOf(names: Names, account: Uint8Array): string {
   return names.get(hex(account)) ?? shortId(account, 8, 6);
 }
 
+/** An account's short form after a name this device knows for it, as in "to 499d9b…e716"; nothing when no name is known, as the name is the short form then. */
+function idAfterName(names: Names, account: Uint8Array): string {
+  return names.has(hex(account)) ? ` · ${shortId(account, 6, 4)}` : '';
+}
+
 export function amount(c: CoinInfo | null, value: bigint): string {
   if (!c) return value.toString();
   return `${formatAmount(value, c.config.decimals)} ${c.config.symbol}`;
@@ -163,18 +168,27 @@ function describeEvent(item: ActivityItem, coins: Map<string, CoinInfo>, names: 
             amount: `+${value}`,
             amountTone: 'success',
             party: { name: nameOf(names, e.from) },
-            short: 'Received',
+            short: `Received${idAfterName(names, e.from)}`,
           };
         if (isMine(e.from) && !isMine(e.to))
-          return { title: 'Sent', detail: `to ${nameOf(names, e.to)}`, tone: 'primary', icon: 'arrow-up', amount: `−${value}`, party: { name: nameOf(names, e.to) }, short: 'Sent' };
+          return {
+            title: 'Sent',
+            detail: `to ${nameOf(names, e.to)}${idAfterName(names, e.to)}`,
+            tone: 'primary',
+            icon: 'arrow-up',
+            amount: `−${value}`,
+            party: { name: nameOf(names, e.to) },
+            short: `Sent${idAfterName(names, e.to)}`,
+          };
         return { title: 'Moved', detail: `${nameOf(names, e.from)} → ${nameOf(names, e.to)}`, tone: 'neutral', icon: 'swap-horizontal', amount: value };
       }
       case 'scheduled': {
         const tip = e.tip > 0n ? ` · run fee ${amount(c, e.tip)}` : '';
         const to = e.effect.kind === 'transfer' || e.effect.kind === 'mint' ? { name: nameOf(names, e.effect.to) } : undefined;
+        const toId = e.effect.kind === 'transfer' || e.effect.kind === 'mint' ? idAfterName(names, e.effect.to) : '';
         const planned = e.effect.kind === 'transfer' ? amount(c, e.effect.amount) : undefined;
         if (item.settled === 'executed')
-          return { title: 'Scheduled', detail: `${describeEffect(e.effect, c, names)} · ran${tip}`, tone: 'neutral', icon: 'checkmark-circle-outline', party: to, short: 'Scheduled · ran', planned };
+          return { title: 'Scheduled', detail: `${describeEffect(e.effect, c, names)} · ran${tip}`, tone: 'neutral', icon: 'checkmark-circle-outline', party: to, short: `Scheduled${toId} · ran`, planned };
         if (item.settled === 'cancelled')
           return {
             title: 'Scheduled',
@@ -182,7 +196,7 @@ function describeEvent(item: ActivityItem, coins: Map<string, CoinInfo>, names: 
             tone: 'neutral',
             icon: 'close-circle-outline',
             party: to,
-            short: 'Scheduled · cancelled',
+            short: `Scheduled${toId} · cancelled`,
             planned,
           };
         return {
@@ -191,7 +205,7 @@ function describeEvent(item: ActivityItem, coins: Map<string, CoinInfo>, names: 
           tone: 'warning',
           icon: 'time-outline',
           party: to,
-          short: `Scheduled · runs ${relativeTime(e.executeAt)}`,
+          short: `Scheduled${toId} · runs ${relativeTime(e.executeAt)}`,
           planned,
         };
       }
