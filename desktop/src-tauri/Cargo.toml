@@ -1,0 +1,37 @@
+[package]
+name = "ting-id-desktop"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Ting ID: wallet and identity app for the desktop"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ting-organization/ting-id"
+publish = false
+
+[lib]
+name = "ting_id_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# No cookie jar: nodes and signing sites get no cookies, so none can follow the app around.
+tauri-plugin-http = { version = "2", default-features = false, features = ["rustls-tls", "http2", "charset", "system-proxy"] }
+tauri-plugin-clipboard-manager = "2"
+keyring = "4"
+keyring-core = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri-plugin-deep-link = "2"
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

@@ -1,0 +1,229 @@
+# Builds Ting ID for Windows, Linux, macOS and Android.
+#
+# A version tag (v1.2.3) gives the apps that version, builds them, and puts
+# the files in a draft release: the Android app signed with the release key,
+# every file with its SHA-256 in SHA256SUMS and with build provenance, for a
+# person to look over and publish. Run by hand, the workflow only builds, to
+# try it; the files stay with the run and nothing is signed or released.
+#
+# The signing key is only reachable from the `release` environment, which
+# waits for approval. The repository variable TING_NODES (comma-separated
+# addresses) names the nodes a new installation starts with.
+
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  EXPO_PUBLIC_TING_NODES: ${{ vars.TING_NODES }}
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+# Bash everywhere, Windows too: a failing command stops the step.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      # A release starts with the nodes it names: without any, it would start
+      # with a node on the user's own computer; over plain http, anyone on the
+      # way could change the answers.
+      - name: Node list
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [ -z "$EXPO_PUBLIC_TING_NODES" ]; then
+            echo "::error::The repository variable TING_NODES is empty"
+            exit 1
+          fi
+          IFS=',' read -ra nodes <<< "$EXPO_PUBLIC_TING_NODES"
+          for n in "${nodes[@]}"; do
+            n="$(echo "$n" | xargs)"
+            case "$n" in
+              https://?*) ;;
+              *) echo "::error::TING_NODES names $n, which is not an https address"; exit 1 ;;
+            esac
+          done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Mobile app
+        working-directory: mobile
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npx vitest run
+      - name: Desktop app
+        working-directory: desktop
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npx vitest run
+
+  desktop:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            args: --bundles nsis,msi
+          # The oldest supported Ubuntu, so the AppImage runs on older systems too.
+          - platform: linux
+            os: ubuntu-22.04
+            args: --bundles appimage,deb
+          # One app for Apple silicon and Intel, signed ad hoc: without an Apple
+          # Developer ID, macOS lets people open it from Privacy & Security.
+          # Built on Intel: the Apple silicon runners often had no capacity
+          # (October 2026). GitHub keeps macos-15-intel until about August 2027.
+          - platform: mac
+            os: macos-15-intel
+            targets: aarch64-apple-darwin x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles dmg --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      # The toolchain desktop/src-tauri/rust-toolchain.toml names.
+      - name: Rust
+        working-directory: desktop/src-tauri
+        run: |
+          rustup toolchain install
+          if [ -n "${{ matrix.targets }}" ]; then rustup target add ${{ matrix.targets }}; fi
+      - name: Linux libraries
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev patchelf file
+      - name: Version
+        run: node .github/scripts/set-version.mjs
+      - name: Build
+        working-directory: desktop
+        run: |
+          npm ci
+          npx tauri build ${{ matrix.args }} -- --locked
+      - name: Collect
+        run: node .github/scripts/collect.mjs ${{ matrix.platform }}
+      # Kept only until the release is approved: the files go into the release itself.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ting-id-${{ matrix.platform }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 2
+
+  android:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Version
+        run: node .github/scripts/set-version.mjs
+      - name: Native project
+        working-directory: mobile
+        run: |
+          npm ci
+          npx expo prebuild --platform android --no-install
+      - name: Build
+        working-directory: mobile/android
+        run: |
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          # Every Android instruction set: ARM for phones, x86 for emulators and some tablets.
+          ./gradlew assembleRelease --no-daemon
+      - name: Collect
+        run: node .github/scripts/collect.mjs android
+      - name: Try the signing with a throwaway key
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          export KEYSTORE_PASSWORD="throwaway-$RANDOM$RANDOM"
+          keytool -genkeypair -keystore "$RUNNER_TEMP/throwaway.jks" -storetype PKCS12 -alias ting-id -keyalg RSA -keysize 2048 -validity 1 -dname "CN=Throwaway" -storepass:env KEYSTORE_PASSWORD
+          export KEYSTORE_BASE64="$(base64 -w0 "$RUNNER_TEMP/throwaway.jks")"
+          bash .github/scripts/sign-apk.sh out/Ting-ID-debug-key.apk "$RUNNER_TEMP/try.apk" "$RUNNER_TEMP/try-certificate"
+          echo "Fingerprint: $(cat "$RUNNER_TEMP/try-certificate")"
+      # Signed with Expo's public debug key until the release job signs it, so
+      # kept only until the release is approved.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ting-id-android
+          path: out/*
+          if-no-files-found: error
+          retention-days: 2
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [desktop, android]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ting-id-*
+          path: dist
+          merge-multiple: true
+      - name: Sign the Android app
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          bash .github/scripts/sign-apk.sh dist/Ting-ID-debug-key.apk dist/Ting-ID.apk "$RUNNER_TEMP/certificate"
+          rm dist/Ting-ID-debug-key.apk
+      - name: Notices
+        run: cp THIRD_PARTY_NOTICES.md dist/
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          | | Download |
+          |---|---|
+          | Windows | \`Ting-ID-x64-setup.exe\` (installer) or \`Ting-ID-x64.msi\` |
+          | macOS | \`Ting-ID-universal.dmg\` (Apple silicon and Intel) |
+          | Linux | \`Ting-ID-x86_64.AppImage\` or \`Ting-ID-amd64.deb\` |
+          | Android | \`Ting-ID.apk\` |
+
+          Each file's SHA-256 is in \`SHA256SUMS\`. To check that a file comes from this repository's release workflow: \`gh attestation verify <file> --repo ${GITHUB_REPOSITORY}\`.
+
+          The Android app's signing certificate has the SHA-256 fingerprint \`$(cat "$RUNNER_TEMP/certificate")\`; every release is signed with the same one. These are early builds, and the desktop apps are not code-signed yet: see the first-start notes in the [README](https://github.com/${GITHUB_REPOSITORY}#downloads).
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "Ting ID $version" --notes-file "$RUNNER_TEMP/notes.md"

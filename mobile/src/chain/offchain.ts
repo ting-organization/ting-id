@@ -1,0 +1,538 @@
+// Off-chain signing (SIGNING.md): what a site asks a Ting ID user to sign, the
+// document the app shows for it, the message the app signs, and how the site
+// checks the answer against the chain. Nothing here is ever valid on chain:
+// the message starts with this convention's own tag, and the app builds it
+// itself, so a site never chooses the bytes that are signed.
+import { policyAccount, signingDigest } from './accounts';
+import { DecodeError, Reader, Writer, equal, fromUtf8, hex, isHex, unhex, utf8 } from './bytes';
+import { canonical, schemeOf } from './contracts';
+import { sha256, taggedHash } from './hash';
+import * as idp from './identity';
+import { Scheme, verifyDigest } from './keys';
+
+export const TAG = 'app/offchain-v1';
+const DOCUMENT_TAG = 'app/offchain-v1/document';
+const MATCH_TAG = 'app/offchain-v1/match';
+const VERSION = 1;
+/** The largest document an app shows: everything it signs must be readable. */
+export const MAX_DOCUMENT = 65_536;
+/** How far a request's issue time may be ahead of the app's clock, and how long a request may live. */
+const CLOCK_SKEW = 300;
+const MAX_REQUEST_LIFETIME = 86_400;
+const SCOPE = /^[a-z0-9][a-z0-9:._/-]{0,63}$/;
+const MEDIA_TYPE = /^[a-z0-9!#$&^_.+-]{1,63}\/[a-z0-9!#$&^_.+-]{1,63}$/;
+
+export class OffchainError extends Error {}
+
+// ---- The document ------------------------------------------------------------
+
+/** A key a site asks the user to vouch for, such as a browser's session key: an uncompressed P-256 point. */
+export interface DelegateKey {
+  scheme: 'p256';
+  publicKey: Uint8Array;
+}
+
+/** What is asked, with the facts the app states in its own words. */
+export type Request =
+  | { kind: 'signIn'; sessionUntil: bigint; key: DelegateKey | null }
+  | { kind: 'grant'; until: bigint; scopes: string[]; key: DelegateKey | null }
+  | { kind: 'statement'; attachment: Attachment | null };
+
+/** A file a statement covers: its SHA-256, media type and name. The site serves it; the app checks it against the hash. */
+export interface Attachment {
+  hash: Uint8Array;
+  mediaType: string;
+  name: string;
+}
+
+/** A detail the site adds, shown as it wrote it: a label and a value, one line each. */
+export interface Field {
+  label: string;
+  value: string;
+}
+
+/** What the user reads before signing. */
+export interface SignDocument {
+  request: Request;
+  title: string;
+  /** Paragraphs, **bold**, *italic* and lists; anything else shows as written. */
+  body: string;
+  fields: Field[];
+}
+
+const KIND = { signIn: 1, grant: 2, statement: 3 } as const;
+const P256 = 1;
+
+/** Characters that could hide or reorder what is shown: controls, direction overrides, invisible marks. */
+function hidden(c: number, multiline: boolean): boolean {
+  if (c === 0x0a) return !multiline;
+  return (
+    c < 0x20 ||
+    (c >= 0x7f && c <= 0x9f) ||
+    c === 0xad ||
+    c === 0x34f ||
+    c === 0x61c ||
+    c === 0x115f ||
+    c === 0x1160 ||
+    c === 0x180e ||
+    (c >= 0x200b && c <= 0x200f) ||
+    (c >= 0x2028 && c <= 0x202e) ||
+    (c >= 0x2060 && c <= 0x2069) ||
+    c === 0x3164 ||
+    (c >= 0xd800 && c <= 0xdfff) ||
+    (c >= 0xfdd0 && c <= 0xfdef) ||
+    c === 0xfeff ||
+    c === 0xffa0 ||
+    (c & 0xfffe) === 0xfffe ||
+    (c >= 0xe0000 && c <= 0xe007f)
+  );
+}
+
+/** Text as the app shows it: nothing hidden, normalized, and a single line unless `multiline`. */
+function checkText(text: string, what: string, multiline = false): string {
+  for (const ch of text) if (hidden(ch.codePointAt(0)!, multiline)) throw new OffchainError(`${what} holds a character that cannot be shown`);
+  if (typeof text.normalize === 'function' && text.normalize('NFC') !== text) throw new OffchainError(`${what} is not normalized text`);
+  return text;
+}
+
+function textOf(bytes: Uint8Array, what: string, multiline = false): string {
+  const text = fromUtf8(bytes);
+  // Only the shortest, valid encoding of the same characters comes back the same.
+  if (!equal(utf8(text), bytes)) throw new OffchainError(`${what} is not valid UTF-8`);
+  return checkText(text, what, multiline);
+}
+
+function readText(r: Reader, what: string, multiline = false): string {
+  return textOf(r.bytes(), what, multiline);
+}
+
+function line(text: string, what: string): string {
+  if (text.length === 0 || text.trim() !== text) throw new OffchainError(`${what} must be a non-empty line without surrounding spaces`);
+  return checkText(text, what);
+}
+
+function writeKey(w: Writer, key: DelegateKey | null) {
+  if (!key) {
+    w.u8(0);
+    return;
+  }
+  if (key.scheme !== 'p256' || key.publicKey.length !== 65 || key.publicKey[0] !== 4) throw new OffchainError('a key must be an uncompressed P-256 point');
+  w.u8(P256).bytes(key.publicKey);
+}
+
+function readKey(r: Reader): DelegateKey | null {
+  const has = r.u8();
+  if (has === 0) return null;
+  if (has !== P256) throw new OffchainError('unknown key scheme');
+  const publicKey = new Uint8Array(r.bytes());
+  if (publicKey.length !== 65 || publicKey[0] !== 4) throw new OffchainError('a key must be an uncompressed P-256 point');
+  return { scheme: 'p256', publicKey };
+}
+
+export function encodeDocument(doc: SignDocument): Uint8Array {
+  const w = new Writer().u8(VERSION).u8(KIND[doc.request.kind]);
+  const q = doc.request;
+  switch (q.kind) {
+    case 'signIn':
+      w.u64(q.sessionUntil);
+      writeKey(w, q.key);
+      break;
+    case 'grant':
+      w.u64(q.until).u32(q.scopes.length);
+      for (const s of q.scopes) {
+        if (!SCOPE.test(s)) throw new OffchainError(`scope "${s}" must be lowercase letters, digits and : . _ / -`);
+        w.bytes(utf8(s));
+      }
+      writeKey(w, q.key);
+      break;
+    case 'statement':
+      if (!q.attachment) {
+        w.u8(0);
+        break;
+      }
+      if (q.attachment.hash.length !== 32 || !MEDIA_TYPE.test(q.attachment.mediaType)) throw new OffchainError('an attachment needs a 32-byte hash and a media type');
+      w.u8(1).put(q.attachment.hash).bytes(utf8(q.attachment.mediaType)).bytes(utf8(line(q.attachment.name, 'the attachment name')));
+      break;
+  }
+  w.bytes(utf8(line(doc.title, 'the title'))).bytes(utf8(checkText(doc.body, 'the text', true))).u32(doc.fields.length);
+  for (const f of doc.fields) w.bytes(utf8(line(f.label, 'a label'))).bytes(utf8(line(f.value, `"${f.label}"`)));
+  const bytes = w.finish();
+  if (bytes.length > MAX_DOCUMENT) throw new OffchainError('the document is too long to show');
+  return bytes;
+}
+
+/**
+ * The document in `bytes`, or an error saying why the app will not sign it.
+ * Decoding is exact: any unknown version or kind, any trailing byte and any
+ * text that could hide something is refused, never skipped.
+ */
+export function decodeDocument(bytes: Uint8Array): SignDocument {
+  if (bytes.length > MAX_DOCUMENT) throw new OffchainError('the document is too long to show');
+  try {
+    const r = new Reader(bytes);
+    if (r.u8() !== VERSION) throw new OffchainError('unknown document version');
+    let request: Request;
+    switch (r.u8()) {
+      case KIND.signIn:
+        request = { kind: 'signIn', sessionUntil: r.u64(), key: readKey(r) };
+        break;
+      case KIND.grant: {
+        const until = r.u64();
+        const count = r.u32();
+        const scopes: string[] = [];
+        for (let i = 0; i < count; i++) {
+          const s = readText(r, 'a scope');
+          if (!SCOPE.test(s)) throw new OffchainError('a scope may hold only lowercase letters, digits and : . _ / -');
+          scopes.push(s);
+        }
+        request = { kind: 'grant', until, scopes, key: readKey(r) };
+        break;
+      }
+      case KIND.statement: {
+        const has = r.u8();
+        if (has > 1) throw new OffchainError('unknown attachment marker');
+        let attachment: Attachment | null = null;
+        if (has === 1) {
+          const hash = r.array32();
+          const mediaType = readText(r, 'the media type');
+          if (!MEDIA_TYPE.test(mediaType)) throw new OffchainError('the media type is not one');
+          attachment = { hash, mediaType, name: line(readText(r, 'the attachment name'), 'the attachment name') };
+        }
+        request = { kind: 'statement', attachment };
+        break;
+      }
+      default:
+        throw new OffchainError('unknown kind of request');
+    }
+    const title = line(readText(r, 'the title'), 'the title');
+    const body = readText(r, 'the text', true);
+    const count = r.u32();
+    const fields: Field[] = [];
+    for (let i = 0; i < count; i++) {
+      const label = line(readText(r, 'a label'), 'a label');
+      fields.push({ label, value: line(readText(r, `"${label}"`), `"${label}"`) });
+    }
+    r.end();
+    return { request, title, body, fields };
+  } catch (e) {
+    if (e instanceof OffchainError) throw e;
+    if (e instanceof DecodeError || e instanceof RangeError) throw new OffchainError('the document is malformed');
+    throw e;
+  }
+}
+
+export function documentHash(bytes: Uint8Array): Uint8Array {
+  return taggedHash(DOCUMENT_TAG, bytes);
+}
+
+// ---- The body as the app lays it out -----------------------------------------
+
+export interface Span {
+  text: string;
+  bold?: true;
+  italic?: true;
+}
+
+export type Block = { type: 'paragraph'; lines: Span[][] } | { type: 'list'; items: { marker: string; spans: Span[] }[] };
+
+/** `**bold**` and `*italic*`, not nested and not starting or ending with a space; anything else stays as written. */
+function spans(text: string): Span[] {
+  const out: Span[] = [];
+  let last = 0;
+  for (const m of text.matchAll(/\*\*(\S(?:.*?\S)?)\*\*|\*(\S(?:.*?\S)?)\*/g)) {
+    if (m.index! > last) out.push({ text: text.slice(last, m.index) });
+    out.push(m[1] !== undefined ? { text: m[1], bold: true } : { text: m[2], italic: true });
+    last = m.index! + m[0].length;
+  }
+  if (last < text.length) out.push({ text: text.slice(last) });
+  return out;
+}
+
+/**
+ * The body in blocks: paragraphs between blank lines, and lists whose lines
+ * all start with `- ` or a number and `. `, numbered as written.
+ */
+export function bodyBlocks(body: string): Block[] {
+  const blocks: Block[] = [];
+  for (const chunk of body.split(/\n *\n/)) {
+    const lines = chunk.split('\n').filter((l) => l.trim() !== '');
+    if (lines.length === 0) continue;
+    if (lines.every((l) => l.startsWith('- '))) blocks.push({ type: 'list', items: lines.map((l) => ({ marker: '•', spans: spans(l.slice(2)) })) });
+    else if (lines.every((l) => /^\d{1,4}\. /.test(l)))
+      blocks.push({ type: 'list', items: lines.map((l) => ({ marker: l.slice(0, l.indexOf('.') + 1), spans: spans(l.slice(l.indexOf('.') + 2)) })) });
+    else blocks.push({ type: 'paragraph', lines: lines.map(spans) });
+  }
+  return blocks;
+}
+
+// ---- The signed message ------------------------------------------------------
+
+/** Everything a signature binds, apart from the account: the site's request as the app received it. */
+export interface Envelope {
+  chainId: Uint8Array;
+  origin: string;
+  nonce: Uint8Array;
+  issuedAt: bigint;
+  expiresAt: bigint;
+  document: Uint8Array;
+}
+
+/** `Bytes(tag) ‖ ChainId ‖ account ‖ Bytes(origin) ‖ Bytes(nonce) ‖ u64 issued_at ‖ u64 expires_at ‖ H(document)`. */
+export function signedMessage(e: Envelope, account: Uint8Array): Uint8Array {
+  return new Writer()
+    .bytes(utf8(TAG))
+    .put(e.chainId)
+    .put(account)
+    .bytes(utf8(e.origin))
+    .bytes(e.nonce)
+    .u64(e.issuedAt)
+    .u64(e.expiresAt)
+    .put(documentHash(e.document))
+    .finish();
+}
+
+/** Two digits both the site and the app show for a sign-in, so the user can see they belong together. */
+export function matchCode(nonce: Uint8Array): string {
+  const h = taggedHash(MATCH_TAG, nonce);
+  return String(((h[0] << 8) | h[1]) % 100).padStart(2, '0');
+}
+
+// ---- Codes, requests and answers ---------------------------------------------
+
+const CODE_PREFIX = 'ting:sign?url=';
+
+/**
+ * The origin of a site's address, `https://host[:port]`, or null when the
+ * address may not ask for signatures: only HTTPS, and plain HTTP for this
+ * computer while a site is being developed.
+ */
+export function originOf(address: string): string | null {
+  // Plain ASCII only: a name with other letters can look like another site's,
+  // and URL parsers disagree on how to turn it into ASCII.
+  if (!/^[\x21-\x7e]+$/.test(address)) return null;
+  let url: URL;
+  try {
+    url = new URL(address);
+  } catch {
+    return null;
+  }
+  if (url.username || url.password) return null;
+  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) return null;
+  return `${url.protocol}//${url.host}`.toLowerCase();
+}
+
+/** The code a site shows: `ting:sign?url=<address of the request>`. */
+export function signCode(requestUrl: string): string {
+  return CODE_PREFIX + encodeURIComponent(requestUrl);
+}
+
+export function isSignCode(text: string): boolean {
+  return text.trim().toLowerCase().startsWith(CODE_PREFIX) || text.trim().toLowerCase().startsWith('ting://sign?url=');
+}
+
+/** The request address in a sign code, or null when it is not one the app may fetch. */
+export function parseSignCode(text: string): string | null {
+  const t = text.trim();
+  const lower = t.toLowerCase();
+  const at = lower.startsWith(CODE_PREFIX) ? CODE_PREFIX.length : lower.startsWith('ting://sign?url=') ? 'ting://sign?url='.length : -1;
+  if (at < 0) return null;
+  let address: string;
+  try {
+    address = decodeURIComponent(t.slice(at));
+  } catch {
+    return null;
+  }
+  return originOf(address) ? address : null;
+}
+
+/** A request as a site serves it. */
+export interface RequestJson {
+  type: 'ting-sign-request';
+  version: 1;
+  chain: string;
+  nonce: string;
+  issued_at: number;
+  expires_at: number;
+  /** The ID that must sign, when the site knows it. */
+  signer?: string;
+  document: string;
+  callback: string;
+  /** Where a phone goes back to after answering, such as the page that asked; same origin. */
+  return?: string;
+  /** Where the file a statement covers can be fetched; same origin, and only with such a statement. */
+  file?: string;
+}
+
+/** A request the app has checked: its origin is where it was fetched from. */
+export interface SignRequest extends Envelope {
+  signer: Uint8Array | null;
+  request: SignDocument;
+  callback: string;
+  returnTo: string | null;
+  /** Where to fetch the statement's file, when it covers one. */
+  file: string | null;
+}
+
+/** What a site serves at a request address, for one that builds requests with this module. */
+export function requestJson(r: Envelope & { signer: Uint8Array | null; callback: string; returnTo?: string | null; file?: string | null }): RequestJson {
+  const json: RequestJson = {
+    type: 'ting-sign-request',
+    version: 1,
+    chain: hex(r.chainId),
+    nonce: hex(r.nonce),
+    issued_at: Number(r.issuedAt),
+    expires_at: Number(r.expiresAt),
+    document: hex(r.document),
+    callback: r.callback,
+  };
+  if (r.signer) json.signer = hex(r.signer);
+  if (r.returnTo) json.return = r.returnTo;
+  if (r.file) json.file = r.file;
+  return json;
+}
+
+function integer(v: unknown, what: string): bigint {
+  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) throw new OffchainError(`${what} must be a whole number of seconds`);
+  return BigInt(v);
+}
+
+/** Checks a request the app fetched from `fetchedFrom` at time `now` (seconds), before showing it. */
+export function readRequest(json: unknown, fetchedFrom: string, now: number): SignRequest {
+  const j = json as Partial<RequestJson> | null;
+  if (!j || typeof j !== 'object' || j.type !== 'ting-sign-request') throw new OffchainError('this is not a Ting signing request');
+  if (j.version !== 1) throw new OffchainError('this request needs a newer Ting ID');
+  const origin = originOf(fetchedFrom);
+  if (!origin) throw new OffchainError('requests come only from secure sites');
+  if (typeof j.chain !== 'string' || !isHex(j.chain, 32)) throw new OffchainError('the request names no chain');
+  if (typeof j.nonce !== 'string' || !isHex(j.nonce) || j.nonce.length < 32 || j.nonce.length > 128) throw new OffchainError('the request needs a nonce of 16 to 64 bytes');
+  const issuedAt = integer(j.issued_at, 'issued_at');
+  const expiresAt = integer(j.expires_at, 'expires_at');
+  if (expiresAt <= BigInt(now)) throw new OffchainError('this request has expired; start again on the site');
+  if (issuedAt > BigInt(now + CLOCK_SKEW) || expiresAt <= issuedAt || expiresAt - issuedAt > BigInt(MAX_REQUEST_LIFETIME))
+    throw new OffchainError("the request's times do not make sense; check this device's clock");
+  if (j.signer !== undefined && (typeof j.signer !== 'string' || !isHex(j.signer, 32))) throw new OffchainError('the requested signer is not an ID');
+  if (typeof j.callback !== 'string' || originOf(j.callback) !== origin) throw new OffchainError('the answer would go to another site than the one asking');
+  if (j.return !== undefined && (typeof j.return !== 'string' || originOf(j.return) !== origin)) throw new OffchainError('the request would send you back to another site than the one asking');
+  if (typeof j.document !== 'string' || !isHex(j.document)) throw new OffchainError('the request holds no document');
+  const document = unhex(j.document);
+  const request = decodeDocument(document);
+  const covers = request.request.kind === 'statement' && request.request.attachment !== null;
+  if (covers && (typeof j.file !== 'string' || originOf(j.file) !== origin)) throw new OffchainError('the statement covers a file the site does not offer');
+  if (!covers && j.file !== undefined) throw new OffchainError('the request offers a file its statement does not cover');
+  return {
+    chainId: unhex(j.chain),
+    origin,
+    nonce: unhex(j.nonce),
+    issuedAt,
+    expiresAt,
+    document,
+    signer: j.signer ? unhex(j.signer) : null,
+    request,
+    callback: j.callback,
+    returnTo: j.return ?? null,
+    file: covers ? (j.file as string) : null,
+  };
+}
+
+/** Whether `bytes` are the file `attachment` names: its SHA-256 is the hash the statement signs. */
+export function isAttachment(bytes: Uint8Array, attachment: Attachment): boolean {
+  return equal(sha256(bytes), attachment.hash);
+}
+
+/** The app's answer: the policy input the site checks, as the chain would. */
+export interface SignAnswer {
+  nonce: Uint8Array;
+  account: Uint8Array;
+  policy: Uint8Array;
+  params: Uint8Array;
+  witness: Uint8Array;
+}
+
+export type AnswerJson =
+  | { type: 'ting-sign-answer'; version: 1; nonce: string; account: string; policy: string; params: string; witness: string }
+  | { type: 'ting-sign-answer'; version: 1; nonce: string; declined: true };
+
+export function answerJson(a: SignAnswer): AnswerJson {
+  return { type: 'ting-sign-answer', version: 1, nonce: hex(a.nonce), account: hex(a.account), policy: hex(a.policy), params: hex(a.params), witness: hex(a.witness) };
+}
+
+export function declineJson(nonce: Uint8Array): AnswerJson {
+  return { type: 'ting-sign-answer', version: 1, nonce: hex(nonce), declined: true };
+}
+
+/** An answer as a site receives it: the signature, or `declined`. */
+export function readAnswer(json: unknown): SignAnswer | { nonce: Uint8Array; declined: true } {
+  const j = json as Record<string, unknown> | null;
+  if (!j || typeof j !== 'object' || j.type !== 'ting-sign-answer' || j.version !== 1) throw new OffchainError('not a Ting signing answer');
+  if (typeof j.nonce !== 'string' || !isHex(j.nonce)) throw new OffchainError('the answer has no nonce');
+  if (j.declined === true) return { nonce: unhex(j.nonce), declined: true };
+  const field = (name: string, bytes?: number) => {
+    const v = j[name];
+    if (typeof v !== 'string' || !isHex(v, bytes)) throw new OffchainError(`the answer's ${name} is not hex`);
+    return unhex(v);
+  };
+  return { nonce: unhex(j.nonce), account: field('account', 32), policy: field('policy', 32), params: field('params'), witness: field('witness') };
+}
+
+// ---- Checking an answer ------------------------------------------------------
+
+/** Who signed: the account, and for an ID account the ID, slot and key. */
+export interface Signed {
+  account: Uint8Array;
+  id: Uint8Array | null;
+  slot: number | null;
+  keyId: bigint | null;
+  scheme: Scheme;
+  publicKey: Uint8Array;
+}
+
+/** The chain reads a check needs: one contract record, as the node's storage endpoint serves it. */
+export interface RecordReader {
+  storage(contract: Uint8Array, key: Uint8Array): Promise<Uint8Array | null>;
+}
+
+/**
+ * Checks a signed answer to the site's own `request` (as the site stored it,
+ * with its own origin) at time `now`, reading the chain's current records
+ * through `node`. Accepts what the standard policies accept: an ID account of
+ * the canonical registry signed by a current secp256k1 or P-256 key, or a
+ * plain account of the canonical secp256k1 or P-256 policy. Throws why not.
+ */
+export async function verifyAnswer(node: RecordReader, request: Envelope, answer: SignAnswer, now: number): Promise<Signed> {
+  if (!equal(answer.nonce, request.nonce)) throw new OffchainError('the answer is for another request');
+  if (BigInt(now) > request.expiresAt) throw new OffchainError('the request expired before it was answered');
+  if (!equal(answer.account, policyAccount(answer.policy, answer.params))) throw new OffchainError('the account does not match its policy');
+  const digest = signingDigest(signedMessage(request, answer.account));
+  const c = canonical(request.chainId);
+  if (equal(answer.policy, c.registry)) {
+    if (answer.params.length !== 40) throw new OffchainError('not an ID account');
+    const id = answer.params.slice(0, 32);
+    const slot = new Reader(answer.params.subarray(32)).u64();
+    const coreBytes = await node.storage(c.registry, idp.coreKey(id));
+    const core = coreBytes && idp.decodeCore(coreBytes);
+    if (!core) throw new OffchainError('no such ID on the chain');
+    if (slot >= core.slotCount) throw new OffchainError('the ID has no such account');
+    let keyId: bigint;
+    let signature: Uint8Array;
+    try {
+      const w = new Reader(answer.witness);
+      keyId = w.u64();
+      signature = new Uint8Array(w.bytes());
+      w.end();
+    } catch {
+      throw new OffchainError('the witness is malformed');
+    }
+    const keyBytes = await node.storage(c.registry, idp.keyKey(id, core.keyEpoch, keyId));
+    const key = keyBytes && idp.decodeKeyRecord(keyBytes);
+    if (!key) throw new OffchainError('the signing key is not a current key of the ID');
+    const scheme = schemeOf(c, key.policy);
+    if (scheme !== 'secp256k1' && scheme !== 'p256') throw new OffchainError('the ID signed with a kind of key this site does not check');
+    if (!verifyDigest(scheme, key.params, digest, signature)) throw new OffchainError('the signature does not match');
+    return { account: answer.account, id, slot: Number(slot), keyId, scheme, publicKey: key.params };
+  }
+  const scheme = schemeOf(c, answer.policy);
+  if (scheme !== 'secp256k1' && scheme !== 'p256') throw new OffchainError('the account is of a kind this site does not check');
+  if (!verifyDigest(scheme, answer.params, digest, answer.witness)) throw new OffchainError('the signature does not match');
+  return { account: answer.account, id: null, slot: null, keyId: null, scheme, publicKey: answer.params };
+}

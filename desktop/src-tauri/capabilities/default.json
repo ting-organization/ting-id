@@ -1,0 +1,43 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the Ting ID window may do: reach nodes and sites over https, and over plain http only on this computer and the home network; copy identifiers; receive ting: links; and match its title bar to the chosen theme.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-set-theme",
+    "clipboard-manager:allow-write-text",
+    "deep-link:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://*:*"
+        },
+        {
+          "url": "http://localhost:*"
+        },
+        {
+          "url": "http://(127\\.[0-9]+\\.[0-9]+\\.[0-9]+):*"
+        },
+        {
+          "url": "http://(10\\.[0-9]+\\.[0-9]+\\.[0-9]+):*"
+        },
+        {
+          "url": "http://(192\\.168\\.[0-9]+\\.[0-9]+):*"
+        },
+        {
+          "url": "http://(172\\.1[6-9]\\.[0-9]+\\.[0-9]+):*"
+        },
+        {
+          "url": "http://(172\\.2[0-9]\\.[0-9]+\\.[0-9]+):*"
+        },
+        {
+          "url": "http://(172\\.3[01]\\.[0-9]+\\.[0-9]+):*"
+        }
+      ]
+    }
+  ]
+}

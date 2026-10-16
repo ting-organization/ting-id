@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["vite/client", "node"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "react-native": ["./src/platform/react-native.ts"],
+      "expo-crypto": ["./src/platform/expo-crypto.ts"],
+      "expo-secure-store": ["./src/platform/expo-secure-store.ts"],
+      "@react-native-async-storage/async-storage": ["./src/platform/async-storage.ts"]
+    }
+  },
+  "include": ["src", "tests"]
+}

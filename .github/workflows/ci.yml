@@ -1,0 +1,68 @@
+# Checks every push: types, lint and tests of both apps, that the desktop's
+# copy of the shared code is current, and the desktop's Rust side.
+
+name: CI
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  apps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Mobile app
+        working-directory: mobile
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npx expo lint
+          npx vitest run
+      - name: Desktop app
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run sync-core
+          git diff --exit-code -- src/core tests || { echo "::error::desktop/src/core is not the mobile app's code: run npm run sync-core"; exit 1; }
+          npx tsc --noEmit
+          npx vitest run
+
+  desktop-rust:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Linux libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev
+      # The toolchain desktop/src-tauri/rust-toolchain.toml names.
+      - name: Rust
+        working-directory: desktop/src-tauri
+        run: rustup toolchain install
+      # tauri::generate_context! reads the built front end; an empty one does for the checks.
+      - name: Front end placeholder
+        run: mkdir -p desktop/dist && touch desktop/dist/index.html
+      - name: Formatting
+        working-directory: desktop/src-tauri
+        run: cargo fmt --check
+      - name: Clippy
+        working-directory: desktop/src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Tests
+        working-directory: desktop/src-tauri
+        run: cargo test --locked

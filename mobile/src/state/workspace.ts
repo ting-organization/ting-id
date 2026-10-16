@@ -1,0 +1,78 @@
+// What every screen needs at once: the chain, the followed coins, the active
+// user with its identity and accounts, and the names this device knows.
+import { useEffect, useMemo } from 'react';
+import { hex, unhex } from '@/chain/bytes';
+import { IdentityInfo, UserAccount, useChainInfo, useIdentity, userAccounts } from './chain';
+import { Coins, useCoins } from './coins';
+import { knownCoinsFor } from '@/config/known-coins';
+import { useNames } from './names';
+import type { ScanScope } from './scan';
+import { useActiveUser, useStore } from './store';
+
+export { useStore };
+
+export function useWorkspace() {
+  const { info, error: nodeError, refresh, node } = useChainInfo();
+  const coins: Coins = useCoins();
+  const user = useActiveUser();
+  const keys = useStore((s) => s.keys);
+  const advanced = useStore((s) => s.settings.advanced);
+  // An identity exists only on the chain it was made on: elsewhere it has no accounts to show or use.
+  const otherChain = !!user && user.kind === 'identity' && !!user.chainId && !!info && user.chainId !== hex(info.status.chainId);
+  const { identity, loading: identityLoading } = useIdentity(otherChain ? null : user);
+  const names = useNames(info?.canonical ?? null);
+  const c = info?.canonical ?? null;
+  const accounts: UserAccount[] = useMemo(() => (user && c && !otherChain ? userAccounts(user, c, keys, identity) : []), [user, c, keys, identity, otherChain]);
+  // What the activity scan looks for: every account and the ID of the active user.
+  const scopeKey = info && user && accounts.length ? `${hex(info.status.chainId)}:${accounts.map((a) => hex(a.account)).join(',')}:${user.kind === 'identity' ? user.identityId : ''}` : null;
+  const scope: ScanScope | null = useMemo(
+    () =>
+      info && user && accounts.length
+        ? {
+            chainId: info.status.chainId,
+            registry: info.canonical.registry,
+            accounts: accounts.map((a) => a.account),
+            ids: user.kind === 'identity' && user.identityId ? [unhex(user.identityId)] : [],
+          }
+        : null,
+    [scopeKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  return {
+    node,
+    info,
+    coins: coins.coins,
+    coinById: coins.byId,
+    coinsLoading: coins.loading,
+    missingCoins: coins.missing,
+    user,
+    /** The active user is an identity of another chain than the nodes': it has no accounts here. */
+    otherChain,
+    keys,
+    advanced,
+    identity,
+    identityLoading,
+    accounts,
+    scope,
+    names,
+    nodeError,
+    refresh,
+  };
+}
+
+/** Follows the chain's known coins the first time the app sees a chain. */
+export function useCoinBootstrap() {
+  const { info } = useChainInfo();
+  const watched = useStore((s) => s.settings.coins);
+  const addCoin = useStore((s) => s.addCoin);
+  const chainHex = info ? hex(info.status.chainId) : null;
+  useEffect(() => {
+    if (!chainHex || watched.length > 0) return;
+    for (const known of knownCoinsFor(chainHex)) addCoin(known.contract);
+  }, [chainHex, watched.length, addCoin]);
+}
+
+export function identitySummary(identity: IdentityInfo | null): string {
+  if (!identity) return 'not on chain yet';
+  const c = identity.core;
+  return `${c.keyCount} keys · ${c.guardianCount} guardians · ${c.slotCount} accounts`;
+}

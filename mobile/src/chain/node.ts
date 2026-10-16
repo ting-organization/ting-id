@@ -1,0 +1,386 @@
+// Client for the node's REST API (wiki: start/explore#the-rest-api).
+import { hex, unhex } from './bytes';
+import { transactionId } from './tx';
+
+export interface NodeStatus {
+  chainId: Uint8Array;
+  height: number;
+  limits: number[];
+  tip: string;
+  /** The chain's total work up to the tip. */
+  work: bigint;
+  mempoolCount: number;
+  name: string;
+}
+
+export interface ReceiptEvent {
+  contract: Uint8Array;
+  payload: Uint8Array;
+}
+
+export interface Receipt {
+  status: number;
+  statusName: string;
+  used: number[];
+  result: Uint8Array;
+  events: ReceiptEvent[];
+}
+
+export interface Occurrence {
+  height: number;
+  receipt: Receipt;
+}
+
+/** A transaction the node holds until it is due and succeeds (wiki: start/explore#the-rest-api, deferred submission). */
+export interface Deferred {
+  notBefore: number;
+  expires: number;
+  /** Executed successfully on the tip; in the pool awaiting a block. */
+  admitted: boolean;
+  /** Why the last execution on the tip failed, as a receipt status name. */
+  lastResult: string | null;
+}
+
+export interface TransactionLookup {
+  pending: boolean;
+  deferred: Deferred | null;
+  occurrences: Occurrence[];
+}
+
+export interface BlockEvents {
+  /** The block's id, to notice when a reorganization replaced it. */
+  block: string;
+  height: number;
+  /** The block's timestamp, in seconds. */
+  time: number;
+  events: (ReceiptEvent & { transaction: string })[];
+}
+
+/** A block's receipts, as far as a scan for deployments needs them. */
+export interface BlockReceipts {
+  id: string;
+  height: number;
+  /** Each transaction's status (0 for success) and result: a deployment's is its ContractId. */
+  receipts: { status: number; result: Uint8Array }[];
+}
+
+/** A node's answer, or no answer: `status` is the HTTP status, absent when the node could not be reached. */
+export class NodeError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
+}
+
+/** A node without a call the app needs, such as proved storage reads. */
+export class NodeOutdated extends NodeError {}
+
+/** A read whose answer would be too large for one response: asked again in smaller parts. */
+export class AnswerTooLarge extends NodeError {}
+
+/** Whether another node may answer where this one failed: it was not reached, or failed itself, rather than refusing the request. */
+export function nodeFailed(e: unknown): boolean {
+  if (!(e instanceof NodeError)) return true;
+  return e instanceof NodeOutdated || e.status === undefined || e.status >= 500 || e.status === 429;
+}
+
+/** A record's Merkle proof against the state root (wiki: data/state-tree#proofs). */
+export interface StorageProof {
+  /** Where the key's path ends: its own leaf, an empty subtree, or another record's leaf. */
+  end: 'present' | 'empty' | 'other';
+  /** For `other`: that record's key; its value is in the answer's `others`. */
+  otherKey: Uint8Array | null;
+  /** The other child's hash at each level, from the end of the path up to the root. */
+  siblings: Uint8Array[];
+}
+
+/** Records read together, with their proofs, the state root they were read from and the canonical tip it belongs to. */
+export interface ProvedReads {
+  values: (Uint8Array | null)[];
+  proofs: StorageProof[];
+  /** The values of the other records the proofs end at, by record key (hex), each listed once. */
+  others: Map<string, Uint8Array>;
+  stateRoot: Uint8Array;
+  tip: string;
+}
+
+/** Size of an encoded block header (wiki: data/blocks). */
+export const HEADER_BYTES = 294;
+
+/** What the app asks of the chain: one node (NodeClient) or several used as one (NodePool). */
+export interface ChainApi {
+  /** Names what answers: a node's address, or the pool's addresses. */
+  readonly url: string;
+  status(): Promise<NodeStatus>;
+  storage(contract: Uint8Array, key: Uint8Array): Promise<Uint8Array | null>;
+  storageMany(reads: StorageRead[]): Promise<(Uint8Array | null)[]>;
+  /** Records that never change once written, such as a coin's configuration: with several nodes, every one that has a record must give the same. */
+  storageFixed(reads: StorageRead[]): Promise<(Uint8Array | null)[]>;
+  contract(id: Uint8Array): Promise<{ codeHash: string; codeBytes: number } | null>;
+  contractExists(id: Uint8Array): Promise<boolean>;
+  submit(tx: Uint8Array, notBefore?: number): Promise<string>;
+  transaction(id: string): Promise<TransactionLookup | null>;
+  blocks(from: number, limit?: number): Promise<BlockReceipts[]>;
+  events(from: number, limit?: number): Promise<BlockEvents[]>;
+}
+
+/** One record to read: a contract's storage key. */
+export interface StorageRead {
+  contract: Uint8Array;
+  key: Uint8Array;
+}
+
+/** Records the node reads in one batch request at most. */
+export const STORAGE_BATCH = 1024;
+
+/**
+ * The fetch the client uses. A host can replace it: the desktop app routes
+ * requests through Tauri's HTTP client, which needs no CORS on the node.
+ */
+let nodeFetch: typeof fetch = (input, init) => fetch(input, init);
+
+export function setNodeFetch(f: typeof fetch): void {
+  nodeFetch = f;
+}
+
+/**
+ * The fetch for a site's signing request, its answer and its file. It never
+ * follows a redirect, so the site the person sees is the one that answers,
+ * and a signed answer goes nowhere else (SIGNING.md). A host whose fetch
+ * cannot refuse redirects gives one that can; by default it is the node's
+ * fetch, so the desktop app needs no CORS on sites either.
+ */
+let siteFetchImpl: typeof fetch = (input, init) => nodeFetch(input, { ...init, redirect: 'error' });
+
+export function setSiteFetch(f: typeof fetch): void {
+  siteFetchImpl = f;
+}
+
+export function siteFetch(): typeof fetch {
+  return siteFetchImpl;
+}
+
+/** Told of every transaction a node accepted: its id, bytes and deferral, so the app can keep it until a block includes it. */
+type SubmitListener = (txId: string, tx: Uint8Array, notBefore: number | undefined) => void;
+let submitListener: SubmitListener | null = null;
+
+export function setSubmitListener(f: SubmitListener | null): void {
+  submitListener = f;
+}
+
+export class NodeClient implements ChainApi {
+  /** The chain of the node's last status: transaction ids are computed for it. */
+  private chainId: Uint8Array | null = null;
+
+  constructor(readonly url: string) {}
+
+  private async request(path: string, init?: RequestInit): Promise<any> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    // The time limit covers the whole answer, its body too.
+    let response: Response;
+    let text: string;
+    try {
+      response = await nodeFetch(this.url.replace(/\/+$/, '') + path, { ...init, signal: controller.signal });
+    } catch {
+      clearTimeout(timer);
+      throw new NodeError(`cannot reach the node at ${this.url}`);
+    }
+    try {
+      text = await response.text();
+    } catch {
+      throw new NodeError(`the node at ${this.url} stopped answering`);
+    } finally {
+      clearTimeout(timer);
+    }
+    let body: any = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      throw new NodeError(`unexpected reply from the node (${response.status})`, response.status);
+    }
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      throw new NodeError(body?.error ?? `node error ${response.status}`, response.status);
+    }
+    return body;
+  }
+
+  async status(): Promise<NodeStatus> {
+    const s = await this.request('/v1/status');
+    this.chainId = unhex(s.chain_id);
+    return {
+      chainId: this.chainId,
+      height: s.height,
+      limits: s.limits,
+      tip: s.tip,
+      work: BigInt(s.work),
+      mempoolCount: s.mempool_count ?? 0,
+      name: s.name ?? '',
+    };
+  }
+
+  /** A contract's current storage record, or null when absent. */
+  async storage(contract: Uint8Array, key: Uint8Array): Promise<Uint8Array | null> {
+    const v = await this.request(`/v1/contracts/${hex(contract)}/storage/${hex(key)}`);
+    if (!v || typeof v.value_hex !== 'string') return null;
+    return unhex(v.value_hex);
+  }
+
+  /** One node is the only word on any record. */
+  storageFixed(reads: StorageRead[]): Promise<(Uint8Array | null)[]> {
+    return this.storageMany(reads);
+  }
+
+  /**
+   * Many records at once (`POST /v1/storage`), in the order asked, null where
+   * absent. The node reads up to 1,024 from one state, so the records of one
+   * request agree with each other; more go in several requests. A node without
+   * the call is read one record at a time.
+   */
+  async storageMany(reads: StorageRead[]): Promise<(Uint8Array | null)[]> {
+    const out: (Uint8Array | null)[] = [];
+    for (let i = 0; i < reads.length; i += STORAGE_BATCH) {
+      const chunk = reads.slice(i, i + STORAGE_BATCH);
+      const values = this.batchReads === false ? null : await this.readBatch(chunk);
+      out.push(...(values ?? (await Promise.all(chunk.map((r) => this.storage(r.contract, r.key))))));
+    }
+    return out;
+  }
+
+  /** Whether the node answers batch reads; unknown until the first one. */
+  private batchReads: boolean | undefined;
+
+  private async readBatch(reads: StorageRead[]): Promise<(Uint8Array | null)[] | null> {
+    const v = await this.request('/v1/storage', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reads: reads.map((r) => ({ contract: hex(r.contract), key: hex(r.key) })) }),
+    }).catch((e) => {
+      // A node from before the call refuses the method; anything else is a real failure.
+      if (this.batchReads === undefined && e instanceof NodeError && /405|method/i.test(e.message)) return null;
+      throw e;
+    });
+    if (!v || !Array.isArray(v.values) || v.values.length !== reads.length) {
+      if (this.batchReads === undefined) this.batchReads = false;
+      return null;
+    }
+    this.batchReads = true;
+    return v.values.map((x: any) => (typeof x?.value_hex === 'string' ? unhex(x.value_hex) : null));
+  }
+
+  /**
+   * Up to STORAGE_BATCH records with their Merkle proofs, all from one state.
+   * A node without proved batch reads is outdated for the app.
+   */
+  async storageProved(reads: StorageRead[]): Promise<ProvedReads> {
+    const v = await this.request('/v1/storage', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reads: reads.map((r) => ({ contract: hex(r.contract), key: hex(r.key) })), proof: true }),
+    }).catch((e) => {
+      if (e instanceof NodeError && e.status === 400 && /size limit/i.test(e.message)) throw new AnswerTooLarge(e.message, e.status);
+      if (e instanceof NodeError && (e.status === 405 || (e.status === 400 && /unknown field/i.test(e.message)))) throw new NodeOutdated('the node gives no proofs; it needs an update', e.status);
+      throw e;
+    });
+    const items = v?.values;
+    if (!Array.isArray(items) || items.length !== reads.length || typeof v.state_root !== 'string' || typeof v.tip !== 'string' || !items.every((x: any) => x?.proof)) {
+      throw new NodeOutdated('the node gives no proofs; it needs an update');
+    }
+    // Proofs that carry the other record's leaf hash cannot show an absence (wiki: data/state-tree#proofs).
+    if (items.some((x: any) => 'other_leaf' in x.proof)) throw new NodeOutdated('the node gives proofs in an older form; it needs an update');
+    return {
+      values: items.map((x: any) => (typeof x.value_hex === 'string' ? unhex(x.value_hex) : null)),
+      proofs: items.map((x: any) => ({
+        end: x.proof.end,
+        otherKey: typeof x.proof.other_key === 'string' ? unhex(x.proof.other_key) : null,
+        siblings: (x.proof.siblings ?? []).map((h: string) => unhex(h)),
+      })),
+      others: new Map(Object.entries(v.others ?? {}).map(([k, value]) => [k.toLowerCase(), unhex(String(value))])),
+      stateRoot: unhex(v.state_root),
+      tip: v.tip,
+    };
+  }
+
+  /** The encoded header of block `id` (hex), null when the node does not have it. */
+  async header(id: string): Promise<Uint8Array | null> {
+    const v = await this.request(`/v1/blocks/${id}/raw?offset=0&length=${HEADER_BYTES}`);
+    return typeof v?.hex === 'string' ? unhex(v.hex) : null;
+  }
+
+  async contractExists(id: Uint8Array): Promise<boolean> {
+    return (await this.contract(id)) !== null;
+  }
+
+  /** A contract's manifest: the hash of the code it runs. */
+  async contract(id: Uint8Array): Promise<{ codeHash: string; codeBytes: number } | null> {
+    const v = await this.request(`/v1/contracts/${hex(id)}`);
+    if (!v || typeof v.code_hash !== 'string') return null;
+    return { codeHash: v.code_hash, codeBytes: v.code_bytes ?? 0 };
+  }
+
+  /**
+   * Submits a canonical transaction; returns its id (hex). With `notBefore`
+   * the node defers it: holds it until that time and includes it once it
+   * executes successfully. The id is computed here, and the node must name
+   * the same.
+   */
+  async submit(tx: Uint8Array, notBefore?: number): Promise<string> {
+    const id = hex(transactionId(this.chainId ?? (await this.status()).chainId, tx));
+    const r = await this.request('/v1/transactions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(notBefore === undefined ? { hex: hex(tx) } : { hex: hex(tx), not_before: notBefore }),
+    });
+    if (!r?.id) throw new NodeError('the node did not return a transaction id');
+    if (r.id !== id) throw new NodeError('the node named another transaction id than the transaction’s');
+    submitListener?.(id, tx, notBefore);
+    return id;
+  }
+
+  async transaction(id: string): Promise<TransactionLookup | null> {
+    const v = await this.request(`/v1/transactions/${id}`);
+    if (!v) return null;
+    const occurrences: Occurrence[] = (v.occurrences ?? []).map((o: any) => ({
+      height: o.height,
+      receipt: {
+        status: o.receipt.status,
+        statusName: o.receipt.status_name,
+        used: o.receipt.used,
+        result: unhex(o.receipt.result_hex ?? ''),
+        events: (o.receipt.events ?? []).map((e: any) => ({ contract: unhex(e.contract), payload: unhex(e.payload_hex) })),
+      },
+    }));
+    const deferred = v.deferred
+      ? { notBefore: v.deferred.not_before ?? 0, expires: v.deferred.expires ?? 0, admitted: v.deferred.admitted === true, lastResult: v.deferred.last_result ?? null }
+      : null;
+    return { pending: v.pending === true, deferred, occurrences };
+  }
+
+  /** Canonical blocks `from` onward (1-based), at most `limit` (the node allows 100), with their receipts. */
+  async blocks(from: number, limit = 100): Promise<BlockReceipts[]> {
+    const v = await this.request(`/v1/blocks?from=${from}&limit=${limit}`);
+    return (v?.items ?? []).map((b: any) => ({
+      id: b.id,
+      height: b.height,
+      receipts: (b.receipts ?? []).map((r: any) => ({ status: r.status, result: unhex(r.result_hex ?? '') })),
+    }));
+  }
+
+  /** Events of canonical blocks `from` onward (1-based), at most `limit` blocks. */
+  async events(from: number, limit = 100): Promise<BlockEvents[]> {
+    const v = await this.request(`/v1/events?from=${from}&limit=${limit}`);
+    return (v?.items ?? []).map((b: any) => ({
+      block: b.block,
+      height: b.height,
+      time: Number(b.timestamp ?? 0),
+      events: (b.events ?? []).map((e: any) => ({
+        contract: unhex(e.contract),
+        payload: unhex(e.payload_hex),
+        transaction: e.transaction,
+      })),
+    }));
+  }
+}

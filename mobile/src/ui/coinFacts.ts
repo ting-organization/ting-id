@@ -1,0 +1,99 @@
+// What the coin browser says about a coin: how it is issued, who mints it,
+// and whether it copies the name of a coin listed for the chain.
+import { equal, hex } from '@/chain/bytes';
+import * as coin from '@/chain/coin';
+import { formatAmount, shortId } from '@/chain/format';
+import type { UserAccount } from '@/state/chain';
+import type { CoinInfo } from '@/state/coins';
+import type { Names } from './describe';
+
+export function hasMinter(c: CoinInfo): boolean {
+  return !equal(c.state.minter, coin.ZERO_ACCOUNT);
+}
+
+/** How new coins come about: mining rewards, a minter, both, or neither. */
+export function supplyModel(c: CoinInfo): string {
+  const mined = c.config.initialReward > 0n || c.config.tailReward > 0n;
+  if (mined && hasMinter(c)) return 'mined and minted';
+  if (mined) return 'mined';
+  if (hasMinter(c)) return 'minted';
+  return 'fixed supply';
+}
+
+/** The user's account that may mint the coin, if any. */
+export function minterAccount(c: CoinInfo, accounts: UserAccount[]): UserAccount | null {
+  return accounts.find((a) => equal(a.account, c.state.minter)) ?? null;
+}
+
+/** Who mints, in words. */
+export function minterName(c: CoinInfo, accounts: UserAccount[], names: Names): string {
+  if (!hasMinter(c)) return 'no one';
+  const mine = minterAccount(c, accounts);
+  if (mine) return `you · ${mine.label}`;
+  const h = hex(c.state.minter);
+  return names.get(h) ?? shortId(h);
+}
+
+export function amountOf(c: CoinInfo, v: bigint): string {
+  return `${formatAmount(v, c.config.decimals)} ${c.config.symbol}`;
+}
+
+export function circulating(c: CoinInfo): bigint {
+  return c.state.issued - c.state.burned;
+}
+
+export function capped(c: CoinInfo): boolean {
+  return c.config.maxSupply !== coin.UNCAPPED;
+}
+
+/** Characters that pass for others at a glance, folded to one. */
+const LOOKALIKE: Record<string, string> = { '0': 'o', '1': 'l', i: 'l', '|': 'l', '5': 's', '$': 's', '3': 'e', '4': 'a', '@': 'a', '7': 't', '8': 'b' };
+
+/** A name or ticker as it reads: lower case, accents and spacing dropped, look-alikes folded. */
+export function reading(text: string): string {
+  return [...text.normalize('NFKD').toLowerCase()]
+    .filter((ch) => /[\p{L}\p{N}$@|]/u.test(ch))
+    .map((ch) => LOOKALIKE[ch] ?? ch)
+    .join('');
+}
+
+/** Edits (insert, delete, replace) between two strings. */
+function distance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length];
+}
+
+/** Names that read the same or nearly: equal, one inside the other, or a typo or two apart. */
+export function similarNames(a: string, b: string): boolean {
+  const x = reading(a);
+  const y = reading(b);
+  if (!x || !y) return x === y;
+  if (x === y) return true;
+  // One name inside the other counts once the shorter is a word, not a letter or two.
+  if (Math.min(x.length, y.length) >= 3 && (x.includes(y) || y.includes(x))) return true;
+  return distance(x, y) <= Math.max(1, Math.floor(Math.min(x.length, y.length) / 4));
+}
+
+/**
+ * The coin `c` copies, if any: another coin with the same ticker and the same
+ * or a very similar name that came first. The original is the listed coin when
+ * one of them is listed, else the one deployed earliest (`all` in deployment
+ * order breaks ties within a block). Anyone can deploy a coin with any name,
+ * so a copy is what an impostor looks like.
+ */
+export function originalOf(c: CoinInfo, all: CoinInfo[], listedIds: string[]): CoinInfo | null {
+  const ticker = reading(c.config.symbol);
+  const family = all.filter((o) => reading(o.config.symbol) === ticker && similarNames(o.config.name, c.config.name));
+  if (family.length < 2) return null;
+  const order = (o: CoinInfo) => [listedIds.includes(o.hex) ? 0 : 1, Number(o.config.deployHeight), all.indexOf(o)];
+  const first = [...family].sort((a, b) => {
+    const [x, y] = [order(a), order(b)];
+    return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+  })[0];
+  return first.hex === c.hex ? null : first;
+}
