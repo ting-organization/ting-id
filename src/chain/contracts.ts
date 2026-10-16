@@ -1,0 +1,64 @@
+// The reference programs the app uses and their canonical ids on a chain (wiki: programs).
+import { base64Decode, equal, hex } from './bytes';
+import { Scheme } from './keys';
+import { canonicalId } from './tx';
+import { CONTRACT_CODE, CONTRACT_HASHES } from './contracts.generated';
+
+export type ContractName = 'policy-secp256k1' | 'policy-p256' | 'policy-multisig-secp256k1' | 'id-registry' | 'coin' | 'batch';
+
+const cache = new Map<string, Uint8Array>();
+
+export function contractCode(name: ContractName): Uint8Array {
+  let code = cache.get(name);
+  if (!code) {
+    code = base64Decode(CONTRACT_CODE[name]);
+    cache.set(name, code);
+  }
+  return code;
+}
+
+export function contractHash(name: ContractName): string {
+  return CONTRACT_HASHES[name];
+}
+
+export interface Canonical {
+  policySecp256k1: Uint8Array;
+  policyP256: Uint8Array;
+  multisig: Uint8Array;
+  registry: Uint8Array;
+  batch: Uint8Array;
+}
+
+const canonicalCache = new Map<string, Canonical>();
+
+/** Canonical ids of the standard contracts on `chain`; derived once per chain. */
+export function canonical(chain: Uint8Array): Canonical {
+  const key = hex(chain);
+  let c = canonicalCache.get(key);
+  if (!c) {
+    c = {
+      policySecp256k1: canonicalId(chain, contractCode('policy-secp256k1')),
+      policyP256: canonicalId(chain, contractCode('policy-p256')),
+      multisig: canonicalId(chain, contractCode('policy-multisig-secp256k1')),
+      registry: canonicalId(chain, contractCode('id-registry')),
+      batch: canonicalId(chain, contractCode('batch')),
+    };
+    canonicalCache.set(key, c);
+  }
+  return c;
+}
+
+export function policyFor(c: Canonical, scheme: Scheme): Uint8Array {
+  return scheme === 'p256' ? c.policyP256 : c.policySecp256k1;
+}
+
+/** The scheme a canonical policy verifies, if it is one of the standard ones. */
+export type PolicyKind = Scheme | 'multisig' | 'identity';
+
+export function schemeOf(c: Canonical, policy: Uint8Array): PolicyKind | null {
+  if (equal(policy, c.policySecp256k1)) return 'secp256k1';
+  if (equal(policy, c.policyP256)) return 'p256';
+  if (equal(policy, c.multisig)) return 'multisig';
+  if (equal(policy, c.registry)) return 'identity';
+  return null;
+}

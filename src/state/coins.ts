@@ -1,0 +1,215 @@
+// The coins a user follows: loading them, their balances per account, and
+// discovering standard coins the user's accounts already hold.
+import { useMemo } from 'react';
+import { equal, hex, unhex } from '@/chain/bytes';
+import * as coin from '@/chain/coin';
+import { contractHash } from '@/chain/contracts';
+import { fetchAccounts, fetchScheduledMany, ScheduledItem, UserAccount, useChainData } from './chain';
+import { useCached } from './cache';
+import { useScan } from './activity';
+import type { ScanScope } from './scan';
+import { useStore } from './store';
+import type { ChainApi } from '@/chain/node';
+
+export interface CoinInfo {
+  id: Uint8Array;
+  hex: string;
+  config: coin.CoinConfig;
+  state: coin.CoinState;
+}
+
+/**
+ * Coins as they stand: each one's state, and its configuration, which never
+ * changes and which the nodes must agree on, as amounts are signed by its
+ * decimals. Null for a contract that is not an initialized coin.
+ */
+export async function fetchCoins(node: ChainApi, coinHexes: string[]): Promise<(CoinInfo | null)[]> {
+  if (coinHexes.length === 0) return [];
+  const ids = coinHexes.map(unhex);
+  const [states, configs] = await Promise.all([
+    node.storageMany(ids.map((id) => ({ contract: id, key: coin.STATE_KEY }))),
+    node.storageFixed(ids.map((id) => ({ contract: id, key: coin.CONFIG_KEY }))),
+  ]);
+  return coinHexes.map((h, i) => {
+    const config = configs[i] && coin.decodeConfig(configs[i]!);
+    const state = states[i] && coin.decodeState(states[i]!);
+    return config && state ? { id: ids[i], hex: h, config, state } : null;
+  });
+}
+
+export async function fetchCoin(node: ChainApi, coinHex: string): Promise<CoinInfo | null> {
+  return (await fetchCoins(node, [coinHex]))[0];
+}
+
+/** Whether a contract runs the standard coin code and is initialized. */
+export async function isStandardCoin(node: ChainApi, coinHex: string): Promise<boolean> {
+  const manifest = await node.contract(unhex(coinHex));
+  return manifest?.codeHash === contractHash('coin');
+}
+
+export interface Coins {
+  /** Followed coins that exist on this chain, in watchlist order. */
+  coins: CoinInfo[];
+  byId: Map<string, CoinInfo>;
+  /** Followed coins the node does not have. */
+  missing: string[];
+  loading: boolean;
+}
+
+const coinKey = (coinHex: string) => `coin:${coinHex}`;
+
+/** Coins from the cache, read again with each block: null for one that is not a coin on this chain. */
+function useCoinRecords(coinHexes: string[]) {
+  const { node, cache, version } = useChainData();
+  return useCached<CoinInfo | null>(cache, coinHexes.map(coinKey), version, (stale) => fetchCoins(node, stale.map((k) => k.slice('coin:'.length))));
+}
+
+export function useCoins(): Coins {
+  const watched = useStore((s) => s.settings.coins);
+  const { values, missing: loading } = useCoinRecords(watched);
+  return useMemo(() => {
+    const coins: CoinInfo[] = [];
+    const missing: string[] = [];
+    for (const h of watched) {
+      if (!values.has(coinKey(h))) continue;
+      const c = values.get(coinKey(h));
+      if (c) coins.push(c);
+      else missing.push(h);
+    }
+    return { coins, byId: new Map(coins.map((c) => [c.hex, c])), missing, loading };
+  }, [values, watched, loading]);
+}
+
+/** The coins `ids` from the cache, read again with each block; ones not on this chain are left out. */
+export function useCoinInfos(ids: string[]): { infos: Map<string, CoinInfo>; loading: boolean } {
+  const { values, missing } = useCoinRecords(ids);
+  return useMemo(() => {
+    const infos = new Map<string, CoinInfo>();
+    for (const id of ids) {
+      const c = values.get(coinKey(id));
+      if (c) infos.set(id, c);
+    }
+    return { infos, loading: missing };
+  }, [values, missing]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+export interface AccountView {
+  account: UserAccount;
+  record: coin.AccountRecord;
+  scheduled: ScheduledItem[];
+}
+
+/** What the chain holds of one account in one coin. */
+interface AccountState {
+  record: coin.AccountRecord;
+  scheduled: ScheduledItem[];
+}
+
+/**
+ * Balances and scheduled actions of every account in every coin given, from
+ * the cache, read again with each block. `loading`: some are not known yet.
+ */
+export function useAccountViews(coins: CoinInfo[], accounts: UserAccount[]) {
+  const { node, cache, version } = useChainData();
+  const pairs = coins.flatMap((c) => accounts.map((account) => ({ c, account, key: `view:${c.hex}:${hex(account.account)}` })));
+  const { values, missing } = useCached<AccountState>(cache, pairs.map((p) => p.key), version, async (stale) => {
+    // Two reads in all: every balance, then every scheduled action below each nonce.
+    const want = stale.map((k) => pairs.find((p) => p.key === k)!);
+    const records = await fetchAccounts(node, want.map((p) => ({ coinId: p.c.id, account: p.account.account })));
+    const scheduled = await fetchScheduledMany(
+      node,
+      want.map((p, i) => ({
+        coinId: p.c.id,
+        account: p.account.account,
+        nonce: records[i].nonce,
+        locked: records[i].locked,
+        everything: equal(p.c.state.minter, p.account.account),
+      })),
+    );
+    return want.map((_, i) => ({ record: records[i], scheduled: scheduled[i] }));
+  });
+  const views = useMemo(() => {
+    const out = new Map<string, AccountView[]>(coins.map((c) => [c.hex, []]));
+    for (const p of pairs) {
+      const v = values.get(p.key);
+      if (v) out.get(p.c.hex)!.push({ account: p.account, record: v.record, scheduled: v.scheduled });
+    }
+    return out;
+  }, [values, coins, accounts]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { views, loading: missing };
+}
+
+export function totalAvailable(views: AccountView[] | undefined): bigint {
+  return (views ?? []).reduce((sum, v) => sum + coin.available(v.record), 0n);
+}
+
+export function totalLocked(views: AccountView[] | undefined): bigint {
+  return (views ?? []).reduce((sum, v) => sum + v.record.locked, 0n);
+}
+
+/** Whether an account has anything of a coin: a balance, a reserve or a scheduled action. */
+export function holdsAny(view: AccountView): boolean {
+  return coin.available(view.record) > 0n || view.record.locked > 0n || view.scheduled.length > 0;
+}
+
+/** A followed coin with some of the user's accounts in it, and the total available across all of them. */
+export interface CoinGroup {
+  coin: CoinInfo;
+  views: AccountView[];
+  total: bigint;
+}
+
+/**
+ * The accounts coin by coin. The wallet lists under each coin the accounts
+ * that hold some of it, or the first account (Spending) when none does, so a
+ * followed coin always has one to open; `every` lists them all, to choose one
+ * to send from. Empty while the balances load.
+ */
+export function coinGroups(coins: CoinInfo[], views: Map<string, AccountView[]>, every = false): CoinGroup[] {
+  return coins.map((c) => {
+    const all = views.get(c.hex) ?? [];
+    const held = all.filter(holdsAny);
+    return { coin: c, views: every ? all : held.length > 0 ? held : all.slice(0, 1), total: totalAvailable(all) };
+  });
+}
+
+export interface Discovered {
+  info: CoinInfo;
+  /** Available balance over the user's accounts. */
+  total: bigint;
+}
+
+/**
+ * Standard coins the user's accounts hold without following them: contracts
+ * whose events in the blocks the activity scan has read touch one of the
+ * accounts, and whose code is the standard coin.
+ */
+export function useDiscoveredCoins(height: number | undefined, scope: ScanScope | null, accounts: UserAccount[], excluded: string[]) {
+  const { node, cache, version } = useChainData();
+  const scan = useScan(height, scope);
+  const candidates = [...new Set((scan?.activity ?? []).filter((item) => item.coin).map((item) => hex(item.contract)))].filter((c) => !excluded.includes(c)).sort();
+  const accountsKey = accounts.map((a) => hex(a.account)).join(',');
+  const key = accounts.length && candidates.length ? `found:${accountsKey}` : null;
+  // The candidates are part of the version: other candidates are read again.
+  const { values } = useCached<Discovered[]>(cache, key ? [key] : [], version && `${version}|${candidates.join(',')}`, async () => {
+    const standard: string[] = [];
+    for (const contract of candidates) if (await isStandardCoin(node, contract)) standard.push(contract);
+    const infos = (await fetchCoins(node, standard)).filter((c): c is CoinInfo => !!c);
+    const records = await fetchAccounts(
+      node,
+      infos.flatMap((info) => accounts.map((a) => ({ coinId: info.id, account: a.account }))),
+    );
+    return [
+      infos.map((info, i) => ({
+        info,
+        total: records.slice(i * accounts.length, (i + 1) * accounts.length).reduce((sum, r) => sum + coin.available(r), 0n),
+      })),
+    ];
+  });
+  // Until the read for these candidates is in, the last one stands, without coins followed or put away since.
+  return (key ? (values.get(key) ?? []) : []).filter((d) => candidates.includes(d.info.hex));
+}
+
+export function sameCoin(a: CoinInfo | null, b: CoinInfo | null): boolean {
+  return !!a && !!b && equal(a.id, b.id);
+}
