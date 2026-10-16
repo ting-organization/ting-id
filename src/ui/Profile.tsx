@@ -1,16 +1,23 @@
 // The profile button: the active user's avatar, opening a sheet with the
-// user, the other users on the device and the way to add one.
-import React, { useState } from 'react';
+// user, the way to its identity and the settings, the other users on the
+// phone to switch to, and the way to add one.
+import React, { Children, ReactNode, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { shortId } from '@/chain/format';
 import { useActiveUser, useStore } from '@/state/store';
-import { Avatar, Button, Caption, IdChip, ListItem, Pill, Row, Sheet } from './components';
+import type { User } from '@/state/types';
+import { Avatar, Caption, IconCircle, IdChip, ListItem, Row, Sheet } from './components';
 import { radius, spacing, type, useTheme } from './theme';
 
 export function userKindLabel(kind: 'identity' | 'key'): string {
   return kind === 'identity' ? 'Identity' : 'Simple account';
+}
+
+/** What a user is, in one line: its identity's short ID, or a simple account. */
+export function userLine(u: User): string {
+  return u.kind === 'identity' ? `Identity ${shortId(u.identityId ?? '', 6, 4)}` : 'Simple account';
 }
 
 export function ProfileButton({ size = 38 }: { size?: number }) {
@@ -38,87 +45,75 @@ export function ProfileButton({ size = 38 }: { size?: number }) {
   );
 }
 
+/** Rows in one bordered box, a hairline between them. */
+export function RowGroup({ children }: { children: ReactNode }) {
+  const t = useTheme();
+  const rows = Children.toArray(children).filter(Boolean);
+  return (
+    <View style={{ borderWidth: 1, borderColor: t.border, borderRadius: radius.lg, overflow: 'hidden' }}>
+      {rows.map((row, i) => (
+        <View key={i} style={{ borderTopWidth: i === 0 ? 0 : 1, borderTopColor: t.border }}>
+          {row}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export function ProfileSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const t = useTheme();
   const router = useRouter();
   const users = useStore((s) => s.users);
   const setActive = useStore((s) => s.setActiveUser);
   const active = useActiveUser();
-  const [switching, setSwitching] = useState(false);
-  const close = () => {
-    setSwitching(false);
-    onClose();
-  };
   const others = users.filter((u) => u.id !== active?.id);
+  const go = (path: '/identity' | '/settings' | '/user/new') => {
+    onClose();
+    router.push(path);
+  };
   return (
-    <Sheet visible={visible} onClose={close}>
+    <Sheet visible={visible} onClose={onClose}>
       {active ? (
         <Row gap={14}>
-          <Avatar name={active.name} color={active.color} size={56} />
-          <View style={{ flex: 1, gap: 4 }}>
-            <Text style={[type.heading, { color: t.text }]}>{active.name}</Text>
-            <Pill label={userKindLabel(active.kind)} tone="primary" small />
+          <Avatar name={active.name} color={active.color} size={52} />
+          <View style={{ flex: 1, gap: 6 }}>
+            <Text style={[type.heading, { color: t.text }]} numberOfLines={1}>
+              {active.name}
+            </Text>
+            {active.kind === 'identity' && active.identityId ? <IdChip label="ID" value={active.identityId} /> : <Caption>{userKindLabel(active.kind)}</Caption>}
           </View>
         </Row>
       ) : (
-        <Caption>No user on this device yet.</Caption>
+        <Caption>No user on this phone yet.</Caption>
       )}
-      {active?.kind === 'identity' && active.identityId ? <IdChip label="ID" value={active.identityId} /> : null}
-      <View style={{ height: spacing.xs }} />
-      <Row>
-        <Button
-          title="Identity"
-          kind="secondary"
-          small
-          icon="finger-print-outline"
-          onPress={() => {
-            close();
-            router.push('/identity');
-          }}
-        />
-        <Button
-          title="Settings"
-          kind="ghost"
-          small
-          icon="settings-outline"
-          onPress={() => {
-            close();
-            router.push('/settings');
-          }}
-        />
-      </Row>
-      {others.length > 0 || switching ? (
-        <View style={{ backgroundColor: t.cardAlt, borderRadius: radius.md, marginTop: spacing.sm }}>
-          <Pressable onPress={() => setSwitching((s) => !s)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: spacing.md }}>
-            <Caption>Switch user ({others.length} other{others.length === 1 ? '' : 's'})</Caption>
-            <Ionicons name={switching ? 'chevron-up' : 'chevron-down'} size={16} color={t.muted} />
-          </Pressable>
-          {switching
-            ? others.map((u) => (
-                <ListItem
-                  key={u.id}
-                  left={<Avatar name={u.name} color={u.color} size={34} />}
-                  title={u.name}
-                  subtitle={u.kind === 'identity' ? `identity ${shortId(u.identityId ?? '', 6, 4)}` : 'simple account'}
-                  onPress={() => {
-                    setActive(u.id);
-                    close();
-                  }}
-                />
-              ))
-            : null}
+      {active ? (
+        <RowGroup>
+          <ListItem left={<IconCircle name="finger-print-outline" color={t.primary} bg={t.primarySoft} size={36} />} title="Identity" chevron onPress={() => go('/identity')} />
+          <ListItem left={<IconCircle name="settings-outline" color={t.primary} bg={t.primarySoft} size={36} />} title="Settings" chevron onPress={() => go('/settings')} />
+        </RowGroup>
+      ) : null}
+      {others.length > 0 ? (
+        <View style={{ gap: spacing.xs }}>
+          <Caption style={{ paddingHorizontal: 4 }}>Switch to</Caption>
+          <RowGroup>
+            {others.map((u) => (
+              <ListItem
+                key={u.id}
+                left={<Avatar name={u.name} color={u.color} size={36} />}
+                title={u.name}
+                subtitle={<Caption numberOfLines={1}>{userLine(u)}</Caption>}
+                onPress={() => {
+                  setActive(u.id);
+                  onClose();
+                }}
+              />
+            ))}
+          </RowGroup>
         </View>
       ) : null}
-      <Button
-        title="Add a user"
-        kind="ghost"
-        small
-        icon="person-add-outline"
-        onPress={() => {
-          close();
-          router.push('/user/new');
-        }}
-      />
+      <RowGroup>
+        <ListItem left={<IconCircle name="person-add-outline" color={t.muted} bg={t.cardAlt} size={36} />} title="Add a user" onPress={() => go('/user/new')} />
+      </RowGroup>
     </Sheet>
   );
 }

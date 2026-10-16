@@ -17,9 +17,10 @@ import { CoinGroups, CoinMark } from '@/ui/CoinPicker';
 import { Banner, Button, Caption, Card, IconButton, IconCircle, InkHeader, ListItem, Logo, Row, Screen, SectionHeader, Sheet } from '@/ui/components';
 import { ProfileButton } from '@/ui/Profile';
 import { QrScanner, ReceiveSheet } from '@/ui/Qr';
+import { Welcome } from '@/ui/Welcome';
 import { isSignCode } from '@/chain/offchain';
 import { isPaymentCode } from '@/chain/request';
-import { font, tabular, useTheme } from '@/ui/theme';
+import { font, useTheme } from '@/ui/theme';
 
 const SCHEDULED_INFO =
   'Actions of your accounts that run later, in every coin. Check them: anything you did not plan can be cancelled until it runs.';
@@ -47,14 +48,6 @@ export default function WalletScreen() {
   const selected = w.accounts.find((a) => a.slot === activeSlot) ?? w.accounts[0];
   const groups = coinGroups(w.coins, views);
 
-  const status = w.nodeError
-    ? { icon: 'cloud-offline-outline' as const, color: '#F87171', text: 'Offline' }
-    : w.user?.kind === 'identity'
-      ? w.identity
-        ? { icon: 'shield-checkmark' as const, color: '#34D399', text: 'Identity on chain' }
-        : { icon: 'hourglass-outline' as const, color: '#FCD34D', text: 'Identity waiting for a block' }
-      : { icon: 'wallet-outline' as const, color: t.onHeaderMuted, text: w.user ? 'Simple account' : 'No user yet' };
-
   const header = (
     <InkHeader>
       <Row style={{ justifyContent: 'space-between' }}>
@@ -64,29 +57,17 @@ export default function WalletScreen() {
         </Row>
         <ProfileButton size={34} />
       </Row>
-      <View style={{ gap: 4 }}>
-        <Text style={{ color: t.onHeader, fontSize: 28, letterSpacing: -0.6, ...font.extrabold }}>{w.user?.name ?? 'Welcome'}</Text>
-        <Row gap={6}>
-          <Ionicons name={status.icon} size={14} color={status.color} />
-          <Text style={[{ color: t.onHeaderMuted, fontSize: 12.5, ...font.semibold }, tabular]}>
-            {status.text}
-            {w.info ? ` · block ${w.info.status.height}` : ''}
-          </Text>
-        </Row>
-      </View>
       {w.user ? (
-        <Row gap={8}>
+        <Row gap={8} style={{ marginTop: 12 }}>
           <Button title="Send" kind="light" icon="arrow-up" onPress={() => router.push('/send')} disabled={w.coins.length === 0} style={{ flex: 1 }} />
           <Button title="Receive" kind="raised" icon="arrow-down" onPress={() => selected && setReceiveSlot(selected.slot)} disabled={!selected} style={{ flex: 1 }} />
           <IconButton icon="time-outline" label="Schedule" kind="raised" onPress={() => router.push({ pathname: '/send', params: { when: 'later' } })} disabled={w.coins.length === 0} />
           <IconButton icon="scan-outline" label="Scan a code" kind="raised" onPress={() => setScanning(true)} />
         </Row>
       ) : (
-        <View style={{ gap: 12 }}>
-          <Text style={{ color: t.onHeaderMuted, fontSize: 14, lineHeight: 20, ...font.medium }}>
-            An instant spending account, a time-locked savings vault, and guardians who can restore your access.
-          </Text>
-          <Button title="Get started" kind="light" icon="person-add-outline" onPress={() => router.push('/user/new')} />
+        <View style={{ gap: 6 }}>
+          <Text style={{ color: t.onHeader, fontSize: 28, letterSpacing: -0.6, ...font.extrabold }}>Welcome</Text>
+          <Text style={{ color: t.onHeaderMuted, fontSize: 14, lineHeight: 20, ...font.medium }}>Your money and your identity, kept on this phone.</Text>
         </View>
       )}
     </InkHeader>
@@ -106,6 +87,7 @@ export default function WalletScreen() {
       {w.user?.kind === 'identity' && w.info && !w.otherChain && !w.identity && !w.identityLoading ? (
         <Banner tone="warning">Waiting for the next block to create this identity.</Banner>
       ) : null}
+      {!w.user ? <Welcome /> : null}
 
       {w.user ? (
         <>

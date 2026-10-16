@@ -26,13 +26,14 @@ import { groupTyped, ungroupTyped } from '@/ui/amountInput';
 import { SaveContactSheet } from '@/ui/SaveContact';
 import { font, radius, spacing, tabular, type, useTheme } from '@/ui/theme';
 import { useConfirm } from '@/ui/confirm';
+import { Welcome } from '@/ui/Welcome';
 import { When, WhenPicker } from '@/ui/WhenPicker';
 import { defaultLater, laterProblem } from '@/ui/when';
 
 export default function SendScreen() {
   const t = useTheme();
   const router = useRouter();
-  const params = useLocalSearchParams<{ coin?: string; slot?: string; code?: string; when?: string }>();
+  const params = useLocalSearchParams<{ coin?: string; slot?: string; code?: string; when?: string; to?: string }>();
   const w = useWorkspace();
   const users = useStore((s) => s.users);
   const contacts = useContactsHere();
@@ -56,6 +57,12 @@ export default function SendScreen() {
   if (params.when !== whenParam) {
     setWhenParam(params.when);
     if (params.when === 'later') setWhen('later');
+  }
+  // Opened for a recipient, as a contact's Send does: taken once each time.
+  const [toParam, setToParam] = useState<string | undefined>(undefined);
+  if (params.to !== toParam) {
+    setToParam(params.to);
+    if (params.to && isHex(params.to, 32)) setTo(params.to.toLowerCase());
   }
   const [picker, setPicker] = useState(false);
   const [naming, setNaming] = useState(false);
@@ -256,9 +263,16 @@ export default function SendScreen() {
     router.push('/review');
   };
 
+  if (!w.user) {
+    return (
+      <Screen title="Send">
+        <Welcome />
+      </Screen>
+    );
+  }
+
   return (
     <Screen title="Send">
-      {!w.user ? <Banner>Create a user first.</Banner> : null}
       <AccountPicker
         visible={fromSheet}
         onClose={() => setFromSheet(false)}

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { hex, isHex, unhex } from '@/chain/bytes';
 import { policyFor } from '@/chain/contracts';
 import { DELAY_PRESETS, nowSeconds } from '@/chain/format';
@@ -40,6 +40,8 @@ type Restore = { stage: 'reading'; height: number; tip: number } | { stage: 'fou
 export default function NewUserScreen() {
   const t = useTheme();
   const router = useRouter();
+  // `mode=restore`: opened to restore, as the welcome's Restore does.
+  const params = useLocalSearchParams<{ mode?: string }>();
   const { info, node, error: nodeError } = useChainInfo();
   const users = useStore((s) => s.users);
   const keys = useStore((s) => s.keys);
@@ -51,7 +53,7 @@ export default function NewUserScreen() {
 
   const [name, setName] = useState('');
   // Restore takes the recovery phrase, or the ID of an identity that another device or the guardians hand over.
-  const [top, setTop] = useState<'new' | 'restore'>('new');
+  const [top, setTop] = useState<'new' | 'restore'>(params.mode === 'restore' ? 'restore' : 'new');
   const [restoreBy, setRestoreBy] = useState<'phrase' | 'id'>('phrase');
   const mode: Mode = top === 'restore' ? (restoreBy === 'id' ? 'existing' : 'restore') : top;
   const [words, setWords] = useState(() => phraseFields(NEW_PHRASE_WORDS));

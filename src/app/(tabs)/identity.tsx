@@ -33,9 +33,10 @@ import {
   StatTile,
   Sub,
 } from '@/ui/components';
-import { useConfirm } from '@/ui/confirm';
+import { ConfirmOptions, ConfirmSheet } from '@/ui/confirm';
 import { FeeRow } from '@/ui/FeeRow';
 import { ProfileButton } from '@/ui/Profile';
+import { Welcome } from '@/ui/Welcome';
 import { font, spacing, type, useTheme } from '@/ui/theme';
 
 export default function IdentityScreen() {
@@ -87,17 +88,32 @@ export default function IdentityScreen() {
       const signer = await identitySigner(w.user, w.info.canonical, w.keys, w.identity);
       return cancelChanges(w.node, w.info.status.chainId, w.identity, signer, changeNos, await fee.resolve());
     });
-  const confirm = useConfirm();
-  const confirmCancel = async (changeNos: bigint[], label: string) => {
-    const one = changeNos.length === 1 ? w.identity?.pending.find((p) => p.changeNo === changeNos[0]) : undefined;
-    const yes = await confirm({
-      title: changeNos.length === 1 ? 'Cancel this change?' : `Cancel all ${changeNos.length} changes?`,
-      body: one ? `${one.record.operations.map((o) => describeOperation(o, w.names, w.advanced)).join('; ')}. It will not apply.` : 'None of them will apply.',
-      confirm: changeNos.length === 1 ? 'Cancel change' : 'Cancel all',
-      back: changeNos.length === 1 ? 'Keep it' : 'Keep them',
-      danger: true,
+  // The cancel or apply being confirmed: its sheet shows the fee, which can be changed there.
+  const [asking, setAsking] = useState<{ options: ConfirmOptions; run: () => void } | null>(null);
+  const operationsOf = (changeNo: bigint) =>
+    w.identity?.pending
+      .find((p) => p.changeNo === changeNo)
+      ?.record.operations.map((o) => describeOperation(o, w.names, w.advanced))
+      .join('; ');
+  const confirmCancel = (changeNos: bigint[], label: string) => {
+    const one = changeNos.length === 1 ? operationsOf(changeNos[0]) : undefined;
+    setAsking({
+      options: {
+        title: changeNos.length === 1 ? 'Cancel this change?' : `Cancel all ${changeNos.length} changes?`,
+        body: one ? `${one}. It will not apply.` : 'None of them will apply.',
+        confirm: changeNos.length === 1 ? 'Cancel change' : 'Cancel all',
+        back: changeNos.length === 1 ? 'Keep it' : 'Keep them',
+        danger: true,
+      },
+      run: () => cancel(label, changeNos),
     });
-    if (yes) cancel(label, changeNos);
+  };
+  const confirmApply = (changeNo: bigint) => {
+    const ops = operationsOf(changeNo);
+    setAsking({
+      options: { title: `Apply change #${changeNo}?`, body: ops ? `${ops}.` : undefined, confirm: 'Apply change', back: 'Not now' },
+      run: () => apply(changeNo),
+    });
   };
   const apply = (changeNo: bigint) =>
     act(`apply-${changeNo}`, `Apply change #${changeNo}`, async () => {
@@ -108,8 +124,7 @@ export default function IdentityScreen() {
   if (!w.user) {
     return (
       <Screen title="Identity">
-        <Banner>Create a user first.</Banner>
-        <Button title="Get started" icon="person-add-outline" onPress={() => router.push('/user/new')} />
+        <Welcome />
       </Screen>
     );
   }
@@ -330,17 +345,26 @@ export default function IdentityScreen() {
                     </Row>
                     {due ? (
                       <Row style={{ paddingLeft: 50 }}>
-                        <Button title="Apply" kind="secondary" small icon="checkmark" loading={busy === `apply-${changeNo}`} onPress={() => apply(changeNo)} />
+                        <Button title="Apply" kind="secondary" small icon="checkmark" loading={busy === `apply-${changeNo}`} onPress={() => confirmApply(changeNo)} />
                       </Row>
                     ) : null}
                   </View>
                 );
               })}
-              <View style={{ borderTopWidth: 1, borderTopColor: t.warningLine, paddingHorizontal: spacing.lg, paddingVertical: 8 }}>
-                <FeeRow fee={fee} />
-              </View>
             </Card>
           ) : null}
+          <ConfirmSheet
+            visible={asking !== null}
+            options={asking?.options ?? { title: '', confirm: '' }}
+            ready={!fee.problem}
+            onAnswer={(yes) => {
+              if (yes) asking?.run();
+              setAsking(null);
+            }}>
+            <View style={{ borderTopWidth: 1, borderBottomWidth: 1, borderColor: t.border, paddingVertical: 6 }}>
+              <FeeRow fee={fee} />
+            </View>
+          </ConfirmSheet>
 
           <SectionHeader
             title="Recovery"

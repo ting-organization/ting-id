@@ -1,16 +1,23 @@
 import React, { useState } from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import * as Clipboard from 'expo-clipboard';
 import { isHex } from '@/chain/bytes';
 import { shortId } from '@/chain/format';
 import { useChainCache } from '@/state/cache';
 import { uuid } from '@/state/keystore';
 import { useActiveUser, useStore } from '@/state/store';
-import { Avatar, Banner, Button, Caption, Card, Field, ListItem, Pill, Row, Screen, SectionHeader, Sheet } from '@/ui/components';
+import type { Contact, User } from '@/state/types';
+import { Avatar, Banner, Button, Caption, Card, Field, IconCircle, IconName, ListItem, Screen, SectionHeader, Sheet } from '@/ui/components';
 import { useConfirm } from '@/ui/confirm';
+import { RowGroup, userLine } from '@/ui/Profile';
 import { spacing, useTheme } from '@/ui/theme';
 import { forgetUser } from '@/state/keys';
 import { sentence } from '@/ui/describe';
+
+/** The person a menu is open for. */
+type Menu = { user: User } | { contact: Contact } | null;
 
 export default function PeopleScreen() {
   const t = useTheme();
@@ -27,80 +34,163 @@ export default function PeopleScreen() {
   const [contactSheet, setContactSheet] = useState(false);
   const [contactName, setContactName] = useState('');
   const [contactAccount, setContactAccount] = useState('');
+  const [menu, setMenu] = useState<Menu>(null);
+
+  const removeUser = async (u: User) => {
+    const yes = await confirm({
+      title: `Remove ${u.name} from this phone?`,
+      body: u.phrase
+        ? 'Its funds stay on chain, and its recovery phrase is deleted from this phone: with your written copy, Restore adds it again.'
+        : u.kind === 'key'
+          ? 'Its funds stay on chain, and only its key can spend them. The key stays on this phone: with the advanced settings on, Settings → Keys can add it as a user again.'
+          : 'Its funds stay on chain. This phone’s key for it stays: restoring the identity by its ID uses it again.',
+      confirm: 'Remove',
+      back: 'Keep',
+      danger: true,
+    });
+    if (!yes) return;
+    setRemoveError(null);
+    forgetUser(u).catch((e) => setRemoveError(`${u.name} was not removed: ${(e as Error).message}`));
+  };
+
+  // The row with its menu button beside it, not inside it: one control does not hold another.
+  const withMenu = (row: React.ReactNode, label: string, onMenu: () => void, selected?: boolean) => (
+    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: selected ? t.primarySoft : 'transparent' }}>
+      <View style={{ flex: 1 }}>{row}</View>
+      <Pressable
+        onPress={onMenu}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        style={({ pressed }) => ({ paddingVertical: 8, paddingLeft: 4, paddingRight: spacing.lg, opacity: pressed ? 0.6 : 1 })}>
+        <Ionicons name="ellipsis-horizontal" size={20} color={t.muted} />
+      </Pressable>
+    </View>
+  );
+
+  const close = () => setMenu(null);
+  const menuUser = menu && 'user' in menu ? menu.user : null;
+  const menuContact = menu && 'contact' in menu ? menu.contact : null;
 
   return (
     <Screen title="People">
       <SectionHeader
-        title="Users on this device"
-        info="Each user is an identity, or an account of a single key. Removing one here only forgets it on this device; its funds stay on chain."
+        title="Users on this phone"
+        info="Each user is an identity, or an account of a single key. Tap one to make it active. Removing one only forgets it on this phone; its funds stay on chain."
         action="Add"
         onAction={() => router.push('/user/new')}
       />
       {removeError ? <Banner tone="danger">{sentence(removeError)}</Banner> : null}
       <Card padded={false} style={{ gap: 0 }}>
         {users.length === 0 ? <Caption style={{ padding: spacing.lg }}>No users yet.</Caption> : null}
-        {users.map((u, i) => (
-          <View key={u.id} style={{ borderTopWidth: i === 0 ? 0 : 1, borderTopColor: t.border }}>
-            <ListItem
-              left={<Avatar name={u.name} color={u.color} />}
-              title={u.name}
-              subtitle={u.kind === 'identity' ? `Identity ${shortId(u.identityId ?? '', 6, 4)}` : 'Simple account'}
-              selected={u.id === active?.id}
-              onPress={() => setActive(u.id)}
-              right={
-                <Row>
-                  {u.id === active?.id ? <Pill label="active" tone="primary" small /> : null}
-                  <Button
-                    title="Remove…"
-                    kind="ghost"
-                    small
-                    onPress={async () => {
-                      const yes = await confirm({
-                        title: `Remove ${u.name} from this device?`,
-                        body: u.phrase
-                          ? 'Its funds stay on chain, and its recovery phrase is deleted from this device: with your written copy, Restore adds it again.'
-                          : u.kind === 'key'
-                            ? 'Its funds stay on chain, and only its key can spend them. The key stays on this device: with the advanced settings on, Settings → Keys can add it as a user again.'
-                            : 'Its funds stay on chain. This device’s key for it stays: restoring the identity by its ID uses it again.',
-                        confirm: 'Remove',
-                        back: 'Keep',
-                        danger: true,
-                      });
-                      if (!yes) return;
-                      setRemoveError(null);
-                      forgetUser(u).catch((e) => setRemoveError(`${u.name} was not removed: ${(e as Error).message}`));
-                    }}
-                  />
-                </Row>
-              }
-            />
+        {users.map((u, i) => {
+          const on = u.id === active?.id;
+          return (
+            <View key={u.id} style={{ borderTopWidth: i === 0 ? 0 : 1, borderTopColor: t.border }}>
+              {withMenu(
+                <ListItem
+                  left={<Avatar name={u.name} color={u.color} />}
+                  title={u.name}
+                  subtitle={<Caption numberOfLines={1}>{on ? `Active · ${userLine(u)}` : userLine(u)}</Caption>}
+                  selected={on}
+                  onPress={() => setActive(u.id)}
+                  right={on ? <Ionicons name="checkmark-circle" size={20} color={t.primary} /> : null}
+                />,
+                `More for ${u.name}`,
+                () => setMenu({ user: u }),
+                on,
+              )}
+            </View>
+          );
+        })}
+      </Card>
+
+      <SectionHeader title="Contacts" info="Accounts you send to, by name. Save one from Send or Review when you pay a new account." action="Add" onAction={() => setContactSheet(true)} />
+      <Card padded={false} style={{ gap: 0 }}>
+        {contacts.length === 0 ? <Caption style={{ padding: spacing.lg }}>No contacts yet. Accounts you pay can be saved here by name.</Caption> : null}
+        {contacts.map((c, i) => (
+          <View key={c.id} style={{ borderTopWidth: i === 0 ? 0 : 1, borderTopColor: t.border }}>
+            {withMenu(
+              <ListItem
+                left={<Avatar name={c.name} color={t.primary} soft />}
+                title={c.name}
+                subtitle={<Caption numberOfLines={1}>{`${shortId(c.account, 10, 8)}${c.chain && c.chain !== chain ? ' · another network' : ''}`}</Caption>}
+                onPress={() => setMenu({ contact: c })}
+              />,
+              `More for ${c.name}`,
+              () => setMenu({ contact: c }),
+            )}
           </View>
         ))}
       </Card>
 
-      <SectionHeader title="Contacts" info="Accounts you send to often, by name." action="Add" onAction={() => setContactSheet(true)} />
-      <Card padded={false} style={{ gap: 0 }}>
-        {contacts.length === 0 ? <Caption style={{ padding: spacing.lg }}>No contacts yet.</Caption> : null}
-        {contacts.map((c, i) => (
-          <View key={c.id} style={{ borderTopWidth: i === 0 ? 0 : 1, borderTopColor: t.border }}>
-            <ListItem
-              left={<Avatar name={c.name} color={t.primary} soft />}
-              title={c.name}
-              subtitle={`${shortId(c.account, 10, 8)}${c.chain && c.chain !== chain ? ' · another network' : ''}`}
-              right={
-                <Button
-                  title="Remove…"
-                  kind="ghost"
-                  small
-                  onPress={async () => {
-                    if (await confirm({ title: `Remove contact ${c.name}?`, confirm: 'Remove', back: 'Keep', danger: true })) removeContact(c.id);
-                  }}
-                />
-              }
+      <Sheet visible={menu !== null} onClose={close} title={menuUser?.name ?? menuContact?.name}>
+        {menuUser ? (
+          <RowGroup>
+            {menuUser.id !== active?.id ? (
+              <MenuRow
+                icon="swap-horizontal"
+                title="Make active"
+                onPress={() => {
+                  setActive(menuUser.id);
+                  close();
+                }}
+              />
+            ) : null}
+            {menuUser.kind === 'identity' && menuUser.identityId ? (
+              <MenuRow
+                icon="copy-outline"
+                title="Copy identity ID"
+                onPress={() => {
+                  Clipboard.setStringAsync(menuUser.identityId!);
+                  close();
+                }}
+              />
+            ) : null}
+            <MenuRow
+              icon="trash-outline"
+              title="Remove from this phone…"
+              danger
+              onPress={() => {
+                close();
+                removeUser(menuUser);
+              }}
             />
-          </View>
-        ))}
-      </Card>
+          </RowGroup>
+        ) : null}
+        {menuContact ? (
+          <>
+            <Caption numberOfLines={2}>{menuContact.account}</Caption>
+            <RowGroup>
+              <MenuRow
+                icon="arrow-up"
+                title={`Send to ${menuContact.name}`}
+                onPress={() => {
+                  close();
+                  router.push({ pathname: '/send', params: { to: menuContact.account } });
+                }}
+              />
+              <MenuRow
+                icon="copy-outline"
+                title="Copy account"
+                onPress={() => {
+                  Clipboard.setStringAsync(menuContact.account);
+                  close();
+                }}
+              />
+              <MenuRow
+                icon="trash-outline"
+                title="Remove contact…"
+                danger
+                onPress={async () => {
+                  close();
+                  if (await confirm({ title: `Remove contact ${menuContact.name}?`, confirm: 'Remove', back: 'Keep', danger: true })) removeContact(menuContact.id);
+                }}
+              />
+            </RowGroup>
+          </>
+        ) : null}
+      </Sheet>
 
       <Sheet visible={contactSheet} onClose={() => setContactSheet(false)} title="New contact">
         <Field label="Name" value={contactName} onChangeText={setContactName} placeholder="Bob" />
@@ -118,5 +208,16 @@ export default function PeopleScreen() {
       </Sheet>
       <View style={{ height: spacing.lg }} />
     </Screen>
+  );
+}
+
+function MenuRow({ icon, title, onPress, danger }: { icon: IconName; title: string; onPress: () => void; danger?: boolean }) {
+  const t = useTheme();
+  return (
+    <ListItem
+      left={<IconCircle name={icon} color={danger ? t.danger : t.primary} bg={danger ? t.dangerSoft : t.primarySoft} size={34} />}
+      title={title}
+      onPress={onPress}
+    />
   );
 }

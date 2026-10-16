@@ -1,7 +1,7 @@
 // Scheduled actions of the user's accounts: what is waiting to run, who runs
 // it, and the buttons to run, queue or cancel it, as rows and as a whole
-// section with the fee its cancels pay.
-import React from 'react';
+// section; a cancel shows the fee it pays in its confirmation.
+import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
@@ -14,7 +14,7 @@ import { useScheduledActions } from '@/state/scheduled';
 import type { useWorkspace } from '@/state/workspace';
 import { Banner, Button, Caption, Card, IconCircle, Info, Row, initialsOf } from './components';
 import { FeeRow } from './FeeRow';
-import { useConfirm } from './confirm';
+import { ConfirmOptions, ConfirmSheet } from './confirm';
 import { describeEffect, nameOf, Names, sentence } from './describe';
 import { font, spacing, useTheme } from './theme';
 
@@ -146,22 +146,27 @@ export function ScheduledSection({
   const fee = useFee(w, acting);
   const runs = useRunStatuses(entries.map(runRefOf));
   const actions = useScheduledActions(w, fee, (id) => router.push({ pathname: '/tx/[id]', params: { id } }));
-  const confirm = useConfirm();
+  // The cancel being confirmed: its sheet shows the fee, which can be changed there.
+  const [asking, setAsking] = useState<{ entries: ScheduledEntry[]; label: string; options: ConfirmOptions } | null>(null);
   if (entries.length === 0) return null;
-  const cancelOne = async (e: ScheduledEntry) => {
-    const yes = await confirm({
-      title: 'Cancel this scheduled action?',
-      body: `${describeEffect(e.record.effect, e.coin, w.names)}, from ${e.view.account.label}. It will not run.`,
-      confirm: 'Cancel action',
-      back: 'Keep it',
-      danger: true,
+  const cancelOne = (e: ScheduledEntry) =>
+    setAsking({
+      entries: [e],
+      label: `cancel-${scheduledKey(e)}`,
+      options: {
+        title: 'Cancel this scheduled action?',
+        body: `${describeEffect(e.record.effect, e.coin, w.names)}, from ${e.view.account.label}. It will not run.`,
+        confirm: 'Cancel action',
+        back: 'Keep it',
+        danger: true,
+      },
     });
-    if (yes) actions.cancel([e], `cancel-${scheduledKey(e)}`);
-  };
-  const cancelAll = async () => {
-    const yes = await confirm({ title: `Cancel all ${entries.length} scheduled actions?`, body: 'None of them will run.', confirm: 'Cancel all', back: 'Keep them', danger: true });
-    if (yes) actions.cancel(entries, 'cancel-all');
-  };
+  const cancelAll = () =>
+    setAsking({
+      entries,
+      label: 'cancel-all',
+      options: { title: `Cancel all ${entries.length} scheduled actions?`, body: 'None of them will run.', confirm: 'Cancel all', back: 'Keep them', danger: true },
+    });
   return (
     <>
       {actions.error ? <Banner tone="danger">{sentence(actions.error)}</Banner> : null}
@@ -188,12 +193,19 @@ export function ScheduledSection({
           onRun={actions.run}
           onQueue={actions.queue}
         />
-        {w.user ? (
-          <View style={{ borderTopWidth: 1, borderTopColor: t.warningLine, paddingHorizontal: spacing.lg, paddingVertical: 8 }}>
-            <FeeRow fee={fee} label="Cancel fee" />
-          </View>
-        ) : null}
       </Card>
+      <ConfirmSheet
+        visible={asking !== null}
+        options={asking?.options ?? { title: '', confirm: '' }}
+        ready={!fee.problem}
+        onAnswer={(yes) => {
+          if (yes && asking) actions.cancel(asking.entries, asking.label);
+          setAsking(null);
+        }}>
+        <View style={{ borderTopWidth: 1, borderBottomWidth: 1, borderColor: t.border, paddingVertical: 6 }}>
+          <FeeRow fee={fee} />
+        </View>
+      </ConfirmSheet>
     </>
   );
 }

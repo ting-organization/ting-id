@@ -1,6 +1,8 @@
 // Confirmation as a modal sheet: `await confirm({…})` opens it over the screen
 // and resolves true when the person confirms, false when they step back.
-// Serious actions ask first; none asks inline.
+// Serious actions ask first; none asks inline. `ConfirmSheet` is the same
+// sheet for a screen that shows more in it, such as the fee it pays, kept up
+// to date while it is open.
 import React, { createContext, ReactNode, useCallback, useContext, useRef, useState } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Body, Button, Field, Row, Sheet } from './components';
@@ -53,7 +55,11 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   return (
     <ConfirmContext.Provider value={ask}>
       {children}
-      <Sheet visible={options !== null} onClose={() => answer(false)} title={options?.title}>
+      <ConfirmSheet
+        visible={options !== null}
+        options={options ?? { title: '', confirm: '' }}
+        onAnswer={answer}
+        ready={!options?.typeToConfirm || typed.trim().toLowerCase() === options.typeToConfirm.toLowerCase()}>
         {options?.typeToConfirm ? (
           <>
             <Row style={{ alignItems: 'flex-start' }}>
@@ -62,20 +68,47 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             </Row>
             <Field label={`Type “${options.typeToConfirm}” to confirm`} value={typed} onChangeText={setTyped} autoCapitalize="none" autoCorrect={false} />
           </>
-        ) : options?.body ? (
-          <Body muted>{options.body}</Body>
         ) : null}
-        <Row>
-          <Button title={options?.back ?? 'Back'} kind="secondary" onPress={() => answer(false)} style={{ flex: 1 }} />
-          <Button
-            title={options?.confirm ?? 'Confirm'}
-            kind={options?.typeToConfirm ? 'destructive' : options?.danger ? 'danger' : 'primary'}
-            disabled={!!options?.typeToConfirm && typed.trim().toLowerCase() !== options.typeToConfirm.toLowerCase()}
-            onPress={() => answer(true)}
-            style={{ flex: 1 }}
-          />
-        </Row>
-      </Sheet>
+      </ConfirmSheet>
     </ConfirmContext.Provider>
+  );
+}
+
+/**
+ * The confirmation sheet itself: the title, the body unless `children` say
+ * more, `children`, then the two buttons. `ready`: whether the confirming
+ * button works yet.
+ */
+export function ConfirmSheet({
+  visible,
+  options,
+  onAnswer,
+  ready = true,
+  busy,
+  children,
+}: {
+  visible: boolean;
+  options: ConfirmOptions;
+  onAnswer: (yes: boolean) => void;
+  ready?: boolean;
+  busy?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <Sheet visible={visible} onClose={() => onAnswer(false)} title={options.title}>
+      {options.body && !options.typeToConfirm ? <Body muted>{options.body}</Body> : null}
+      {children}
+      <Row>
+        <Button title={options.back ?? 'Back'} kind="secondary" onPress={() => onAnswer(false)} style={{ flex: 1 }} />
+        <Button
+          title={options.confirm}
+          kind={options.typeToConfirm ? 'destructive' : options.danger ? 'danger' : 'primary'}
+          disabled={!ready}
+          loading={busy}
+          onPress={() => onAnswer(true)}
+          style={{ flex: 1 }}
+        />
+      </Row>
+    </Sheet>
   );
 }
