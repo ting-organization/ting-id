@@ -61,7 +61,6 @@ export default function WalletScreen() {
         <Row gap={8} style={{ marginTop: 12 }}>
           <Button title="Send" kind="light" icon="arrow-up" onPress={() => router.push('/send')} disabled={w.coins.length === 0} style={{ flex: 1 }} />
           <Button title="Receive" kind="raised" icon="arrow-down" onPress={() => selected && setReceiveSlot(selected.slot)} disabled={!selected} style={{ flex: 1 }} />
-          <IconButton icon="time-outline" label="Schedule" kind="raised" onPress={() => router.push({ pathname: '/send', params: { when: 'later' } })} disabled={w.coins.length === 0} />
           <IconButton icon="scan-outline" label="Scan a code" kind="raised" onPress={() => setScanning(true)} />
         </Row>
       ) : (

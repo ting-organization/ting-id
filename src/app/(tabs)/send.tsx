@@ -33,7 +33,7 @@ import { defaultLater, laterProblem } from '@/ui/when';
 export default function SendScreen() {
   const t = useTheme();
   const router = useRouter();
-  const params = useLocalSearchParams<{ coin?: string; slot?: string; code?: string; when?: string; to?: string }>();
+  const params = useLocalSearchParams<{ coin?: string; slot?: string; code?: string; to?: string }>();
   const w = useWorkspace();
   const users = useStore((s) => s.users);
   const contacts = useContactsHere();
@@ -50,14 +50,8 @@ export default function SendScreen() {
   const [fromSheet, setFromSheet] = useState(false);
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
-  const [when, setWhen] = useState<When>(params.when === 'later' ? 'later' : 'now');
+  const [when, setWhen] = useState<When>('now');
   const [at, setAt] = useState(() => defaultLater(nowSeconds()));
-  // Opened again for later, as the wallet's Schedule does: taken once.
-  const [whenParam, setWhenParam] = useState(params.when);
-  if (params.when !== whenParam) {
-    setWhenParam(params.when);
-    if (params.when === 'later') setWhen('later');
-  }
   // Opened for a recipient, as a contact's Send does: taken once each time.
   const [toParam, setToParam] = useState<string | undefined>(undefined);
   if (params.to !== toParam) {
