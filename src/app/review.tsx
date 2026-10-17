@@ -111,6 +111,7 @@ export default function ReviewScreen() {
           {amount(draft.amount + draft.runFee)} is reserved until it runs, and you can cancel it from the wallet until then.
         </Caption>
       ) : null}
+      {draft.feeWarning ? <Banner tone="warning">{draft.feeWarning}</Banner> : null}
       {!toName ? (
         <Banner tone="info" icon="person-outline">
           This account is not in your contacts. Check the address with whoever you pay: a payment cannot be taken back once it runs.

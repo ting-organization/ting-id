@@ -1,6 +1,6 @@
 // Who pays an operation's fee by default (state/payer).
 import { describe, expect, it } from 'vitest';
-import { PayerCandidate, defaultPayer, runTip } from '../src/state/payer';
+import { PayerCandidate, defaultPayer } from '../src/state/payer';
 
 const DLR = 'dlr';
 const ABC = 'abc';
@@ -44,22 +44,5 @@ describe('the default fee payer', () => {
 
   it('is none without an instant account', () => {
     expect(defaultPayer([], base)).toEqual({ index: -1, short: true });
-  });
-});
-
-describe('what a scheduled action pays when it runs', () => {
-  const coin = (decimals: number) => ({ config: { decimals } });
-  it('is the fee amount again, in the coin it moves', () => {
-    expect(runTip('0.0001', coin(8))).toBe(10_000n);
-    expect(runTip('1', coin(0))).toBe(1n);
-  });
-  it('rounds up to the coin smallest unit', () => {
-    expect(runTip('0.0001', coin(2))).toBe(1n);
-    expect(runTip('0.015', coin(2))).toBe(2n);
-  });
-  it('is nothing without a fee', () => {
-    expect(runTip('0', coin(8))).toBe(0n);
-    expect(runTip('', coin(8))).toBe(0n);
-    expect(runTip('a lot', coin(8))).toBe(0n);
   });
 });

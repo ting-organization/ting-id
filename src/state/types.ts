@@ -68,8 +68,6 @@ export interface Settings {
    * they accept, so one widely accepted coin pays for operations in any coin.
    */
   feeCoin: string | null;
-  /** The fee each operation pays, in the fee coin, as typed; empty or 0 for none. */
-  fee: string;
   /** Light or dark, or as the system is set. */
   theme: Theme;
   /** The phone checks its owner when Ting ID opens or comes back after a while (ui/AppLock.tsx). On unless turned off. */

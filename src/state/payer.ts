@@ -2,8 +2,6 @@
 // (state/fees): in the fee coin, the acting account first, then Spending, then
 // the others, the first holding the usual fee; when none does, the acting
 // account or Spending in the coin the operation moves.
-import { parseAmount } from '@/chain/format';
-
 export interface PayerCandidate {
   slot: number;
   /** The coin, hex. */
@@ -39,22 +37,4 @@ export function defaultPayer(options: PayerCandidate[], ctx: PayerContext): { in
   const short = ctx.feeCoin !== null && ctx.usual > 0n;
   const fallback = ranked(ctx.actingCoin)[0] ?? inFeeCoin[0];
   return { index: fallback ? fallback.index : -1, short };
-}
-
-/**
- * What a scheduled action pays the miner that runs it, in the coin `c` it
- * moves: the fee's amount again, rounded up to the coin's smallest unit;
- * nothing when the fee is none or not an amount.
- */
-export function runTip(feeText: string, c: { config: { decimals: number } }): bigint {
-  let v: bigint;
-  try {
-    v = parseAmount(feeText.trim() || '0', 18);
-  } catch {
-    return 0n;
-  }
-  const d = c.config.decimals;
-  if (d >= 18) return v * 10n ** BigInt(d - 18);
-  const unit = 10n ** BigInt(18 - d);
-  return (v + unit - 1n) / unit;
 }

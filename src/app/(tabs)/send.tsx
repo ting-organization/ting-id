@@ -13,7 +13,6 @@ import { isPaymentCode, parseRequest } from '@/chain/request';
 import { queueRun, resolveSigner, submitCoinAction } from '@/state/chain';
 import { coinGroups, useAccountViews } from '@/state/coins';
 import { useFee, withFee } from '@/state/fees';
-import { runTip } from '@/state/payer';
 import { useContactsHere, useStore } from '@/state/store';
 import { useWorkspace } from '@/state/workspace';
 import { AccountPicker, CoinMark, accountNote } from '@/ui/CoinPicker';
@@ -169,7 +168,7 @@ export default function SendScreen() {
   const willSchedule = later || delayed;
   const availableNow = from ? coin.available(from.record) : 0n;
   // A scheduled action pays the fee's amount again when it runs, reserved until then.
-  const runFee = willSchedule && selectedCoin ? runTip(fee.amount, selectedCoin) : 0n;
+  const runFee = willSchedule && selectedCoin ? fee.runTip(selectedCoin) : 0n;
   const needed = (parsed ?? 0n) + ownFee + runFee;
   const problems: string[] = [];
   if (!selectedCoin) problems.push('follow a coin in Settings');
@@ -185,6 +184,22 @@ export default function SendScreen() {
   const ready = problems.length === 0 && to && parsed && parsed > 0n && !coinMismatch;
   // The most that leaves the fee, and a scheduled run's tip, payable.
   const maxAmount = availableNow - ownFee - runFee;
+  // What the fee coin leaves on the instant accounts after this payment: with
+  // little left, later payments and changes cannot pay their fees.
+  const feeCoin = fee.feeCoin;
+  const feesLeft = (() => {
+    if (!feeCoin || !from) return null;
+    const holdings = fee.options.filter((o) => o.coin.hex === feeCoin.hex);
+    if (holdings.length === 0 || holdings.some((o) => o.available === null)) return null;
+    let left = holdings.reduce((sum, o) => sum + (o.available ?? 0n), 0n);
+    if (selectedCoin?.hex === feeCoin.hex && from.account.delay === 0) left -= needed;
+    if (!fee.own && fee.payer?.coin.hex === feeCoin.hex) left -= fee.fee;
+    return left < 0n ? 0n : left;
+  })();
+  const feeWarning =
+    ready && feeCoin && feesLeft !== null && fee.usual > 0n && feesLeft < fee.usual * 3n
+      ? `After this, ${feesLeft === 0n ? 'nothing' : `only ${formatAmount(feesLeft, feeCoin.config.decimals)} ${feeCoin.config.symbol}`} is left for fees. Each later payment or change pays one, about ${formatAmount(fee.usual, feeCoin.config.decimals)} ${feeCoin.config.symbol}, so keep a little ${feeCoin.config.symbol} in Spending.`
+      : null;
   const recipientSet = isHex(to, 32);
   const shown = groupTyped(amount || '0');
   const amountSize = shown.length > 9 ? 38 : 52;
@@ -213,6 +228,7 @@ export default function SendScreen() {
       chosenAt,
       lock,
       fee: fee.summary,
+      feeWarning,
       runFee,
       total: needed,
       available: availableNow,
@@ -406,6 +422,7 @@ export default function SendScreen() {
             <Banner tone="warning">The payment code asks for {w.coinById.get(codeCoin!)?.config.symbol ?? shortId(codeCoin!)}; choose that coin to send.</Banner>
           ) : null}
       {problems.length > 0 && (amount || to) ? <Banner tone="warning">{problems.map(sentence).join(' ')}</Banner> : null}
+      {feeWarning ? <Banner tone="warning">{feeWarning}</Banner> : null}
       <Button title="Review" large onPress={review} disabled={!ready} />
 
       <QrScanner visible={scanning} onClose={() => setScanning(false)} onScan={scanned} />

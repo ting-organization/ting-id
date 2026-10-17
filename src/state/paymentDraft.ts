@@ -17,6 +17,8 @@ export interface PaymentDraft {
   lock: number;
   /** E.g. "Fee 0.0001 DLR from Spending"; null for none. */
   fee: string | null;
+  /** That little or nothing is left for later fees, when so. */
+  feeWarning: string | null;
   /** What a scheduled payment pays its runner, in the coin sent, reserved until it runs. */
   runFee: bigint;
   /** What leaves the sending account in the coin sent: the amount, a fee it pays itself and the run fee. */

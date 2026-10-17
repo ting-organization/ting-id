@@ -69,8 +69,12 @@ export interface EventPage {
 export interface BlockReceipts {
   id: string;
   height: number;
-  /** Each transaction's status (0 for success) and result: a deployment's is its ContractId. */
-  receipts: { status: number; result: Uint8Array }[];
+  /** The producer data its miner put in it, which names the payout account (wiki: programs/conventions). */
+  producer: Uint8Array;
+  /** The block's capacity per resource, C / S / D / G. */
+  limits: number[];
+  /** Each transaction's status (0 for success) and result (a deployment's is its ContractId), what it used, and its events. */
+  receipts: { status: number; result: Uint8Array; used: number[]; events: ReceiptEvent[] }[];
 }
 
 /** A node's answer, or no answer: `status` is the HTTP status, absent when the node could not be reached. */
@@ -372,7 +376,14 @@ export class NodeClient implements ChainApi {
     return (v?.items ?? []).map((b: any) => ({
       id: b.id,
       height: b.height,
-      receipts: (b.receipts ?? []).map((r: any) => ({ status: r.status, result: unhex(r.result_hex ?? '') })),
+      producer: unhex(b.producer_hex ?? ''),
+      limits: b.limits ?? [],
+      receipts: (b.receipts ?? []).map((r: any) => ({
+        status: r.status,
+        result: unhex(r.result_hex ?? ''),
+        used: r.used ?? [],
+        events: (r.events ?? []).map((e: any) => ({ contract: unhex(e.contract), payload: unhex(e.payload_hex) })),
+      })),
     }));
   }
 

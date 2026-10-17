@@ -44,9 +44,18 @@ export function FeeRow({ fee, boxed, label = 'Fee', run }: { fee: FeeChoice; box
       {fee.notice ? <Caption style={{ color: t.warning }}>{fee.notice}</Caption> : null}
       {fee.problem ? <Caption style={{ color: t.danger }}>{fee.problem}</Caption> : null}
       <Sheet visible={open} onClose={() => setOpen(false)} title="Fee">
-        <Field label={`Fee (${symbol})`} value={fee.amount} onChangeText={fee.setAmount} placeholder="0" keyboardType="decimal-pad" error={fee.problem} />
+        <Field
+          label={`Fee (${symbol})`}
+          value={fee.amount}
+          onChangeText={fee.setAmount}
+          placeholder="0"
+          keyboardType="decimal-pad"
+          error={fee.problem}
+          hint={fee.automatic ? 'Automatic: what recent transactions paid for the same room in a block.' : undefined}
+        />
+        {!fee.automatic ? <Button title="Use the automatic fee" kind="ghost" small icon="refresh-outline" onPress={fee.useAutomatic} /> : null}
         {fee.bundled ? (
-          <Caption>Paid in {symbol} beside this operation. It takes a second signature, so the transaction needs about 60% more room in a block.</Caption>
+          <Caption>Paid in {symbol} beside this operation. It takes a second signature, so the transaction needs about 60% more room in a block, and pays for it.</Caption>
         ) : null}
         {fee.options.length > 1 ? (
           <>

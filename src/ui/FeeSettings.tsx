@@ -1,23 +1,28 @@
-// Settings → Fees: the coin every operation pays its fee in, and how much.
+// Settings → Fees: the coin every operation pays its fee in, and what the
+// automatic fee comes to now.
 import React, { useState } from 'react';
-import { feeAmount, useFeeCoin } from '@/state/fees';
+import { OPERATION_SHARE, SAMPLE, feeFor, medianRate } from '@/chain/feeMarket';
+import { formatAmount } from '@/chain/format';
+import { useFeeRates } from '@/state/feeRates';
+import { useFeeCoin } from '@/state/fees';
 import { useStore } from '@/state/store';
 import type { useWorkspace } from '@/state/workspace';
 import { CoinMark } from './CoinPicker';
-import { Button, Card, Field, ListItem, Pill, SectionHeader, Sheet } from './components';
+import { Button, Caption, Card, ListItem, Pill, SectionHeader, Sheet } from './components';
 
 export const FEE_SETTINGS_INFO =
-  'Miners take transactions by what they pay, in the coins they accept. Every operation pays this fee in this coin, whatever coin it moves, from Spending unless you choose another account. Sending another coin then takes a second signature, so its transaction needs about 60% more room in a block.';
+  'Miners take transactions by what they pay for their room in a block, in the coins they accept. Every operation pays its fee in this coin, whatever coin it moves, from Spending unless you choose another account. The amount follows what recent transactions paid for the same room; each operation shows it, and you can change it there.';
 
 export function FeeSettings({ w }: { w: ReturnType<typeof useWorkspace> }) {
-  const fee = useStore((s) => s.settings.fee);
   const setSettings = useStore((s) => s.setSettings);
   const feeCoin = useFeeCoin(w);
-  const [text, setText] = useState(fee);
+  const rates = useFeeRates(w.node, w.info?.status.chainId ?? null, w.info?.status.height ?? null);
   const [picking, setPicking] = useState(false);
   if (!feeCoin) return null;
   const symbol = feeCoin.config.symbol;
-  const valid = feeAmount(text, feeCoin) !== null;
+  const rate = rates ? medianRate(rates, feeCoin.hex) : null;
+  const paying = rates ? Math.min(SAMPLE, rates.filter((r) => r.coin === feeCoin.hex).length) : 0;
+  const amount = (share: number) => `${formatAmount(feeFor(rate, share), feeCoin.config.decimals)} ${symbol}`;
   return (
     <>
       <SectionHeader title="Fees" info={FEE_SETTINGS_INFO} />
@@ -30,18 +35,13 @@ export function FeeSettings({ w }: { w: ReturnType<typeof useWorkspace> }) {
         />
       </Card>
       <Card>
-        <Field
-          label={`Usual fee (${symbol})`}
-          value={text}
-          onChangeText={(v) => {
-            setText(v);
-            if (feeAmount(v, feeCoin) !== null) setSettings({ fee: v.trim() });
-          }}
-          placeholder="0"
-          keyboardType="decimal-pad"
-          error={valid ? null : `enter an amount with at most ${feeCoin.config.decimals} decimals`}
-          hint="Every operation pays this unless you change it there. 0 for none."
-        />
+        <Caption>
+          {rates === null
+            ? 'Reading what recent transactions paid…'
+            : paying > 0
+              ? `Automatic, from the median of the last ${paying} paying transaction${paying === 1 ? '' : 's'}: a payment now pays ${amount(OPERATION_SHARE.own)}; a payment in another coin, or an identity change, ${amount(OPERATION_SHARE.bundled)}.`
+              : `Automatic. No recent transaction paid a fee in ${symbol}, so each pays the smallest amount, ${amount(OPERATION_SHARE.own)}, which still goes before those that pay nothing.`}
+        </Caption>
       </Card>
       <Sheet visible={picking} onClose={() => setPicking(false)} title="Fee coin">
         {w.coins.map((c) => {

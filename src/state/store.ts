@@ -28,9 +28,6 @@ export function defaultNodes(): string[] {
 
 export const USER_COLORS = ['#4F46E5', '#0EA5A4', '#D97706', '#DB2777', '#059669', '#7C3AED', '#2563EB', '#DC2626'];
 
-/** The fee each operation pays unless the user sets another, in the fee coin. */
-export const DEFAULT_FEE = '0.0001';
-
 /**
  * The last action this device signed for a coin account: its nonce and
  * transaction, and for a fee payment bound to a batch the prefix it commits to.
@@ -90,7 +87,7 @@ interface State {
   forgetOutbox(id: string): void;
 }
 
-const defaultSettings = (): Settings => ({ nodeUrls: defaultNodes(), coins: [], dismissed: [], advanced: false, feeCoin: null, fee: DEFAULT_FEE, theme: 'system' });
+const defaultSettings = (): Settings => ({ nodeUrls: defaultNodes(), coins: [], dismissed: [], advanced: false, feeCoin: null, theme: 'system' });
 
 const STORE_NAME = 'ting-id';
 
