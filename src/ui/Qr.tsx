@@ -1,18 +1,21 @@
-// QR codes: showing a payment code to be paid, and scanning one to pay it.
+// QR codes and links (LINKS.md): showing a link to scan or share, and
+// scanning or pasting one.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import Svg, { Path } from 'react-native-svg';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { hex } from '@/chain/bytes';
-import { encodeRequest } from '@/chain/request';
-import type { UserAccount } from '@/state/chain';
+import { parseAmount } from '@/chain/format';
+import { encodeLink, netOf } from '@/chain/links';
+import { UserAccount, useChainInfo } from '@/state/chain';
 import type { CoinInfo } from '@/state/coins';
-import { Button, Caption, IdChip, Segmented, Sheet } from './components';
+import { Button, Caption, Field, IdChip, Row, Segmented, Sheet } from './components';
 import { relativeDuration } from './describe';
 import { qrShape } from './qrShape';
-import { font, radius, spacing, useTheme } from './theme';
+import { font, radius, spacing, type, useTheme } from './theme';
 
 /** A QR code, dark on white in both themes so every camera reads it. */
 export function QrCode({ value, size = 216 }: { value: string; size?: number }) {
@@ -31,38 +34,107 @@ export function QrCode({ value, size = 216 }: { value: string; size?: number }) 
   );
 }
 
-/** The Receive sheet: pick an account, show its payment code and the account to copy. */
+/** A link to hand to someone: its QR code, the link, and buttons to copy it or share it in a message. */
+export function LinkShare({ link, qr = true }: { link: string; qr?: boolean }) {
+  const t = useTheme();
+  const [copied, setCopied] = useState(false);
+  return (
+    <View style={{ gap: spacing.sm }}>
+      {qr ? (
+        <View style={{ paddingVertical: spacing.xs }}>
+          <QrCode value={link} />
+        </View>
+      ) : null}
+      <Text selectable numberOfLines={3} style={[type.mono, { color: t.muted, fontSize: 11.5, lineHeight: 16 }]}>
+        {link}
+      </Text>
+      <Row>
+        <Button
+          title={copied ? 'Copied' : 'Copy link'}
+          kind="secondary"
+          small
+          icon={copied ? 'checkmark' : 'copy-outline'}
+          style={{ flex: 1 }}
+          onPress={async () => {
+            await Clipboard.setStringAsync(link);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+        />
+        <Button title="Share" kind="secondary" small icon="share-outline" style={{ flex: 1 }} onPress={() => Share.share({ message: link }).catch(() => {})} />
+      </Row>
+    </View>
+  );
+}
+
+/**
+ * The Receive sheet: pick an account, show its pay link as a QR code to scan
+ * and a link to share, and the account to copy. An amount can be asked for,
+ * in `coin`, or `amountCoin` when the sheet is for any coin.
+ */
 export function ReceiveSheet({
   accounts,
   slot,
   onSlot,
   onClose,
   coin,
+  amountCoin,
 }: {
   accounts: UserAccount[];
   slot: number | null;
   onSlot: (slot: number) => void;
   onClose: () => void;
   coin?: CoinInfo;
+  amountCoin?: CoinInfo;
 }) {
   const t = useTheme();
+  const { info } = useChainInfo();
+  const [asking, setAsking] = useState(false);
+  const [amount, setAmount] = useState('');
   const account = slot === null ? null : (accounts.find((a) => a.slot === slot) ?? null);
   const accountHex = account ? hex(account.account) : null;
+  const priced = coin ?? amountCoin ?? null;
+  const asked = (() => {
+    if (!priced || !amount.trim()) return null;
+    try {
+      return parseAmount(amount, priced.config.decimals) > 0n ? amount.trim().replace(/[\s_]/g, '').replace(',', '.') : null;
+    } catch {
+      return null;
+    }
+  })();
+  const link =
+    accountHex && info ? encodeLink({ request: 'pay', net: netOf(info.status.chainId), to: accountHex, coin: coin || asked ? priced?.hex : undefined, amount: asked ?? undefined }) : null;
+  const close = () => {
+    setAsking(false);
+    setAmount('');
+    onClose();
+  };
   return (
-    <Sheet visible={account !== null} onClose={onClose} title={coin ? `Receive ${coin.config.symbol}` : 'Receive'}>
+    <Sheet visible={account !== null} onClose={close} title={coin ? `Receive ${coin.config.symbol}` : 'Receive'}>
       {accounts.length > 1 ? (
         <Segmented options={accounts.map((a) => ({ value: String(a.slot), label: a.label }))} value={String(slot ?? 0)} onChange={(v) => onSlot(Number(v))} />
       ) : null}
+      {link ? <LinkShare link={link} /> : null}
+      {priced ? (
+        asking ? (
+          <Field
+            label={`Ask for an amount (${priced.config.symbol})`}
+            value={amount}
+            onChangeText={setAmount}
+            placeholder="0"
+            keyboardType="decimal-pad"
+            error={amount.trim() && !asked ? `enter an amount with at most ${priced.config.decimals} decimals` : null}
+            hint="The link asks for this amount; whoever pays can change it."
+          />
+        ) : (
+          <Button title="Ask for an amount" kind="ghost" small icon="add" onPress={() => setAsking(true)} />
+        )
+      ) : null}
       {accountHex ? (
-        <>
-          <View style={{ paddingVertical: spacing.sm }}>
-            <QrCode value={encodeRequest({ account: accountHex, coin: coin?.hex })} />
-          </View>
-          <Caption style={{ textAlign: 'center' }}>Scan the code, or tap the account to copy it.</Caption>
-          <View style={{ backgroundColor: t.cardAlt, borderRadius: radius.md, padding: spacing.md }}>
-            <IdChip value={accountHex} full />
-          </View>
-        </>
+        <View style={{ backgroundColor: t.cardAlt, borderRadius: radius.md, padding: spacing.md, gap: 4 }}>
+          <Caption>The account, to copy</Caption>
+          <IdChip value={accountHex} full />
+        </View>
       ) : null}
       {account?.delay ? <Caption>Deposits are instant; withdrawals from {account.label} wait {relativeDuration(account.delay)}.</Caption> : null}
     </Sheet>
@@ -70,9 +142,10 @@ export function ReceiveSheet({
 }
 
 /**
- * A full-screen camera that reads QR codes. `onScan` gets each new code and
- * returns null when it took it (the caller then closes the scanner) or a
- * message to show while scanning goes on.
+ * A full-screen camera that reads QR codes, or a link pasted from the
+ * clipboard. `onScan` gets each new code and returns null when it took it
+ * (the caller then closes the scanner) or a message to show while scanning
+ * goes on.
  */
 export function QrScanner({ visible, onClose, onScan, title = 'Scan a code' }: { visible: boolean; onClose: () => void; onScan: (text: string) => string | null; title?: string }) {
   // The camera and the scanner's state exist only while it is open.
@@ -102,6 +175,10 @@ function Scanner({ onClose, onScan, title }: { onClose: () => void; onScan: (tex
     if (data === last.current) return;
     last.current = data;
     setMessage(onScan(data));
+  };
+  const paste = async () => {
+    const text = (await Clipboard.getStringAsync().catch(() => '')).trim();
+    setMessage(text ? onScan(text) : 'Nothing to paste: copy the link first.');
   };
 
   return (
@@ -138,8 +215,9 @@ function Scanner({ onClose, onScan, title }: { onClose: () => void; onScan: (tex
               <Text style={[styles.text, { flex: 1, textAlign: 'left' }]}>{message}</Text>
             </View>
           ) : permission?.granted ? (
-            <Text style={styles.text}>Point the camera at a Ting QR code.</Text>
+            <Text style={styles.text}>Point the camera at a Ting QR code, or paste a link someone sent you.</Text>
           ) : null}
+          <Button title="Paste a link" kind="raised" icon="clipboard-outline" onPress={paste} style={{ alignSelf: 'stretch', marginTop: spacing.md }} />
         </View>
       </View>
     </>

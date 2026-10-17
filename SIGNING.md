@@ -13,8 +13,9 @@ The code is `src/chain/offchain.ts`, which sites may copy, and
 
 1. The site stores a request and shows its code, as a QR code to scan with a
    phone, or as a link that opens the app on the same device:
-   `ting:sign?url=<percent-encoded address of the request>`. The app registers
-   the `ting:` scheme, so no domain of the app is involved.
+   `ting:sign?url=<percent-encoded address of the request>`, one of the
+   [Ting links](LINKS.md). The app registers the `ting:` scheme, so no domain
+   of the app is involved.
 2. The app fetches the address. The request's **origin** is the origin of that
    address, `https://host[:port]`; plain `http` is accepted only for
    `localhost`, `127.0.0.1` and `[::1]`, for sites in development.

@@ -6,33 +6,34 @@ import { policyFor, schemeOf } from '@/chain/contracts';
 import { nowSeconds, relativeTime } from '@/chain/format';
 import * as idp from '@/chain/identity';
 import { SCHEME_LABEL } from '@/chain/keys';
+import { encodeLink, netOf, parseLinkOf } from '@/chain/links';
 import { fetchIdentity, IdentityInfo } from '@/state/chain';
 import { useFee, withFee } from '@/state/fees';
 import { deviceKeyOf, newUserPhrase } from '@/state/keys';
 import { ProposalStatus, approveRecovery, identitySigner, linkedDeviceKeys, proposalStatus, recover, userIdentity, withdrawApproval } from '@/state/registry';
 import { useStore } from '@/state/store';
 import { useWorkspace } from '@/state/workspace';
-import { Avatar, Banner, Button, Caption, Card, Field, IdChip, ListItem, Pill, Row, Screen, Segmented, Sub } from '@/ui/components';
+import { Banner, Button, Caption, Card, Field, ListItem, Pill, Row, Screen, Segmented, Sub } from '@/ui/components';
 import { keyFingerprint, nameOf, relativeDuration, sentence } from '@/ui/describe';
 import { FeeRow } from '@/ui/FeeRow';
+import { LinkShare } from '@/ui/Qr';
 import { spacing, useTheme } from '@/ui/theme';
 
 type Mode = 'mine' | 'help';
 
 export default function RecoveryScreen() {
   const t = useTheme();
-  const params = useLocalSearchParams<{ mode?: Mode }>();
+  // `code`: a recovery link, scanned or pasted on the wallet.
+  const params = useLocalSearchParams<{ mode?: Mode; code?: string }>();
   const router = useRouter();
   const w = useWorkspace();
-  const users = useStore((s) => s.users);
   const addSubmitted = useStore((s) => s.addSubmitted);
   const advanced = w.advanced;
   // The key this device made for the user, or failing that one that already signs for it.
   const deviceKey = w.user ? (deviceKeyOf(w.user, w.keys) ?? (w.identity && w.info ? (linkedDeviceKeys(w.info.canonical, w.identity, w.keys)[0]?.key ?? null) : null)) : null;
   const [mode, setMode] = useState<Mode>(params.mode ?? 'mine');
   const [selectedKeys, setSelectedKeys] = useState<string[]>(() => (deviceKey ? [deviceKey.id] : []));
-  const [target, setTarget] = useState('');
-  const [keyListHex, setKeyListHex] = useState('');
+  const [linkText, setLinkText] = useState(params.code ?? '');
   const [lookup, setLookup] = useState<{ key: string; subject: string; info: IdentityInfo | null; status: ProposalStatus | null } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +67,20 @@ export default function RecoveryScreen() {
     return keys.length ? idp.encodeKeyList(keys) : null;
   })();
 
+  // "Help": the recovering identity and its new keys, from the link it sent.
+  const recoverLink: { id: string; keys: Uint8Array } | { problem: string } | null = (() => {
+    if (!linkText.trim()) return null;
+    try {
+      const link = parseLinkOf(linkText, 'recover');
+      if (w.info && link.net !== netOf(w.info.status.chainId)) return { problem: 'this link is for another Ting network' };
+      if (!idp.decodeKeyList(link.keys)) return { problem: 'the link lists no keys this app can read' };
+      return { id: link.id, keys: link.keys };
+    } catch (e) {
+      return { problem: (e as Error).message };
+    }
+  })();
+  const target = recoverLink && 'id' in recoverLink ? recoverLink.id : '';
+  const keyListHex = recoverLink && 'keys' in recoverLink ? hex(recoverLink.keys) : '';
   const targetId = mode === 'mine' ? (me?.id ?? null) : isHex(target, 32) ? unhex(target) : null;
   const keyList = mode === 'mine' ? myKeyList : isHex(keyListHex) && keyListHex.length > 0 ? unhex(keyListHex) : null;
 
@@ -135,9 +150,7 @@ export default function RecoveryScreen() {
     return w.keys.some((d) => equal(unhex(d.pub), k.params)) ? `${scheme} · on this device` : scheme;
   };
 
-  const otherIdentities = users.map((u) => ({ user: u, id: userIdentity(u) })).filter((x) => x.id && me && !equal(x.id.id, me.id));
   const due = status?.executableAt !== null && status?.executableAt !== undefined && Number(status.executableAt) <= nowSeconds();
-  const badCode = keyListHex.length > 0 && !(isHex(keyListHex) && idp.decodeKeyList(unhex(keyListHex)));
 
   return (
     <Screen belowHeader>
@@ -179,12 +192,11 @@ export default function RecoveryScreen() {
               <Button title="Make a new recovery phrase" kind="secondary" small icon="key-outline" onPress={prepare} loading={preparing} />
             </Card>
           ) : null}
-          {myKeyList && me ? (
+          {myKeyList && me && w.info ? (
             <Card>
               <Sub>{advanced ? '2. ' : ''}Send this to your guardians</Sub>
-              <Caption>Your guardians paste both under Identity → Help someone. Tap to copy.</Caption>
-              <IdChip label="code" value={hex(myKeyList)} />
-              <IdChip label="ID" value={hex(me.id)} />
+              <Caption>Each guardian scans it from their wallet, or pastes the link there or under Identity → Recovery → Help someone.</Caption>
+              <LinkShare link={encodeLink({ request: 'recover', net: netOf(w.info.status.chainId), id: hex(me.id), keys: myKeyList })} />
               {newKeys ? (
                 <Caption>
                   They should see {newKeys.length === 1 ? 'the key' : 'the keys'} {newKeys.map(keyFingerprint).join(', ')} to be installed.
@@ -197,21 +209,18 @@ export default function RecoveryScreen() {
         <>
           <Card>
             <Sub>Who is recovering?</Sub>
-            {otherIdentities.map(({ user, id }) => (
-              <ListItem key={user.id} left={<Avatar name={user.name} color={user.color} size={32} />} title={user.name} selected={target === hex(id!.id)} onPress={() => setTarget(hex(id!.id))} />
-            ))}
-            <Field label="Identity ID" value={target} onChangeText={(v) => setTarget(v.trim())} autoCapitalize="none" autoCorrect={false} placeholder="64 hex digits" />
             <Field
-              label="Recovery code"
-              value={keyListHex}
-              onChangeText={(v) => setKeyListHex(v.trim())}
+              label="Recovery link"
+              value={linkText}
+              onChangeText={setLinkText}
               autoCapitalize="none"
               autoCorrect={false}
-              placeholder="paste the code they sent"
+              placeholder="ting:recover?…"
               multiline
+              error={recoverLink && 'problem' in recoverLink ? sentence(recoverLink.problem) : null}
             />
-            {badCode ? <Caption style={{ color: t.danger }}>That is not a recovery code.</Caption> : null}
-            {newKeys && newKeys.length === 0 ? <Caption style={{ color: t.danger }}>The code lists no keys.</Caption> : null}
+            {targetId ? <Caption>Recovering {nameOf(w.names, targetId)}.</Caption> : <Caption>Paste the link they sent, or scan its code from the wallet.</Caption>}
+            {newKeys && newKeys.length === 0 ? <Caption style={{ color: t.danger }}>The link lists no keys.</Caption> : null}
           </Card>
           {newKeys && newKeys.length > 0 ? (
             <Card>

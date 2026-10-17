@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { OTHER_CHAIN_USER } from '@/ui/describe';
+import { OTHER_CHAIN_USER, sentence } from '@/ui/describe';
 import { Pressable, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -18,8 +18,10 @@ import { Banner, Button, Caption, Card, IconButton, IconCircle, InkHeader, ListI
 import { ProfileButton } from '@/ui/Profile';
 import { QrScanner, ReceiveSheet } from '@/ui/Qr';
 import { Welcome } from '@/ui/Welcome';
-import { isSignCode } from '@/chain/offchain';
-import { isPaymentCode } from '@/chain/request';
+import { LinkError, netOf } from '@/chain/links';
+import * as coin from '@/chain/coin';
+import { FirstCoins } from '@/ui/FirstCoins';
+import { routeOf } from '@/ui/linkRoutes';
 import { font, useTheme } from '@/ui/theme';
 
 const SCHEDULED_INFO =
@@ -46,6 +48,9 @@ export default function WalletScreen() {
   const found = useDiscoveredCoins(w.info?.status.height, w.scope, w.accounts, excluded);
 
   const selected = w.accounts.find((a) => a.slot === activeSlot) ?? w.accounts[0];
+  // A new identity with nothing in it yet: the way to its first coins.
+  const holdsNothing = !loading && w.coins.length > 0 && [...views.values()].flat().every((v) => coin.available(v.record) === 0n && v.record.balance === 0n);
+  const startHere = w.user?.kind === 'identity' && !!w.user.creation && !!w.info && !w.otherChain && (holdsNothing || (!w.identity && !w.identityLoading));
   const groups = coinGroups(w.coins, views);
 
   const header = (
@@ -87,6 +92,7 @@ export default function WalletScreen() {
         <Banner tone="warning">Waiting for the next block to create this identity.</Banner>
       ) : null}
       {!w.user ? <Welcome /> : null}
+      {startHere && w.user && w.info ? <FirstCoins user={w.user} net={netOf(w.info.status.chainId)} coin={w.coins[0] ?? null} /> : null}
 
       {w.user ? (
         <>
@@ -136,24 +142,18 @@ export default function WalletScreen() {
         </>
       ) : null}
 
-      <ReceiveSheet accounts={w.accounts} slot={receiveSlot} onSlot={setReceiveSlot} onClose={() => setReceiveSlot(null)} />
+      <ReceiveSheet accounts={w.accounts} slot={receiveSlot} onSlot={setReceiveSlot} onClose={() => setReceiveSlot(null)} amountCoin={w.coins[0]} />
       <QrScanner
         visible={scanning}
         onClose={() => setScanning(false)}
         title="Scan a code"
         onScan={(text) => {
-          // A site's signing request opens for review; a payment code opens Send.
-          if (isSignCode(text)) {
-            setScanning(false);
-            router.push({ pathname: '/sign', params: { code: text } });
-            return null;
-          }
-          if (isPaymentCode(text)) {
-            setScanning(false);
-            router.push({ pathname: '/send', params: { code: text } });
-            return null;
-          }
-          return 'That is not a Ting code.';
+          // Every Ting link opens its screen, which asks before anything happens.
+          const route = routeOf(text, 'inside');
+          if (route instanceof LinkError) return sentence(route.message);
+          setScanning(false);
+          router.push(route);
+          return null;
         }}
       />
 

@@ -107,6 +107,39 @@ export function base64Decode(text: string): Uint8Array {
   return out.subarray(0, at);
 }
 
+const BASE64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+/** `bytes` in base64url without padding (RFC 4648 §5), as links carry them. */
+export function base64url(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const n = (bytes[i] << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0);
+    const chars = Math.min(4, Math.ceil(((bytes.length - i) * 8) / 6));
+    for (let k = 0; k < chars; k++) out += BASE64URL[(n >> (18 - 6 * k)) & 63];
+  }
+  return out;
+}
+
+/** The bytes of unpadded base64url text; null when it is not exactly that. */
+export function fromBase64url(text: string): Uint8Array | null {
+  if (!/^[A-Za-z0-9_-]*$/.test(text) || text.length % 4 === 1) return null;
+  const out = new Uint8Array(Math.floor((text.length * 3) / 4));
+  let bits = 0;
+  let acc = 0;
+  let at = 0;
+  for (const ch of text) {
+    acc = ((acc << 6) | BASE64URL.indexOf(ch)) & 0xffffff;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out[at++] = (acc >> bits) & 255;
+    }
+  }
+  // The bits left over must be zero, so each text has one reading.
+  if (acc & ((1 << bits) - 1)) return null;
+  return out;
+}
+
 const U64 = (1n << 64n) - 1n;
 const U128 = (1n << 128n) - 1n;
 

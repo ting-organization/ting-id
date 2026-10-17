@@ -5,10 +5,10 @@
 import React, { useState } from 'react';
 import { Text } from 'react-native';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
-import { hex, isHex, unhex } from '@/chain/bytes';
+import { hex, unhex } from '@/chain/bytes';
 import * as coin from '@/chain/coin';
 import { formatAmount, nowSeconds, parseAmount } from '@/chain/format';
-import { isPaymentCode, parseRequest } from '@/chain/request';
+import { accountIn } from '@/chain/links';
 import { queueRun, resolveSigner, submitCoinAction } from '@/state/chain';
 import { useCoinInfos } from '@/state/coins';
 import { useFee, useRunFee, withFee } from '@/state/fees';
@@ -51,9 +51,9 @@ function Mint() {
   const decimals = c.config.decimals;
   const symbol = c.config.symbol;
   const delayed = minter.delay > 0;
-  // Another account, typed or pasted as an address or payment code, wins over the list.
+  // Another account, typed or pasted as an account or pay link, wins over the list.
   const otherText = other.trim();
-  const otherAccount = isPaymentCode(otherText) ? (parseRequest(otherText)?.account ?? null) : isHex(otherText.toLowerCase(), 32) ? otherText.toLowerCase() : null;
+  const otherAccount = accountIn(otherText);
   const own = w.accounts.find((a) => a.slot === toSlot) ?? w.accounts[0];
   const to = otherText ? otherAccount : own ? hex(own.account) : null;
   const toLabel = otherText ? (w.names.get(otherAccount ?? '') ?? otherAccount ?? '') : own?.label;
@@ -67,7 +67,7 @@ function Mint() {
   const left = capped(c) ? c.config.maxSupply - c.state.issued : null;
   const ownFee = fee.own ? fee.fee : 0n;
   const problems: string[] = [];
-  if (otherText && !otherAccount) problems.push('the account is 64 hex digits or a payment code');
+  if (otherText && !otherAccount) problems.push('the account is 64 hex digits or a pay link');
   if (parsed === null) problems.push(`enter an amount with at most ${decimals} decimals`);
   if (parsed && left !== null && parsed > left) problems.push(`the cap leaves ${amountOf(c, left)} to mint`);
   if (to && coin.isReserved(unhex(to))) problems.push('that account is reserved');
@@ -122,7 +122,7 @@ function Mint() {
           setOther('');
         }}
       />
-      <Field label="Or another account" value={other} onChangeText={setOther} placeholder="account or payment code" autoCapitalize="none" autoCorrect={false} />
+      <Field label="Or another account" value={other} onChangeText={setOther} placeholder="account or pay link" autoCapitalize="none" autoCorrect={false} />
       {otherAccount ? <Caption>{otherAccount}</Caption> : null}
       <FeeRow fee={fee} boxed run={runFee > 0n ? { amount: runFee, coin: c } : undefined} />
       {problems.length > 0 && (amountText || otherText) ? <Banner tone="warning">{problems.map(sentence).join(' ')}</Banner> : null}

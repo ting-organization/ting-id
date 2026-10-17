@@ -5,7 +5,8 @@ import { equal, hex, isHex, unhex } from '@/chain/bytes';
 import { policyFor } from '@/chain/contracts';
 import { DELAY_PRESETS, nowSeconds } from '@/chain/format';
 import * as idp from '@/chain/identity';
-import { SCHEMES, SCHEME_HINT, SCHEME_LABEL, Scheme, parseDeviceCode } from '@/chain/keys';
+import { SCHEMES, SCHEME_HINT, SCHEME_LABEL, Scheme } from '@/chain/keys';
+import { netOf, parseLinkOf } from '@/chain/links';
 import { useFee, withFee } from '@/state/fees';
 import { DEFAULT_SCHEME, createDeviceKey, keyNameFor } from '@/state/keys';
 import { identitySigner, linkedDeviceKeys, proposeChange, userIdentity } from '@/state/registry';
@@ -38,7 +39,8 @@ const RECOVERY_KINDS: Kind[] = ['addGuardian', 'removeGuardian', 'setThreshold',
 type KeySource = 'code' | 'new' | string;
 
 export default function ProposeScreen() {
-  const params = useLocalSearchParams<{ kind: Kind; keyId?: string; id?: string; slot?: string; key?: string }>();
+  // `code`: a device link, scanned or pasted on the wallet.
+  const params = useLocalSearchParams<{ kind: Kind; keyId?: string; id?: string; slot?: string; key?: string; code?: string }>();
   const kind: Kind | null = KINDS.includes((params.kind ?? 'addKey') as Kind) ? ((params.kind ?? 'addKey') as Kind) : null;
   const keyIdParam = params.keyId && /^\d+$/.test(params.keyId) ? BigInt(params.keyId) : null;
   const router = useRouter();
@@ -52,7 +54,7 @@ export default function ProposeScreen() {
   const presetKey = params.key && w.keys.some((k) => k.id === params.key) ? params.key : null;
   const addingPhrase = !!presetKey && w.user?.phraseKeyId === presetKey;
   const [source, setSource] = useState<KeySource>(presetKey ?? 'code');
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState(params.code ?? '');
   const [newKeyName, setNewKeyName] = useState('');
   const [newKeyScheme, setNewKeyScheme] = useState<Scheme>(DEFAULT_SCHEME);
   const [guardian, setGuardian] = useState(params.id && isHex(params.id, 32) ? params.id : '');
@@ -82,7 +84,19 @@ export default function ProposeScreen() {
   const isLinked = (pub: Uint8Array) => !!w.identity?.keys.some((ik) => equal(ik.key.params, pub));
   const availableKeys = w.keys.filter((k) => !isLinked(unhex(k.pub)));
   const otherIdentities = users.map((u) => ({ user: u, id: userIdentity(u) })).filter((x) => x.id && me && !equal(x.id.id, me.id));
-  const parsedCode = code.trim() ? parseDeviceCode(code) : null;
+  // The device link's key, when it is a link for this identity on this network.
+  const device: { scheme: Scheme; pub: Uint8Array } | { problem: string } | null = (() => {
+    if (!code.trim()) return null;
+    try {
+      const link = parseLinkOf(code, 'device');
+      if (w.info && link.net !== netOf(w.info.status.chainId)) return { problem: 'this link is for another Ting network' };
+      if (me && link.id !== hex(me.id)) return { problem: `this device link is for another identity, not ${w.user?.name ?? 'this one'}` };
+      return { scheme: link.scheme, pub: link.key };
+    } catch (e) {
+      return { problem: (e as Error).message };
+    }
+  })();
+  const parsedCode = device && 'pub' in device ? device : null;
 
   const operation = (): idp.Operation | string => {
     switch (kind) {
@@ -90,7 +104,7 @@ export default function ProposeScreen() {
         if (!w.info) return 'not connected';
         if (source === 'new') return 'built on submit';
         if (source === 'code') {
-          if (!parsedCode) return 'paste the device code';
+          if (!parsedCode) return 'paste the device link';
           if (isLinked(parsedCode.pub)) return 'that device already has access';
           return { kind: 'addKey', key: { policy: policyFor(w.info.canonical, parsedCode.scheme), params: parsedCode.pub } };
         }
@@ -161,26 +175,26 @@ export default function ProposeScreen() {
           <>
             {advanced ? (
               <ListItem
-                title="A device code"
+                title="A device link"
                 subtitle="from another phone or browser"
                 selected={source === 'code'}
                 onPress={() => setSource('code')}
                 right={source === 'code' ? <Pill label="selected" tone="primary" small /> : null}
               />
             ) : (
-              <Caption>Paste the device code the other device shows after Add a user → Restore → Identity ID.</Caption>
+              <Caption>Paste the device link the other device shows after Add a user → Restore → Identity ID, or scan its code from the wallet.</Caption>
             )}
             {source === 'code' ? (
               <View style={{ gap: spacing.sm, paddingLeft: advanced ? spacing.md : 0 }}>
                 <Field
-                  label="Device code"
+                  label="Device link"
                   value={code}
                   onChangeText={setCode}
-                  placeholder="secp256k1:04…"
+                  placeholder="ting:device?…"
                   autoCapitalize="none"
                   autoCorrect={false}
                   multiline
-                  error={code.trim() && !parsedCode ? 'That is not a device code.' : null}
+                  error={device && 'problem' in device ? sentence(device.problem) : null}
                 />
               </View>
             ) : null}

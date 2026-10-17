@@ -29,7 +29,10 @@ the file was built by this repository's release workflow.
   replace a phrase someone else got hold of. [RECOVERY.md](RECOVERY.md)
   describes the phrase.
 - It sends, schedules and cancels payments in any coin of the standard coin
-  program, and shows and scans payment codes (`ting:<account>`) as QR codes.
+  program, with fees set from what recent transactions paid.
+- Phones ask things of each other with Ting links, as QR codes or text: pay me,
+  set up my identity and send me my first coins, add this device, approve my
+  recovery. [LINKS.md](LINKS.md) describes them.
 - With Settings → Coin tools on, a Coins tab lists every coin on the chain,
   creates coins, and mints coins whose minter is one of your accounts.
 - Sites can ask it to sign in or to sign a statement; [SIGNING.md](SIGNING.md)

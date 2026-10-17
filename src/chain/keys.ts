@@ -4,7 +4,7 @@
 // signing needs no randomness; key generation takes it from the caller.
 import { p256 } from '@noble/curves/nist.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { hex, unhex } from './bytes';
+import { hex } from './bytes';
 
 export type Scheme = 'secp256k1' | 'p256';
 export const SCHEMES: Scheme[] = ['secp256k1', 'p256'];
@@ -58,24 +58,13 @@ export function verifyDigest(
   }
 }
 
-// ---- Device codes -------------------------------------------------------------
-//
-// What one device shows so that another can add it to an identity: the
-// scheme and the public key. Pasted into "Add a device" on the other side.
-
-export function deviceCode(scheme: Scheme, pub: Uint8Array): string {
-  return `${scheme}:${hex(pub)}`;
-}
-
-export function parseDeviceCode(text: string): { scheme: Scheme; pub: Uint8Array } | null {
-  const m = /^\s*(secp256k1|p256)\s*:\s*([0-9a-fA-F]{130})\s*$/.exec(text);
-  if (!m) return null;
-  const scheme = m[1] as Scheme;
-  const pub = unhex(m[2].toLowerCase());
+/** Whether `pub` is an uncompressed public key on the curve of `scheme`. */
+export function isPublicKey(scheme: Scheme, pub: Uint8Array): boolean {
+  if (pub.length !== 65) return false;
   try {
-    curve(scheme).Point.fromHex(m[2].toLowerCase());
+    curve(scheme).Point.fromHex(hex(pub));
+    return true;
   } catch {
-    return null;
+    return false;
   }
-  return { scheme, pub };
 }

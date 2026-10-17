@@ -7,7 +7,8 @@ import { equal, hex, unhex } from '@/chain/bytes';
 import { schemeOf } from '@/chain/contracts';
 import { nowSeconds, relativeTime, shortId } from '@/chain/format';
 import * as idp from '@/chain/identity';
-import { SCHEME_LABEL, deviceCode } from '@/chain/keys';
+import { SCHEME_LABEL } from '@/chain/keys';
+import { encodeLink, netOf } from '@/chain/links';
 import { slotLabel } from '@/state/chain';
 import { useFee } from '@/state/fees';
 import { deviceKeyOf, ensureDeviceKey } from '@/state/keys';
@@ -36,6 +37,7 @@ import {
 import { ConfirmOptions, ConfirmSheet } from '@/ui/confirm';
 import { FeeRow } from '@/ui/FeeRow';
 import { ProfileButton } from '@/ui/Profile';
+import { LinkShare } from '@/ui/Qr';
 import { Welcome } from '@/ui/Welcome';
 import { font, spacing, type, useTheme } from '@/ui/theme';
 
@@ -213,10 +215,10 @@ export default function IdentityScreen() {
               </Caption>
             </View>
           </Row>
-          {deviceKey ? (
+          {deviceKey && w.info ? (
             <>
-              <Caption>Add this code on a device that has access, under Devices → Add device:</Caption>
-              <IdChip label="code" value={deviceCode(deviceKey.scheme, unhex(deviceKey.pub))} full />
+              <Caption>On a device that has access, scan this or paste the link there: Scan on the wallet, or Devices → Add device.</Caption>
+              <LinkShare link={encodeLink({ request: 'device', net: netOf(w.info.status.chainId), id: hex(id.id), scheme: deviceKey.scheme, key: unhex(deviceKey.pub) })} />
             </>
           ) : (
             <Button

@@ -8,8 +8,8 @@ import * as coin from '@/chain/coin';
 import { policyFor } from '@/chain/contracts';
 import { formatAmount, nowSeconds, parseAmount, shortId } from '@/chain/format';
 import * as idp from '@/chain/identity';
-import { isSignCode } from '@/chain/offchain';
-import { isPaymentCode, parseRequest } from '@/chain/request';
+import { routeOf } from '@/ui/linkRoutes';
+import { LinkError, isLink, netOf, parseLinkOf } from '@/chain/links';
 import { queueRun, resolveSigner, submitCoinAction } from '@/state/chain';
 import { coinGroups, useAccountViews } from '@/state/coins';
 import { useFee, withFee } from '@/state/fees';
@@ -61,11 +61,14 @@ export default function SendScreen() {
   const [naming, setNaming] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [codeNotice, setCodeNotice] = useState<string | null>(null);
-  /** The coin a payment code asked for: nothing is sent in another one. */
+  /** The coin a pay link asked for: nothing is sent in another one. */
   const [codeCoin, setCodeCoin] = useState<string | null>(null);
+  /** What the pay link said the payment is for. */
+  const [note, setNote] = useState<string | null>(null);
   const forgetCode = () => {
     setCodeNotice(null);
     setCodeCoin(null);
+    setNote(null);
   };
 
   const from = views.find((v) => v.account.slot === (params.slot !== undefined ? Number(params.slot) : activeSlot)) ?? views[0];
@@ -104,30 +107,40 @@ export default function SendScreen() {
     return out;
   })();
 
-  // A payment code, scanned or pasted, fills the recipient and, when it names
-  // a followed coin, picks that coin. Returns what is wrong with it, if anything.
+  // A pay link, scanned or pasted, fills the recipient, the amount it asks
+  // for and, when it names a followed coin, picks that coin. Returns what is
+  // wrong with it, if anything.
   const applyCode = (text: string): string | null => {
-    const request = parseRequest(text);
-    if (!request) return 'This code does not hold a Ting account.';
-    setTo(request.account);
+    let link;
+    try {
+      link = parseLinkOf(text, 'pay');
+    } catch (e) {
+      return sentence((e as Error).message);
+    }
+    if (w.info && link.net !== netOf(w.info.status.chainId)) return 'This link is for another Ting network.';
+    setTo(link.to);
     setCodeNotice(null);
-    setCodeCoin(request.coin ?? null);
-    if (request.coin && request.coin !== selectedCoin?.hex) {
-      if (w.coinById.get(request.coin)) {
-        setActiveCoin(request.coin);
-        router.setParams({ coin: request.coin, slot: String(from?.account.slot ?? 0) });
+    setCodeCoin(link.coin ?? null);
+    setNote(link.note ?? null);
+    if (link.amount) setAmount(link.amount);
+    if (link.coin && link.coin !== selectedCoin?.hex) {
+      if (w.coinById.get(link.coin)) {
+        setActiveCoin(link.coin);
+        router.setParams({ coin: link.coin, slot: String(from?.account.slot ?? 0) });
       } else {
-        setCodeNotice(`The code asks for coin ${shortId(request.coin)}, which you do not follow. Follow it in Settings to send it.`);
+        setCodeNotice(`The link asks for coin ${shortId(link.coin)}, which you do not follow. Follow it in Settings to send it.`);
       }
     }
     return null;
   };
 
   const scanned = (text: string): string | null => {
-    // A site's signing request scanned here opens for review instead.
-    if (isSignCode(text)) {
+    // A pay link fills this form; any other link opens its own screen.
+    const route = routeOf(text, 'inside');
+    if (route instanceof LinkError) return sentence(route.message);
+    if (route.pathname !== '/send') {
       setScanning(false);
-      router.push({ pathname: '/sign', params: { code: text } });
+      router.push(route);
       return null;
     }
     const problem = applyCode(text);
@@ -135,7 +148,7 @@ export default function SendScreen() {
     return problem;
   };
 
-  // A payment code scanned elsewhere, or opened as a link, arrives as `code`.
+  // A pay link scanned elsewhere, or opened from outside the app, arrives as `code`.
   const appliedCode = useRef<string | null>(null);
   const confirm = useConfirm();
   useEffect(() => {
@@ -145,12 +158,13 @@ export default function SendScreen() {
     // What was typed stays unless the person takes the new code instead.
     const typed = amount.trim() !== '' || to.trim() !== '';
     (typed
-      ? confirm({ title: 'Use the new payment code?', body: 'It replaces the recipient and amount you entered.', confirm: 'Use the code', back: 'Keep what I entered' })
+      ? confirm({ title: 'Use the new pay link?', body: 'It replaces the recipient and amount you entered.', confirm: 'Use the link', back: 'Keep what I entered' })
       : Promise.resolve(true)
     ).then((yes) => {
       if (!yes) return;
       setAmount('');
-      applyCode(code);
+      const problem = applyCode(code);
+      if (problem) setCodeNotice(problem);
     });
   }, [params.code]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -371,6 +385,7 @@ export default function SendScreen() {
                 {toLabel ?? 'New recipient'}
               </Text>
               <Text style={{ color: t.faint, fontSize: 12, fontFamily: type.mono.fontFamily }}>{to}</Text>
+              {note ? <Caption numberOfLines={2}>For: {note}</Caption> : null}
               {!toLabel ? <Button title="Save as contact" kind="ghost" small icon="person-add-outline" onPress={() => setNaming(true)} /> : null}
             </View>
             <Button
@@ -391,11 +406,15 @@ export default function SendScreen() {
                 <Field
                   value={to}
                   onChangeText={(v) => {
-                    if (isPaymentCode(v) && applyCode(v) === null) return;
+                    if (isLink(v)) {
+                      const problem = applyCode(v);
+                      if (problem) setCodeNotice(problem);
+                      return;
+                    }
                     setTo(v.trim().toLowerCase());
                     forgetCode();
                   }}
-                  placeholder="Account or payment code"
+                  placeholder="Account or pay link"
                   autoCapitalize="none"
                   autoCorrect={false}
                   accessibilityLabel="Recipient"
@@ -419,7 +438,7 @@ export default function SendScreen() {
       {codeNotice ? (
             <Banner tone="warning">{codeNotice}</Banner>
           ) : coinMismatch ? (
-            <Banner tone="warning">The payment code asks for {w.coinById.get(codeCoin!)?.config.symbol ?? shortId(codeCoin!)}; choose that coin to send.</Banner>
+            <Banner tone="warning">The pay link asks for {w.coinById.get(codeCoin!)?.config.symbol ?? shortId(codeCoin!)}; choose that coin to send.</Banner>
           ) : null}
       {problems.length > 0 && (amount || to) ? <Banner tone="warning">{problems.map(sentence).join(' ')}</Banner> : null}
       {feeWarning ? <Banner tone="warning">{feeWarning}</Banner> : null}

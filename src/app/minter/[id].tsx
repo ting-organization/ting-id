@@ -4,10 +4,10 @@
 // waits too, and can be cancelled.
 import React, { useState } from 'react';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
-import { hex, isHex, unhex } from '@/chain/bytes';
+import { hex, unhex } from '@/chain/bytes';
 import * as coin from '@/chain/coin';
 import { nowSeconds } from '@/chain/format';
-import { isPaymentCode, parseRequest } from '@/chain/request';
+import { accountIn } from '@/chain/links';
 import { queueRun, resolveSigner, submitCoinAction } from '@/state/chain';
 import { useCoinInfos } from '@/state/coins';
 import { useFee, useRunFee, withFee } from '@/state/fees';
@@ -55,11 +55,11 @@ function Minter() {
   // Savings by default: the safer home for minting.
   const chosen = others.find((a) => a.slot === slot) ?? others.find((a) => a.delay > 0) ?? others[0] ?? null;
   const otherText = other.trim();
-  const otherAccount = isPaymentCode(otherText) ? (parseRequest(otherText)?.account ?? null) : isHex(otherText.toLowerCase(), 32) ? otherText.toLowerCase() : null;
+  const otherAccount = accountIn(otherText);
   const next = target === 'none' ? hex(coin.ZERO_ACCOUNT) : target === 'other' ? otherAccount : chosen ? hex(chosen.account) : null;
   const label = target === 'none' ? 'no one' : target === 'other' ? (w.names.get(otherAccount ?? '') ?? otherAccount ?? '') : chosen?.label;
   const problems: string[] = [];
-  if (target === 'other' && otherText && !otherAccount) problems.push('the account is 64 hex digits or a payment code');
+  if (target === 'other' && otherText && !otherAccount) problems.push('the account is 64 hex digits or a pay link');
   if (next && next === hex(coin.STATE_KEY)) problems.push('that account is reserved');
   if (fee.problem) problems.push(fee.problem);
   const ready = problems.length === 0 && !!next && !!w.user && !!w.info;
@@ -126,7 +126,7 @@ function Minter() {
       ) : null}
       {target === 'other' ? (
         <>
-          <Field label="Account" value={other} onChangeText={setOther} placeholder="account or payment code" autoCapitalize="none" autoCorrect={false} autoFocus />
+          <Field label="Account" value={other} onChangeText={setOther} placeholder="account or pay link" autoCapitalize="none" autoCorrect={false} autoFocus />
           {otherAccount ? <Caption>{otherAccount}</Caption> : null}
         </>
       ) : null}

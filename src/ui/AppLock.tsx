@@ -55,8 +55,10 @@ export function AppLock() {
     return () => sub.remove();
   }, [on, unlock]);
 
+  // Gone at once once unlocked, rather than faded out.
+  if (!on || !locked) return null;
   return (
-    <Modal visible={on && locked} animationType="fade" statusBarTranslucent onRequestClose={() => {}}>
+    <Modal visible animationType="fade" statusBarTranslucent onRequestClose={() => {}}>
       <View style={{ flex: 1, backgroundColor: t.header, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, gap: spacing.lg }}>
         <Logo size={64} />
         <Text style={{ color: t.onHeader, fontSize: 22, letterSpacing: -0.4, ...font.extrabold }}>Ting ID is locked</Text>

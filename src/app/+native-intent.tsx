@@ -1,15 +1,12 @@
-// Links the system opens the app with: a site's signing request
-// (`ting:sign?url=…`) opens for review, a payment code (`ting:<account>`) opens
-// Send. Nothing else from outside opens a screen: a link could otherwise open a
-// form with someone's own values filled in, such as a guardian to link.
-import { isSignCode } from '@/chain/offchain';
-import { isPaymentCode } from '@/chain/request';
+// Links the system opens the app with (LINKS.md): a pay, create or sign link
+// opens its screen, which asks before anything happens. Nothing else from
+// outside opens a screen: a device or recovery link from a message could
+// otherwise lead someone into adding a stranger's key (ui/linkRoutes).
+import { systemPath } from '@/ui/linkRoutes';
 
 export function redirectSystemPath({ path }: { path: string; initial: boolean }): string {
   try {
-    if (isSignCode(path)) return `/sign?code=${encodeURIComponent(path)}`;
-    if (/^ting:/i.test(path) && isPaymentCode(path)) return `/send?code=${encodeURIComponent(path)}`;
-    return '/';
+    return systemPath(path);
   } catch {
     return '/';
   }
