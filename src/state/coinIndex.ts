@@ -1,0 +1,138 @@
+// Every coin on the chain. The node keeps no list of deployments, so the index
+// reads the blocks once for deployments of the standard coin code (./deployments),
+// forward as blocks arrive, and saves what it found on the device: the next
+// start reads only the blocks it has not seen.
+import { useEffect, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { unhex } from '@/chain/bytes';
+import { contractHash } from '@/chain/contracts';
+import type { ChainApi } from '@/chain/node';
+import { useNodeClient } from './chain';
+import { SavedIndex, advance, candidates, emptyIndex, isSavedIndex, rewind } from './deployments';
+
+/** Blocks per request, the node's page limit. */
+const PAGE = 100;
+/** Blocks read again when the last block read was replaced. */
+const REORG_DEPTH = 20;
+const STORAGE_PREFIX = 'ting-id-coins:';
+
+class CoinIndex {
+  saved: SavedIndex = emptyIndex();
+  loaded = false;
+  reading = false;
+  private queue: Promise<void> = Promise.resolve();
+  private listeners = new Set<() => void>();
+  /** Results already checked: whether each is a coin. */
+  private checked = new Map<string, boolean>();
+  /** Set once everything was deleted: what is still on the way is saved nowhere. */
+  dropped = false;
+
+  constructor(
+    readonly storageKey: string,
+    readonly node: ChainApi,
+  ) {}
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private notify() {
+    for (const l of this.listeners) l();
+  }
+
+  private async isCoin(id: string): Promise<boolean> {
+    let known = this.checked.get(id);
+    if (known === undefined) {
+      known = (await this.node.contract(unhex(id)))?.codeHash === contractHash('coin');
+      this.checked.set(id, known);
+    }
+    return known;
+  }
+
+  /** Reads the blocks up to `height` it has not read; one sync at a time. */
+  sync(height: number): Promise<void> {
+    const step = this.queue.then(async () => {
+      if (!this.loaded) {
+        const text = await AsyncStorage.getItem(this.storageKey).catch(() => null);
+        try {
+          const v = text ? JSON.parse(text) : null;
+          if (isSavedIndex(v)) this.saved = v;
+        } catch {
+          // A damaged index is read again from the start.
+        }
+        this.loaded = true;
+        this.notify();
+      }
+      let s = this.saved;
+      if (s.last) {
+        const [block] = s.last.height <= height ? await this.node.blocks(s.last.height, 1) : [];
+        if (!block || block.id !== s.last.id) s = rewind(s, REORG_DEPTH, height);
+      }
+      if (s.next > height) return;
+      this.reading = true;
+      this.notify();
+      try {
+        while (s.next <= height) {
+          const blocks = (await this.node.blocks(s.next, Math.min(PAGE, height - s.next + 1))).filter((b) => b.height <= height);
+          if (blocks.length === 0) break;
+          const found: string[] = [];
+          for (const id of candidates(blocks)) if (await this.isCoin(id)) found.push(id);
+          s = advance(s, blocks, found);
+          this.saved = s;
+          this.notify();
+        }
+      } finally {
+        this.saved = s;
+        this.reading = false;
+        if (!this.dropped) await AsyncStorage.setItem(this.storageKey, JSON.stringify(s)).catch(() => {});
+        this.notify();
+      }
+    });
+    this.queue = step.catch(() => {});
+    return step;
+  }
+}
+
+const indexes = new Map<string, CoinIndex>();
+
+/** Everything was deleted: no index saves again, and each is read anew when next shown. */
+export function forgetCoinIndexes() {
+  for (const index of indexes.values()) index.dropped = true;
+  indexes.clear();
+}
+
+/** The coins deployed on the chain, as far as the index has read, oldest first. */
+export function useCoinIndex(chainHex: string | null, height: number | undefined) {
+  const node = useNodeClient();
+  const key = chainHex ? `${node.url}|${chainHex}` : null;
+  const index = useMemo(() => {
+    if (!key || !chainHex) return null;
+    let i = indexes.get(key);
+    if (!i) {
+      i = new CoinIndex(STORAGE_PREFIX + chainHex, node);
+      indexes.set(key, i);
+    }
+    return i;
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [, setVersion] = useState(0);
+  useEffect(() => index?.subscribe(() => setVersion((v) => v + 1)), [index]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!index || !height) return;
+    index
+      .sync(height)
+      .then(() => setError(null))
+      .catch((e) => setError((e as Error).message));
+  }, [index, height]);
+  return {
+    coins: index?.saved.coins ?? [],
+    /** The last block read. */
+    readTo: (index?.saved.next ?? 1) - 1,
+    reading: index?.reading ?? false,
+    loaded: index?.loaded ?? false,
+    error,
+  };
+}

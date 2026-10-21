@@ -1,0 +1,274 @@
+// Little-endian wire formats shared by every Ting application
+// (wiki: data/encoding): fixed-width integers, `Bytes(x)` = u32 length then
+// the bytes, and exact decoding that rejects trailing data.
+
+const HEX = '0123456789abcdef';
+
+export function hex(bytes: Uint8Array): string {
+  let out = '';
+  for (const b of bytes) out += HEX[b >> 4] + HEX[b & 15];
+  return out;
+}
+
+export function isHex(text: string, bytes?: number): boolean {
+  const t = text.trim();
+  if (t.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(t)) return false;
+  return bytes === undefined || t.length === bytes * 2;
+}
+
+export function unhex(text: string): Uint8Array {
+  const t = text.trim();
+  // The text is not repeated: it may be a secret.
+  if (!isHex(t)) throw new Error(`not hex (${t.length} characters)`);
+  const out = new Uint8Array(t.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(t.slice(2 * i, 2 * i + 2), 16);
+  return out;
+}
+
+export function concat(...parts: Uint8Array[]): Uint8Array {
+  let n = 0;
+  for (const p of parts) n += p.length;
+  const out = new Uint8Array(n);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
+export function equal(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** Byte-wise (lexicographic) order: negative, zero or positive. */
+export function compare(a: Uint8Array, b: Uint8Array): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return a.length - b.length;
+}
+
+/** Whether every value is above the one before it. */
+export function strictlyIncreasing(values: bigint[]): boolean {
+  return values.every((v, i) => i === 0 || v > values[i - 1]);
+}
+
+export function filled(value: number, length = 32): Uint8Array {
+  return new Uint8Array(length).fill(value);
+}
+
+/** UTF-8 encoding without relying on TextEncoder being present. */
+export function utf8(text: string): Uint8Array {
+  const out: number[] = [];
+  for (const ch of text) {
+    const c = ch.codePointAt(0)!;
+    if (c < 0x80) out.push(c);
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  return Uint8Array.from(out);
+}
+
+export function fromUtf8(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; ) {
+    const b = bytes[i];
+    let c: number;
+    let n: number;
+    if (b < 0x80) [c, n] = [b, 1];
+    else if ((b & 0xe0) === 0xc0) [c, n] = [b & 31, 2];
+    else if ((b & 0xf0) === 0xe0) [c, n] = [b & 15, 3];
+    else [c, n] = [b & 7, 4];
+    for (let k = 1; k < n; k++) c = (c << 6) | (bytes[i + k] & 63);
+    out += String.fromCodePoint(c);
+    i += n;
+  }
+  return out;
+}
+
+export function base64Decode(text: string): Uint8Array {
+  const table = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const clean = text.replace(/[^A-Za-z0-9+/]/g, '');
+  const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
+  let bits = 0;
+  let acc = 0;
+  let at = 0;
+  for (const ch of clean) {
+    acc = (acc << 6) | table.indexOf(ch);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out[at++] = (acc >> bits) & 255;
+    }
+  }
+  return out.subarray(0, at);
+}
+
+const BASE64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+/** `bytes` in base64url without padding (RFC 4648 §5), as links carry them. */
+export function base64url(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const n = (bytes[i] << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0);
+    const chars = Math.min(4, Math.ceil(((bytes.length - i) * 8) / 6));
+    for (let k = 0; k < chars; k++) out += BASE64URL[(n >> (18 - 6 * k)) & 63];
+  }
+  return out;
+}
+
+/** The bytes of unpadded base64url text; null when it is not exactly that. */
+export function fromBase64url(text: string): Uint8Array | null {
+  if (!/^[A-Za-z0-9_-]*$/.test(text) || text.length % 4 === 1) return null;
+  const out = new Uint8Array(Math.floor((text.length * 3) / 4));
+  let bits = 0;
+  let acc = 0;
+  let at = 0;
+  for (const ch of text) {
+    acc = ((acc << 6) | BASE64URL.indexOf(ch)) & 0xffffff;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out[at++] = (acc >> bits) & 255;
+    }
+  }
+  // The bits left over must be zero, so each text has one reading.
+  if (acc & ((1 << bits) - 1)) return null;
+  return out;
+}
+
+const U64 = (1n << 64n) - 1n;
+const U128 = (1n << 128n) - 1n;
+
+function le(value: bigint, width: number): Uint8Array {
+  const out = new Uint8Array(width);
+  let v = value;
+  for (let i = 0; i < width; i++) {
+    out[i] = Number(v & 255n);
+    v >>= 8n;
+  }
+  return out;
+}
+
+function fromLe(bytes: Uint8Array): bigint {
+  let v = 0n;
+  for (let i = bytes.length - 1; i >= 0; i--) v = (v << 8n) | BigInt(bytes[i]);
+  return v;
+}
+
+export function u64le(value: bigint | number): Uint8Array {
+  const v = BigInt(value);
+  if (v < 0n || v > U64) throw new Error('u64 out of range');
+  return le(v, 8);
+}
+
+export function u128le(value: bigint): Uint8Array {
+  if (value < 0n || value > U128) throw new Error('u128 out of range');
+  return le(value, 16);
+}
+
+export function u32le(value: number): Uint8Array {
+  return le(BigInt(value), 4);
+}
+
+/** Append-only encoder. */
+export class Writer {
+  private parts: Uint8Array[] = [];
+  put(bytes: Uint8Array): this {
+    this.parts.push(bytes);
+    return this;
+  }
+  u8(v: number): this {
+    return this.put(Uint8Array.of(v));
+  }
+  u16(v: number): this {
+    return this.put(le(BigInt(v), 2));
+  }
+  u32(v: number): this {
+    return this.put(u32le(v));
+  }
+  u64(v: bigint | number): this {
+    return this.put(u64le(v));
+  }
+  u128(v: bigint): this {
+    return this.put(u128le(v));
+  }
+  /** `Bytes(x)`. */
+  bytes(v: Uint8Array): this {
+    return this.put(u32le(v.length)).put(v);
+  }
+  finish(): Uint8Array {
+    return concat(...this.parts);
+  }
+}
+
+export class DecodeError extends Error {}
+
+/** Exact decoder: every read is bounds-checked and `end()` rejects leftovers. */
+export class Reader {
+  private at = 0;
+  constructor(private readonly buf: Uint8Array) {}
+  get remaining(): number {
+    return this.buf.length - this.at;
+  }
+  take(n: number): Uint8Array {
+    if (n < 0 || n > this.remaining) throw new DecodeError('truncated');
+    const out = this.buf.subarray(this.at, this.at + n);
+    this.at += n;
+    return out;
+  }
+  rest(): Uint8Array {
+    return this.buf.subarray(this.at);
+  }
+  position(): number {
+    return this.at;
+  }
+  array32(): Uint8Array {
+    return new Uint8Array(this.take(32));
+  }
+  u8(): number {
+    return this.take(1)[0];
+  }
+  u16(): number {
+    return Number(fromLe(this.take(2)));
+  }
+  u32(): number {
+    return Number(fromLe(this.take(4)));
+  }
+  u64(): bigint {
+    return fromLe(this.take(8));
+  }
+  /** A u64 that must fit a JavaScript number (heights, timestamps, counts). */
+  u64n(): number {
+    const v = this.u64();
+    if (v > BigInt(Number.MAX_SAFE_INTEGER)) throw new DecodeError('u64 too large');
+    return Number(v);
+  }
+  u128(): bigint {
+    return fromLe(this.take(16));
+  }
+  bytes(): Uint8Array {
+    return this.take(this.u32());
+  }
+  /** `u64 count` of fixed-size items as one slice. */
+  items(size: number): Uint8Array {
+    const count = this.u64n();
+    return this.take(count * size);
+  }
+  end(): void {
+    if (this.remaining !== 0) throw new DecodeError('trailing bytes');
+  }
+}
+
+/** Runs `f` and returns `null` instead of throwing a decode error. */
+export function tryDecode<T>(f: () => T): T | null {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof DecodeError || e instanceof RangeError) return null;
+    throw e;
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "Ting ID",
+    "slug": "ting-id",
+    "version": "0.1.0",
+    "scheme": [
+      "tingid",
+      "ting"
+    ],
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.tingid"
+    },
+    "android": {
+      "package": "app.tingid",
+      "allowBackup": false,
+      "adaptiveIcon": {
+        "backgroundColor": "#4F46E5",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "Ting ID uses Face ID to keep your recovery phrase for you only."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Ting ID uses Face ID before it shows your recovery phrase."
+        }
+      ],
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Ting ID uses the camera to scan payment codes and sites' signing codes.",
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-font",
+      "expo-sharing",
+      "@react-native-community/datetimepicker",
+      "./plugins/with-cleartext"
+    ]
+  }
+}

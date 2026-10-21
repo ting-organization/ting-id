@@ -1,0 +1,31 @@
+// QR codes as one SVG path, so every platform draws them the same way.
+import createQr from 'qrcode-generator';
+
+export interface QrShape {
+  /** Modules per side, without a quiet zone. */
+  size: number;
+  /** The dark modules over a size × size grid, one rectangle per horizontal run. */
+  path: string;
+}
+
+/** The QR code of `text` (byte mode, error correction M, smallest version that fits). */
+export function qrShape(text: string): QrShape {
+  const q = createQr(0, 'M');
+  q.addData(text, 'Byte');
+  q.make();
+  const size = q.getModuleCount();
+  let path = '';
+  for (let y = 0; y < size; y++) {
+    let x = 0;
+    while (x < size) {
+      if (!q.isDark(y, x)) {
+        x++;
+        continue;
+      }
+      const start = x;
+      while (x < size && q.isDark(y, x)) x++;
+      path += `M${start} ${y}h${x - start}v1h-${x - start}z`;
+    }
+  }
+  return { size, path };
+}

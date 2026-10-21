@@ -1,0 +1,37 @@
+// Accounts and signing (wiki: programs/conventions, accounts and signed messages).
+import { u32le } from './bytes';
+import { taggedHash } from './hash';
+import { Scheme, signDigest } from './keys';
+
+export const TAG_POLICY_ACCOUNT = 'app/account-v1/policy';
+export const TAG_CONTRACT_ACCOUNT = 'app/account-v1/contract';
+export const TAG_SIGN = 'app/sign-v1';
+
+/** `H("app/account-v1/policy", policy ‖ Bytes(params))`. */
+export function policyAccount(policy: Uint8Array, params: Uint8Array): Uint8Array {
+  return taggedHash(TAG_POLICY_ACCOUNT, policy, u32le(params.length), params);
+}
+
+export function contractAccount(contract: Uint8Array): Uint8Array {
+  return taggedHash(TAG_CONTRACT_ACCOUNT, contract);
+}
+
+/** What signature policies sign for an application message. */
+export function signingDigest(message: Uint8Array): Uint8Array {
+  return taggedHash(TAG_SIGN, message);
+}
+
+export function signMessage(scheme: Scheme, secret: Uint8Array, message: Uint8Array): Uint8Array {
+  return signDigest(scheme, secret, signingDigest(message));
+}
+
+/** Policy result (wiki: programs/conventions, policy interface): the required delay, or null when not authorized. */
+export function authorizedDelay(result: Uint8Array): bigint | null {
+  if (result.length === 1 && result[0] === 1) return 0n;
+  if (result.length === 9 && result[0] === 1) {
+    let d = 0n;
+    for (let i = 8; i >= 1; i--) d = (d << 8n) | BigInt(result[i]);
+    return d > 0n ? d : null;
+  }
+  return null;
+}
