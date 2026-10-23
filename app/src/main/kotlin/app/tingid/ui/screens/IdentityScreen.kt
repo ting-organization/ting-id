@@ -54,7 +54,6 @@ import app.tingid.chain.Link
 import app.tingid.chain.Links
 import app.tingid.chain.equal
 import app.tingid.chain.hex
-import app.tingid.chain.isHex
 import app.tingid.chain.nowSeconds
 import app.tingid.chain.relativeTime
 import app.tingid.chain.shortId
@@ -68,6 +67,7 @@ import app.tingid.state.User
 import app.tingid.state.UserKind
 import app.tingid.state.WorkspaceState
 import app.tingid.state.deviceKeyOf
+import app.tingid.state.guardiansOf
 import app.tingid.state.linkedDeviceKeys
 import app.tingid.state.policyLabel
 import app.tingid.state.sent
@@ -100,6 +100,7 @@ import app.tingid.ui.ListItem
 import app.tingid.ui.LocalActivity
 import app.tingid.ui.LocalNav
 import app.tingid.ui.LocalServices
+import app.tingid.ui.NameIdentitySheet
 import app.tingid.ui.NewUserRoute
 import app.tingid.ui.Pill
 import app.tingid.ui.ProfileButton
@@ -183,10 +184,9 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
     val id = w.identity
     val info = w.info
 
-    // Who may be a guardian, as this device knows: the ones named at creation and the other identities here.
+    // Who may be a guardian, as this device knows: the ones named at creation or linked from here, and the other identities here.
     val known = LinkedHashMap<String, ByteArray>()
-    user.creation?.let { Id.decodeCreation(unhex(it)) }?.guardians?.forEach { known[it.hex()] = it }
-    user.knownGuardians.filter { isHex(it, 32) }.forEach { known[it.lowercase()] = unhex(it) }
+    guardiansOf(user).forEach { known[it] = unhex(it) }
     for (u in users) {
         val other = userIdentity(u) ?: continue
         if (me != null && !equal(other.id, me.id)) known[other.id.hex()] = other.id
@@ -473,6 +473,8 @@ private fun KeysSection(w: WorkspaceState, user: User, id: IdentityInfo, canAct:
 @Composable
 private fun GuardiansSection(w: WorkspaceState, id: IdentityInfo, guardians: List<ByteArray>, canAct: Boolean, propose: (ProposeRoute) -> Unit) {
     val p = t
+    // A guardian with no name here can be given one.
+    var naming by remember { mutableStateOf<String?>(null) }
     val required = id.core.required
     SectionHeader(
         "Guardians",
@@ -490,15 +492,26 @@ private fun GuardiansSection(w: WorkspaceState, id: IdentityInfo, guardians: Lis
             }
             guardians.forEachIndexed { i, g ->
                 if (i > 0) Rule()
+                val unnamed = w.names[g.hex()] == null
                 ListItem(
                     nameOf(w.names, g),
                     subtitle = shortId(g, 10, 6),
                     left = { IconCircle(Icons.Outlined.VerifiedUser, p.accent, p.accentSoft) },
-                    right = if (canAct) ({ Button("Unlink", onClick = { propose(ProposeRoute(kind = "removeGuardian", id = g.hex())) }, kind = ButtonKind.Ghost, small = true) }) else null,
+                    right = if (unnamed || canAct) {
+                        {
+                            Row {
+                                if (unnamed) Button("Name", onClick = { naming = g.hex() }, kind = ButtonKind.Ghost, small = true)
+                                if (canAct) Button("Unlink", onClick = { propose(ProposeRoute(kind = "removeGuardian", id = g.hex())) }, kind = ButtonKind.Ghost, small = true)
+                            }
+                        }
+                    } else {
+                        null
+                    },
                 )
             }
         }
     }
+    naming?.let { NameIdentitySheet(it, onClose = { naming = null }) }
 }
 
 @Composable

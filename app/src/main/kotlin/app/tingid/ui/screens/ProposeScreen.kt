@@ -38,12 +38,14 @@ import app.tingid.state.Checked
 import app.tingid.state.SubmittedTx
 import app.tingid.state.deviceLinkKey
 import app.tingid.state.fetchIdentity
+import app.tingid.state.identityName
 import app.tingid.state.keyNameFor
 import app.tingid.state.linkedDeviceKeys
 import app.tingid.state.sent
 import app.tingid.state.slotLabel
 import app.tingid.state.thresholdOf
 import app.tingid.state.userIdentity
+import app.tingid.text.Names
 import app.tingid.text.count
 import app.tingid.text.describeOperation
 import app.tingid.text.deviceFingerprint
@@ -69,6 +71,7 @@ import app.tingid.ui.ProposeRoute
 import app.tingid.ui.Screen
 import app.tingid.ui.Spacing
 import app.tingid.ui.Sub
+import app.tingid.ui.TAKEN
 import app.tingid.ui.Tone
 import app.tingid.ui.TxRoute
 import app.tingid.ui.WalletTab
@@ -77,6 +80,7 @@ import app.tingid.ui.identity.rememberSending
 import app.tingid.ui.money.FeeRow
 import app.tingid.ui.money.rememberFee
 import app.tingid.ui.money.withFee
+import app.tingid.ui.nameTaken
 import app.tingid.ui.sentence
 import kotlinx.coroutines.CancellationException
 
@@ -105,6 +109,7 @@ fun ProposeScreen(route: ProposeRoute) {
     val nav = LocalNav.current
     val w by services.workspace.state.collectAsState()
     val users = services.store.data.collectAsState().value.users
+    val contacts = services.store.data.collectAsState().value.contacts
     val kind = (route.kind ?: "addKey").takeIf { it in TITLES }
     val keyIdParam = route.keyId?.takeIf { Regex("^[0-9]+$").matches(it) }?.toLongOrNull()
     val user = w.user
@@ -125,6 +130,14 @@ fun ProposeScreen(route: ProposeRoute) {
     var guardianFound by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     val guardianId = trimWhiteSpace(guardian).lowercase()
     val registry = info?.canonical?.registry
+    // A guardian with no name here is named with the link, as a contact.
+    var guardianName by remember { mutableStateOf("") }
+    val naming = kind == "addGuardian" && guardianFound == (guardianId to true) && identityName(w.names, registry, guardianId) == null
+    // The texts here name the guardian as its contact does, also when the contact has only its Spending account.
+    val guardianKnownAs = if (kind in setOf("addGuardian", "removeGuardian") && isHex(guardianId, 32)) identityName(w.names, registry, guardianId) else null
+    val withGuardian = { names: Names -> if (guardianKnownAs != null) names + (guardianId to guardianKnownAs) else names }
+    val newName = guardianName.trim()
+    val nameClash = naming && nameTaken(contacts, newName)
     LaunchedEffect(guardianId, registry?.hex(), w.node) {
         if (kind != "addGuardian" || registry == null || !isHex(guardianId, 32)) return@LaunchedEffect
         try {
@@ -242,11 +255,14 @@ fun ProposeScreen(route: ProposeRoute) {
                 }
                 val signer = services.registry.identitySigner(u, i.canonical, now.keys, identity)
                 val s = sent { services.registry.proposeChange(i.status.chainId, identity, signer, listOf(op), payer) }
-                val summary = "Propose: ${describeOperation(op, now.names, now.advanced) { it in thisDevice }}"
+                val summary = "Propose: ${describeOperation(op, withGuardian(now.names), now.advanced) { it in thisDevice }}"
                 services.store.addSubmitted(SubmittedTx(id = s.txId, at = nowSeconds(), summary = withFee(summary, chosen), userId = u.id))
                 if (adding) services.store.updateUser(u.id) { it.copy(phraseToAdd = false) }
                 // A guardian this phone linked stays known to it, by name and to unlink.
-                if (op is Id.Operation.AddGuardian) services.store.updateUser(u.id) { it.copy(knownGuardians = (it.knownGuardians + op.id.hex()).distinct()) }
+                if (op is Id.Operation.AddGuardian) {
+                    services.store.updateUser(u.id) { it.copy(knownGuardians = (it.knownGuardians + op.id.hex()).distinct()) }
+                    if (naming && newName.isNotEmpty()) services.store.nameIdentity(newName, op.id.hex(), i.canonical.registry)
+                }
                 s
             },
             opened = { s -> nav.navigate(TxRoute(s.txId, unsure = s.unsure)) { popUpTo<ProposeRoute> { inclusive = true } } },
@@ -257,7 +273,7 @@ fun ProposeScreen(route: ProposeRoute) {
     // Lowering an account's lock also waits out the lock it has.
     val lowering = kind == "setSlot" && currentSlot != null && slotDelay < currentSlot.delay
     val wait = if (lowering) maxOf(core.changeDelay, currentSlot.delay) else core.changeDelay
-    val canSubmit = preview is Checked.Ok || (kind == "addKey" && source == NEW_KEY)
+    val canSubmit = (preview is Checked.Ok || (kind == "addKey" && source == NEW_KEY)) && !nameClash
     val selected: @Composable () -> Unit = { Pill("selected", Tone.Primary, small = true) }
 
     Screen(title = title) {
@@ -335,8 +351,18 @@ fun ProposeScreen(route: ProposeRoute) {
                     ListItem(u.name, left = { Avatar(u.name, u.color, 32.dp) }, selected = guardian == idHex, onClick = { guardian = idHex })
                 }
                 Field(guardian, { guardian = it }, label = "Identity ID", placeholder = "64 hex digits", keyboardType = KeyboardType.Ascii)
+                if (naming) {
+                    Field(
+                        guardianName,
+                        { guardianName = it },
+                        label = "Their name",
+                        placeholder = "Bob",
+                        hint = "Optional: saved as a contact, with their Spending account.",
+                        error = if (nameClash) TAKEN else null,
+                    )
+                }
             }
-            if (kind == "removeGuardian" && isHex(guardian, 32)) Body("Unlink guardian ${nameOf(w.names, unhex(guardian))}.")
+            if (kind == "removeGuardian" && isHex(guardian, 32)) Body("Unlink guardian ${nameOf(withGuardian(w.names), unhex(guardianId))}.")
             if (kind == "setThreshold") {
                 Field(threshold, { threshold = it }, label = "Approvals a recovery needs", keyboardType = KeyboardType.Number, hint = "0 means more than half of the guardians.")
                 Caption("Currently ${count(core.guardianCount, "guardian")}.")
@@ -365,7 +391,7 @@ fun ProposeScreen(route: ProposeRoute) {
                     is Checked.Refused -> if (kind == "addKey" && source == NEW_KEY) "Adds a new key made on this device." else sentence(preview.message)
                     is Checked.Ok ->
                         if (kind == "addKey" && !advanced) "The other device can act for this identity."
-                        else describeOperation(preview.value, w.names, w.advanced) { it in thisDevice }
+                        else describeOperation(preview.value, withGuardian(w.names), w.advanced) { it in thisDevice }
                 },
             )
             Caption(

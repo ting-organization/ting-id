@@ -1,5 +1,6 @@
 // Pieces several screens show: the welcome for a phone with no user yet, the
-// profile button and its sheet, saving a contact, and when a payment goes.
+// profile button and its sheet, saving a contact, naming an identity, and when
+// a payment goes.
 package app.tingid.ui
 
 import android.app.DatePickerDialog
@@ -180,7 +181,7 @@ fun SaveContactSheet(account: String, onClose: () -> Unit) {
     val contacts = services.store.data.collectAsState().value.contacts
     var name by remember { mutableStateOf("") }
     val trimmed = name.trim()
-    val taken = trimmed.isNotEmpty() && contacts.any { it.name.trim().lowercase() == trimmed.lowercase() }
+    val taken = nameTaken(contacts, trimmed)
     val save = {
         services.store.addContact(Contact(UUID.randomUUID().toString(), trimmed, account.lowercase()))
         name = ""
@@ -188,8 +189,40 @@ fun SaveContactSheet(account: String, onClose: () -> Unit) {
     }
     Sheet(onClose = onClose, title = "Save as contact") {
         Text(account, style = Type.mono, color = t.muted)
-        Field(name, { name = it }, label = "Name", placeholder = "Bob", error = if (taken) "A contact is called that already." else null, onDone = { if (trimmed.isNotEmpty() && !taken) save() })
+        Field(name, { name = it }, label = "Name", placeholder = "Bob", error = if (taken) TAKEN else null, onDone = { if (trimmed.isNotEmpty() && !taken) save() })
         Button("Save contact", onClick = save, enabled = trimmed.isNotEmpty() && !taken)
+    }
+}
+
+/** Whether a contact other than `except` (an id) is called `name` already. */
+fun nameTaken(contacts: List<Contact>, name: String, except: String? = null): Boolean =
+    name.isNotEmpty() && contacts.any { it.id != except && it.name.trim().lowercase() == name.lowercase() }
+
+const val TAKEN = "A contact is called that already."
+
+/**
+ * Naming an identity this phone has no name for, such as a guardian: it joins
+ * the contacts with its Spending account, and goes by the name wherever it or
+ * that account appears.
+ */
+@Composable
+fun NameIdentitySheet(identity: String, onClose: () -> Unit) {
+    val services = LocalServices.current
+    val contacts = services.store.data.collectAsState().value.contacts
+    val registry = services.chain.info.collectAsState().value?.canonical?.registry
+    var name by remember { mutableStateOf("") }
+    val trimmed = name.trim()
+    val taken = nameTaken(contacts, trimmed)
+    val ready = trimmed.isNotEmpty() && !taken && registry != null
+    val save = {
+        if (registry != null) services.store.nameIdentity(trimmed, identity, registry)
+        onClose()
+    }
+    Sheet(onClose = onClose, title = "Name this identity") {
+        Text(identity, style = Type.mono, color = t.muted)
+        Field(name, { name = it }, label = "Name", placeholder = "Bob", error = if (taken) TAKEN else null, onDone = { if (ready) save() })
+        Caption("Saved as a contact, with the identity’s Spending account.")
+        Button("Save", onClick = save, enabled = ready)
     }
 }
 

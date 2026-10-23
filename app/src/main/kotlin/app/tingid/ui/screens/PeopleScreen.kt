@@ -1,5 +1,6 @@
-// People: the users on this phone, to switch between, add or remove, and the
-// contacts, to pay, copy or remove. Each row has a menu of its own.
+// People: the users on this phone, to switch between, add, rename or remove,
+// and the contacts, to pay, copy, rename or remove. Each row has a menu of its
+// own.
 package app.tingid.ui.screens
 
 import androidx.compose.foundation.background
@@ -17,6 +18,7 @@ import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.Icon
@@ -65,8 +67,10 @@ import app.tingid.ui.SectionHeader
 import app.tingid.ui.SendTab
 import app.tingid.ui.Sheet
 import app.tingid.ui.Spacing
+import app.tingid.ui.TAKEN
 import app.tingid.ui.copyText
 import app.tingid.ui.money.Hairline
+import app.tingid.ui.nameTaken
 import app.tingid.ui.openTab
 import app.tingid.ui.rememberConfirm
 import app.tingid.ui.sentence
@@ -98,6 +102,7 @@ fun PeopleScreen() {
     var removeError by remember { mutableStateOf<String?>(null) }
     var contactSheet by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<Menu?>(null) }
+    var renaming by remember { mutableStateOf<Menu?>(null) }
 
     fun removeUser(u: User) {
         scope.launch {
@@ -245,6 +250,12 @@ fun PeopleScreen() {
                         null
                     },
                     {
+                        MenuRow(Icons.Outlined.Edit, "Rename") {
+                            close()
+                            renaming = Menu.OfUser(u)
+                        }
+                    },
+                    {
                         MenuRow(Icons.Outlined.Delete, "Remove from this phone…", danger = true) {
                             close()
                             removeUser(u)
@@ -272,6 +283,12 @@ fun PeopleScreen() {
                         }
                     },
                     {
+                        MenuRow(Icons.Outlined.Edit, "Rename") {
+                            close()
+                            renaming = Menu.OfContact(c)
+                        }
+                    },
+                    {
                         MenuRow(Icons.Outlined.Delete, "Remove contact…", danger = true) {
                             close()
                             scope.launch {
@@ -287,6 +304,14 @@ fun PeopleScreen() {
         null -> {}
     }
 
+    val stopRenaming = { renaming = null }
+    when (val r = renaming) {
+        is Menu.OfUser -> RenameSheet(r.user.name, stopRenaming) { name -> services.store.updateUser(r.user.id) { it.copy(name = name) } }
+        is Menu.OfContact -> RenameSheet(r.contact.name, stopRenaming, taken = { nameTaken(contacts, it, except = r.contact.id) }) { name ->
+            services.store.renameContact(r.contact.id, name)
+        }
+        null -> {}
+    }
     if (contactSheet) NewContactSheet(onClose = { contactSheet = false })
     ConfirmHost(confirm)
 }
@@ -308,6 +333,23 @@ private fun NewContactSheet(onClose: () -> Unit) {
                 onClose()
             },
         )
+    }
+}
+
+/** A new name for a user or a contact; `taken` tells a name another contact has. */
+@Composable
+private fun RenameSheet(current: String, onClose: () -> Unit, taken: (String) -> Boolean = { false }, onSave: (String) -> Unit) {
+    var name by remember { mutableStateOf(current) }
+    val trimmed = trimWhiteSpace(name)
+    val clash = taken(trimmed)
+    val ready = trimmed.isNotEmpty() && trimmed != current && !clash
+    val save = {
+        onSave(trimmed)
+        onClose()
+    }
+    Sheet(onClose = onClose, title = "Rename $current") {
+        Field(name, { name = it }, label = "Name", error = if (clash) TAKEN else null, onDone = { if (ready) save() })
+        Button("Save", onClick = save, enabled = ready)
     }
 }
 
