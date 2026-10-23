@@ -8,7 +8,8 @@
 #
 # The signing key is only reachable from the `release` environment, which
 # waits for approval. The repository variable TING_NODES (comma-separated
-# addresses) names the nodes a new installation starts with.
+# addresses) names the nodes a new installation starts with; without it, the
+# app starts with the production nodes it names itself (app/build.gradle.kts).
 
 name: Release
 
@@ -24,8 +25,7 @@ concurrency:
   group: release-${{ github.ref }}
 
 env:
-  EXPO_PUBLIC_TING_NODES: ${{ vars.TING_NODES }}
-  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+  TING_NODES: ${{ vars.TING_NODES }}
 
 defaults:
   run:
@@ -35,17 +35,12 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      # A release starts with the nodes it names: without any, it would start
-      # with a node on the phone itself; over plain http, anyone on the way
+      # Nodes a release names must be https: over plain http, anyone on the way
       # could change the answers.
       - name: Node list
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && env.TING_NODES != ''
         run: |
-          if [ -z "$EXPO_PUBLIC_TING_NODES" ]; then
-            echo "::error::The repository variable TING_NODES is empty"
-            exit 1
-          fi
-          IFS=',' read -ra nodes <<< "$EXPO_PUBLIC_TING_NODES"
+          IFS=',' read -ra nodes <<< "$TING_NODES"
           for n in "${nodes[@]}"; do
             n="$(echo "$n" | xargs)"
             case "$n" in
@@ -56,16 +51,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
-          node-version: 22
-          package-manager-cache: false
-      - name: Types, lint and tests
-        run: |
-          npm ci
-          npx tsc --noEmit
-          npx expo lint
-          npx vitest run
+          distribution: temurin
+          java-version: 21
+      # The wrapper jar in the repository is Gradle's own, by its published checksum.
+      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Tests and lint
+        run: ./gradlew :core:test :app:testReleaseUnitTest :app:lintRelease --no-daemon
 
   android:
     needs: check
@@ -74,48 +67,42 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
-          node-version: 22
-          package-manager-cache: false
-      - name: Version
-        run: node .github/scripts/set-version.mjs
-      - name: Native project
-        run: |
-          npm ci
-          npx expo prebuild --platform android --no-install
+          distribution: temurin
+          java-version: 21
+      # The wrapper jar in the repository is Gradle's own, by its published checksum.
+      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      # The tag gives the version (app/build.gradle.kts reads GITHUB_REF); every
+      # Android instruction set: ARM for phones, x86 for emulators and some tablets.
       - name: Build
-        working-directory: android
-        run: |
-          export JAVA_HOME="$JAVA_HOME_17_X64"
-          # Every Android instruction set: ARM for phones, x86 for emulators and some tablets.
-          ./gradlew assembleRelease --no-daemon
+        run: ./gradlew :app:assembleRelease --no-daemon
       # Under a name that stays the same from release to release, so a link to
-      # the latest release's file keeps working. The build signs it with its
-      # own debug key; the release job signs it again with the release key.
+      # the latest release's file keeps working. The build leaves it unsigned;
+      # the release job signs it with the release key.
       - name: Collect
         run: |
-          apks=(android/app/build/outputs/apk/release/*.apk)
+          apks=(app/build/outputs/apk/release/*.apk)
           if [ "${#apks[@]}" -ne 1 ] || [ ! -f "${apks[0]}" ]; then
             echo "::error::expected one APK, found ${#apks[@]}"
             exit 1
           fi
           mkdir -p out
-          cp "${apks[0]}" out/Ting-ID-debug-key.apk
+          cp "${apks[0]}" out/Ting-ID-unsigned.apk
       - name: Try the signing with a throwaway key
         if: github.event_name == 'workflow_dispatch'
         run: |
           export KEYSTORE_PASSWORD="throwaway-$RANDOM$RANDOM"
           keytool -genkeypair -keystore "$RUNNER_TEMP/throwaway.jks" -storetype PKCS12 -alias ting-id -keyalg RSA -keysize 2048 -validity 1 -dname "CN=Throwaway" -storepass:env KEYSTORE_PASSWORD
           export KEYSTORE_BASE64="$(base64 -w0 "$RUNNER_TEMP/throwaway.jks")"
-          bash .github/scripts/sign-apk.sh out/Ting-ID-debug-key.apk "$RUNNER_TEMP/try.apk" "$RUNNER_TEMP/try-certificate"
+          bash .github/scripts/sign-apk.sh out/Ting-ID-unsigned.apk "$RUNNER_TEMP/try.apk" "$RUNNER_TEMP/try-certificate"
           echo "Fingerprint: $(cat "$RUNNER_TEMP/try-certificate")"
-      # Signed with Expo's public debug key until the release job signs it, so
-      # kept only until the release is approved.
+      # Unsigned until the release job signs it, so kept only until the release
+      # is approved.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ting-id-android
-          path: out/Ting-ID-debug-key.apk
+          path: out/Ting-ID-unsigned.apk
           if-no-files-found: error
           retention-days: 2
 
@@ -143,7 +130,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           mkdir -p dist
-          bash .github/scripts/sign-apk.sh build/Ting-ID-debug-key.apk dist/Ting-ID.apk "$RUNNER_TEMP/certificate"
+          bash .github/scripts/sign-apk.sh build/Ting-ID-unsigned.apk dist/Ting-ID.apk "$RUNNER_TEMP/certificate"
           cp THIRD_PARTY_NOTICES.md dist/
       - name: Checksums
         working-directory: dist

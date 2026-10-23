@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The window behind Compose: the brand color while the app starts. -->
+    <style name="Theme.TingId" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/brand</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+    <color name="brand">#4F46E5</color>
+</resources>

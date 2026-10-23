@@ -52,14 +52,29 @@ that identity.
 
 ## On the phone
 
-- The words are kept in the phone's keystore, apart from the key they give.
-  Signing reads only the key. Showing the words asks the phone to confirm its
-  owner: where the phone has a strong fingerprint or face unlock, the keystore
-  itself enforces it, and the phone forgets the words when a new fingerprint
-  or face is added; elsewhere the app asks for the phone's unlock first.
-- Nothing goes into the phone's backups: the written words are the only copy of
-  the key outside the phone.
-- Screenshots are blocked while the words are on screen.
+- **Making the words.** The 16 random bytes come from the phone's own random
+  generator (Android's `SecureRandom`, BoringSSL's generator fed by the
+  kernel). Each draw is checked as it is made: one where every byte is the
+  same, or that repeats the draw before it, is refused rather than turned into
+  words. The words, the seed and every key on the way down the path are wiped
+  from memory once used.
+- **Keeping the words.** They are sealed, apart from the key they give, with a
+  key of their own that the phone's keystore holds (in its security chip where
+  it has one) and uses only once the owner confirms with fingerprint, face or
+  screen lock, for each use. Adding a fingerprint or face, or removing the
+  screen lock, destroys that key: the phone then can no longer show the words,
+  and the written copy is the only one. A phone without a screen lock has
+  nothing to ask, so its words are sealed like a key, and the app says anyone
+  holding the phone can see them.
+- **Signing.** Signing opens only the key, never the words: the key is sealed
+  with a keystore key used only while the phone is unlocked, opened for the one
+  signature and wiped after.
+- Nothing goes into the phone's backups or to a new phone: the written words
+  are the only copy of the key outside the phone.
+- While the words are on screen, screenshots and screen recordings are
+  blocked, autofill services are kept away, and (from Android 14) the screen's
+  text is withheld from apps that read the screen without being accessibility
+  tools.
 
 ## With guardians
 

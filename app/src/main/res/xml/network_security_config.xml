@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the system's certificate authorities, never ones a user added. Plain
+     http is allowed here because a node on the home network rarely has a
+     certificate; the app itself refuses it for anything else. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

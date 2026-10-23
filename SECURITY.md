@@ -8,7 +8,7 @@ key, a signature the person did not mean to give, a sign-in to another site),
 and the steps or a test that show it.
 
 In scope is everything in this repository: the app, the off-chain signing
-of [SIGNING.md](SIGNING.md), and the release workflow and its signing of the
+of [TOCS-1](TOCS-1.md), and the release workflow and its signing of the
 Android app. Flaws in the chain, the node or the programs belong to the
 [Ting repository](https://github.com/ting-organization/ting/security).
 
