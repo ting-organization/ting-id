@@ -5,10 +5,16 @@ Ting ID ships these works by others with the app.
 | Work | Copyright | Licence |
 |---|---|---|
 | Manrope (font) | Copyright 2018 The Manrope Project Authors (https://github.com/sharanda/manrope) | SIL Open Font License 1.1 |
-| Ionicons (icons) | Copyright (c) 2015-present Ionic (http://ionic.io/) | MIT |
+| libsecp256k1 | Copyright (c) 2013 Pieter Wuille | MIT |
+| secp256k1-kmp (the JNI binding of libsecp256k1) | Copyright 2020 ACINQ SAS | Apache License 2.0 |
+| ZXing core (QR codes) | Copyright ZXing authors | Apache License 2.0 |
+| Material Icons | Copyright Google LLC | Apache License 2.0 |
+| AndroidX and Jetpack Compose | Copyright The Android Open Source Project | Apache License 2.0 |
+| Kotlin standard library, kotlinx.coroutines, kotlinx.serialization | Copyright JetBrains s.r.o. and Kotlin Programming Language contributors | Apache License 2.0 |
 
-Other libraries the app is built with carry their own licences in their
-packages; the dependency list is in `package.json`.
+The Apache License 2.0 is in [LICENSE-APACHE](LICENSE-APACHE). The full list
+of libraries the app is built with, and their versions, is in
+`gradle/libs.versions.toml`; each carries its own licence in its package.
 
 ## SIL Open Font License 1.1
 
@@ -104,9 +110,9 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
-## MIT License (Ionicons)
+## MIT License (libsecp256k1)
 
-Copyright (c) 2015-present Ionic (http://ionic.io/)
+Copyright (c) 2013 Pieter Wuille
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

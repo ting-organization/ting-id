@@ -17,7 +17,7 @@ ting:<request>?<field>=<value>&…
 | `create` | `input`, `name`?, `coin`?, `amount`?, `net` | Create the identity whose creation input is `input`, and send it coins to start with |
 | `device` | `id`, `scheme`, `key`, `net` | Add the public key `key` of `scheme` to the identity `id` |
 | `recover` | `id`, `keys`, `net` | Approve the recovery of identity `id` to the key list `keys` |
-| `sign` | `url` | A site's signing request, fetched from `url` ([SIGNING.md](SIGNING.md)) |
+| `sign` | `url` | A site's signing request, fetched from `url` ([TOCS-1](TOCS-1.md)) |
 
 ## Values
 
