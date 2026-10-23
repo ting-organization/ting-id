@@ -44,8 +44,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.NavHostController
 import app.tingid.chain.Links
 import app.tingid.chain.formatAmount
 import app.tingid.chain.hex
@@ -93,6 +91,7 @@ import app.tingid.ui.money.ReceiveSheet
 import app.tingid.ui.money.ScheduledSection
 import app.tingid.ui.money.rememberAccountViews
 import app.tingid.ui.openLink
+import app.tingid.ui.openTab
 import app.tingid.ui.sentence
 import app.tingid.ui.t
 
@@ -144,7 +143,7 @@ fun WalletScreen() {
                 Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         "Send",
-                        onClick = { nav.toTab(SendTab()) },
+                        onClick = { nav.openTab(SendTab()) },
                         kind = ButtonKind.Light,
                         icon = Icons.Outlined.ArrowUpward,
                         enabled = w.coins.isNotEmpty(),
@@ -185,7 +184,7 @@ fun WalletScreen() {
         if (startHere) FirstCoins(user, Links.netOf(info.status.chainId), w.coins.firstOrNull())
 
         if (user != null) {
-            SectionHeader("Coins", action = if (coinTools) "All coins" else "Manage", onAction = { nav.toTab(if (coinTools) CoinsTab else SettingsTab) })
+            SectionHeader("Coins", action = if (coinTools) "All coins" else "Manage", onAction = { nav.openTab(if (coinTools) CoinsTab else SettingsTab) })
             if (w.coins.isNotEmpty()) {
                 CoinGroups(
                     groups,
@@ -202,7 +201,7 @@ fun WalletScreen() {
                             Caption("Add the coins you use in Settings.")
                         }
                     }
-                    if (!w.coinsLoading) Button("Add a coin", onClick = { nav.toTab(SettingsTab) }, kind = ButtonKind.Secondary, small = true, icon = Icons.Outlined.Add)
+                    if (!w.coinsLoading) Button("Add a coin", onClick = { nav.openTab(SettingsTab) }, kind = ButtonKind.Secondary, small = true, icon = Icons.Outlined.Add)
                 }
             }
         }
@@ -301,11 +300,4 @@ private fun WarningBanner(text: AnnotatedString) {
         Icon(Icons.Outlined.ErrorOutline, null, tint = p.warning, modifier = Modifier.size(18.dp).padding(top = 1.dp))
         Text(text, style = manropeStyle(14f, FontWeight.Medium).copy(lineHeight = 20.sp), color = p.warning, modifier = Modifier.weight(1f))
     }
-}
-
-/** Opens a tab as the tab bar does, each tab keeping what it showed. */
-private fun NavHostController.toTab(route: Any) = navigate(route) {
-    popUpTo(graph.findStartDestination().id) { saveState = true }
-    launchSingleTop = true
-    restoreState = true
 }

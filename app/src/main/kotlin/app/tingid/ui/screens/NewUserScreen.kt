@@ -37,7 +37,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import app.tingid.chain.DELAY_PRESETS
 import app.tingid.chain.Id
@@ -91,6 +90,7 @@ import app.tingid.ui.Spacing
 import app.tingid.ui.Sub
 import app.tingid.ui.Tone
 import app.tingid.ui.identity.PhraseInput
+import app.tingid.ui.openTab
 import app.tingid.ui.sentence
 import app.tingid.ui.t
 import app.tingid.vault.NotConfirmed
@@ -193,10 +193,7 @@ fun NewUserScreen(route: NewUserRoute) {
     val otherIdentities = users.mapNotNull { u -> userIdentity(u)?.let { u to it.id.hex() } }
 
     /** The identity tab, in place of this screen. */
-    fun toIdentity() = nav.navigate(IdentityTab) {
-        popUpTo(nav.graph.findStartDestination().id)
-        launchSingleTop = true
-    }
+    fun toIdentity() = nav.openTab(IdentityTab)
 
     /** A key made here for an identity that will not be: its secret leaves the vault, and the key the list. */
     suspend fun forgetKey(key: KeyMeta) {

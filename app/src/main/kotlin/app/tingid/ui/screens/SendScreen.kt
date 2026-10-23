@@ -60,8 +60,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.NavHostController
 import app.tingid.chain.Coin
 import app.tingid.chain.Id
 import app.tingid.chain.Link
@@ -112,6 +110,7 @@ import app.tingid.ui.Field
 import app.tingid.ui.IconButton
 import app.tingid.ui.IdentityTab
 import app.tingid.ui.ListItem
+import app.tingid.ui.LocalActivity
 import app.tingid.ui.LocalNav
 import app.tingid.ui.LocalServices
 import app.tingid.ui.QrScanner
@@ -139,6 +138,7 @@ import app.tingid.ui.money.rememberAccountViews
 import app.tingid.ui.money.rememberFee
 import app.tingid.ui.money.withFee
 import app.tingid.ui.openLink
+import app.tingid.ui.openTab
 import app.tingid.ui.rememberConfirm
 import app.tingid.ui.sentence
 import app.tingid.ui.t
@@ -154,9 +154,9 @@ import kotlin.math.min
 private class IdCheck(val to: String, val identity: Boolean)
 
 /**
- * The send form. It lives as long as its screen is in the back stack, not
- * only while it shows: Review opens over it, Edit comes back to everything
- * as entered, and the payment sent from Review empties it.
+ * The send form. It lives with the activity, not only while its screen shows:
+ * Review opens over it, Edit comes back to everything as entered, another tab
+ * and back leaves it as it was, and the payment sent from Review empties it.
  */
 private class SendForm(route: SendTab) : ViewModel() {
     var to by mutableStateOf("")
@@ -220,7 +220,7 @@ fun SendScreen(route: SendTab) {
     val services = LocalServices.current
     val nav = LocalNav.current
     val p = t
-    val form = viewModel { SendForm(route) }
+    val form = viewModel(LocalActivity.current) { SendForm(route) }
     val data by services.store.data.collectAsState()
     val w by services.workspace.state.collectAsState()
     val cache by services.caches.current.collectAsState()
@@ -458,7 +458,7 @@ fun SendScreen(route: SendTab) {
             Card {
                 Sub("This phone can’t act for ${user.name} yet")
                 Caption("Its balances show on the wallet, but sending needs a key the identity lists. Add this phone from one that has access, or recover the identity.")
-                Button("Open Identity", onClick = { nav.toTab(IdentityTab) }, kind = ButtonKind.Secondary, small = true, icon = Icons.Outlined.Fingerprint)
+                Button("Open Identity", onClick = { nav.openTab(IdentityTab) }, kind = ButtonKind.Secondary, small = true, icon = Icons.Outlined.Fingerprint)
             }
         }
         return
@@ -697,11 +697,4 @@ private object GroupedAmount : VisualTransformation {
             },
         )
     }
-}
-
-/** Opens a tab as the tab bar does, each tab keeping what it showed. */
-private fun NavHostController.toTab(route: Any) = navigate(route) {
-    popUpTo(graph.findStartDestination().id) { saveState = true }
-    launchSingleTop = true
-    restoreState = true
 }

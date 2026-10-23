@@ -37,7 +37,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import app.tingid.chain.isHex
 import app.tingid.chain.shortId
 import app.tingid.chain.trimWhiteSpace
@@ -68,6 +67,7 @@ import app.tingid.ui.Sheet
 import app.tingid.ui.Spacing
 import app.tingid.ui.copyText
 import app.tingid.ui.money.Hairline
+import app.tingid.ui.openTab
 import app.tingid.ui.rememberConfirm
 import app.tingid.ui.sentence
 import app.tingid.ui.t
@@ -262,10 +262,7 @@ fun PeopleScreen() {
                         MenuRow(Icons.Outlined.ArrowUpward, "Send to ${c.name}") {
                             close()
                             // The Send tab with this account filled in, as a tab: a new payment, not the one left there.
-                            nav.navigate(SendTab(to = c.account, at = System.currentTimeMillis())) {
-                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                            }
+                            nav.openTab(SendTab(to = c.account, at = System.currentTimeMillis()))
                         }
                     },
                     {

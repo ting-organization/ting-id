@@ -135,7 +135,7 @@ fun ProfileSheet(onClose: () -> Unit) {
     val p = t
     fun go(route: Any) {
         onClose()
-        nav.navigate(route)
+        if (route == IdentityTab || route == SettingsTab) nav.openTab(route) else nav.navigate(route)
     }
     Sheet(onClose = onClose) {
         if (active != null) {

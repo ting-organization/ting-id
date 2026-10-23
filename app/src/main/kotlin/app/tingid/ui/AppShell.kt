@@ -180,6 +180,18 @@ private fun routeOf(target: LinkTarget, at: Long): Any = when (target) {
 /** Opens a link scanned or pasted in the app, which opens every kind. */
 fun NavHostController.openLink(target: LinkTarget) = navigate(routeOf(target, System.currentTimeMillis()))
 
+/**
+ * Opens a tab, as the tab bar does: what is open over the wallet closes, and
+ * the tab shows over it. Nothing closed is kept to come back: navigation keeps
+ * saved screens under the wallet's name too, and a tab opened from deeper in
+ * then brought back Send or Settings for a tap on Wallet. The send form, the
+ * one thing worth keeping, lives with the activity instead (SendScreen).
+ */
+fun NavHostController.openTab(route: Any) = navigate(route) {
+    popUpTo(graph.findStartDestination().id)
+    launchSingleTop = true
+}
+
 /** The notices on every screen: the nodes, and a change the phone did not save. */
 @Composable
 private fun Notices() {
@@ -228,13 +240,7 @@ private fun TabBar(nav: NavHostController, coinTools: Boolean) {
                 val selected = destination.hasRoute(tab.route::class)
                 val color = if (selected) p.ink else p.faint
                 Column(
-                    Modifier.weight(1f).clickable(role = Role.Tab) {
-                        nav.navigate(tab.route) {
-                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }.padding(vertical = 4.dp),
+                    Modifier.weight(1f).clickable(role = Role.Tab) { nav.openTab(tab.route) }.padding(vertical = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
