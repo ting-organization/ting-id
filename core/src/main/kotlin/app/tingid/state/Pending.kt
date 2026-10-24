@@ -52,14 +52,15 @@ class Pending(
             val twin = kept?.twin?.let { Twin(node.transaction(it), store.data.value.outbox[it]) }
             return when (val d = decide(tx, lookup, kept, now(), tip, twin, statusWords)) {
                 is Decision.Settle -> {
+                    // The bytes go first, so a submission never shows settled with them still kept.
+                    store.forgetOutbox(tx.id)
+                    kept?.twin?.let { store.forgetOutbox(it) }
                     store.updateSubmitted(tx.id) {
                         when (d) {
                             is Decision.Included -> it.copy(state = TxState.Included, height = d.height, problem = null)
                             is Decision.Failed -> it.copy(state = TxState.Failed, height = d.height, problem = d.reason)
                         }
                     }
-                    store.forgetOutbox(tx.id)
-                    kept?.twin?.let { store.forgetOutbox(it) }
                     null
                 }
                 is Decision.Resend -> {
