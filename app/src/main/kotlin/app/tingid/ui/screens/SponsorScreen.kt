@@ -213,7 +213,7 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
         error = null
         ui.launch {
             val shown = try {
-                if (!confirmOwner(activity, services.store, if (create) "Set up $who" else "Send to $who", if (sending.signum() > 0) "${formatAmount(sending, decimals)} $symbol" else null)) {
+                if (!confirmOwner(activity, services, if (create) "Set up $who" else "Send to $who", if (sending.signum() > 0) "${formatAmount(sending, decimals)} $symbol" else null)) {
                     going.set(false)
                     busy = false
                     return@launch

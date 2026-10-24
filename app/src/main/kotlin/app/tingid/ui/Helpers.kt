@@ -8,9 +8,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.core.content.FileProvider
 import androidx.fragment.app.FragmentActivity
-import app.tingid.state.Store
+import app.tingid.Services
+import app.tingid.vault.KeysShut
 import app.tingid.vault.Owner
 import app.tingid.vault.OwnerCheck
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -19,15 +22,30 @@ import java.io.File
  * identity changes, recovery approvals, minting and signing for sites. True
  * to go on, false when the person cancelled; throws when the phone did not
  * confirm. A phone without a screen lock has nothing to ask.
+ *
+ * A phone whose keystore holds the keys shut, as some do after an unlock by
+ * face or a trusted device, asks for the screen lock's PIN, pattern or password
+ * instead, whatever the setting says: a fingerprint would pass and the
+ * signing then fail, while the credential opens the keys.
  */
-suspend fun confirmOwner(activity: FragmentActivity, store: Store, title: String, detail: String? = null): Boolean {
-    if (!store.data.value.settings.confirmPayments) return true
+suspend fun confirmOwner(activity: FragmentActivity, services: Services, title: String, detail: String? = null): Boolean {
+    if (!withContext(Dispatchers.IO) { services.vault.keysOpen() }) {
+        return when (Owner.checkCredential(activity, title, KEYS_SHUT)) {
+            OwnerCheck.Failed -> throw IllegalStateException("the phone did not confirm it is you")
+            OwnerCheck.Cancelled -> false
+            OwnerCheck.Unavailable -> true
+            OwnerCheck.Confirmed -> if (withContext(Dispatchers.IO) { services.vault.keysOpen() }) true else throw KeysShut()
+        }
+    }
+    if (!services.store.data.value.settings.confirmPayments) return true
     return when (Owner.check(activity, title, detail)) {
         OwnerCheck.Failed -> throw IllegalStateException("the phone did not confirm it is you")
         OwnerCheck.Cancelled -> false
         OwnerCheck.Confirmed, OwnerCheck.Unavailable -> true
     }
 }
+
+private const val KEYS_SHUT = "This phone opens your keys only after its PIN, pattern or password"
 
 /**
  * A screen that is sending something stays until it is done: going back

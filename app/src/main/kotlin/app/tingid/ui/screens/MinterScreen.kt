@@ -126,7 +126,7 @@ private fun Minter(id: String) {
             error = null
             try {
                 val none = to == MinterTarget.None
-                if (!confirmOwner(activity, services.store, if (none) "Give up minting $symbol" else "Move minting of $symbol", if (none) null else "to $label")) return@launch
+                if (!confirmOwner(activity, services, if (none) "Give up minting $symbol" else "Move minting of $symbol", if (none) null else "to $label")) return@launch
                 val summary = if (none) "Give up minting $symbol" else "${if (delayed) "Schedule moving" else "Move"} minting of $symbol to $label"
                 // Once signed it goes on even if the screen goes: the node may have it.
                 val sent = services.submitBeyondScreen {
