@@ -38,6 +38,7 @@ import app.tingid.state.CoinInfo
 import app.tingid.state.OnTheWay
 import app.tingid.state.coinColor
 import app.tingid.text.lockOf
+import app.tingid.ui.Amount
 import app.tingid.ui.Caption
 import app.tingid.ui.Card
 import app.tingid.ui.Sheet
@@ -63,7 +64,7 @@ fun CoinMark(coin: CoinInfo, size: Dp = 36.dp) {
     val color = if (t.dark) lighten(base, 0.35f) else base
     val symbol = coin.config.symbol.ifEmpty { coin.config.name }.take(4).uppercase()
     Box(Modifier.size(size).border(2.dp, color, CircleShape), contentAlignment = Alignment.Center) {
-        Text(symbol, style = manropeStyle(size.value * (if (symbol.length > 3) 0.22f else 0.27f), FontWeight.ExtraBold), color = color, maxLines = 1)
+        Text(symbol, style = manropeStyle(size.value * (if (symbol.length > 3) 0.22f else 0.27f), FontWeight.SemiBold), color = color, maxLines = 1)
     }
 }
 
@@ -96,10 +97,9 @@ private fun AccountLine(
                 }
                 Text(note, style = Type.caption, color = p.muted)
             }
-            Text(
+            Amount(
                 formatAmount(view.record.available, dec) + if (symbol) " ${coin.config.symbol}" else "",
-                style = manropeStyle(15f, FontWeight.SemiBold, tabular = true),
-                color = p.text,
+                style = manropeStyle(15f, FontWeight.Medium, tabular = true),
             )
             if (selected) Icon(Icons.Outlined.Check, null, tint = p.primary, modifier = Modifier.size(18.dp))
             else Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, tint = p.faint, modifier = Modifier.size(16.dp))
@@ -118,15 +118,13 @@ private fun CoinHead(group: CoinGroup, total: Boolean, loading: Boolean = false)
     ) {
         CoinMark(group.coin)
         Column(Modifier.weight(1f)) {
-            Text(group.coin.config.name, style = manropeStyle(15f, FontWeight.Bold), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(group.coin.config.name, style = manropeStyle(15f, FontWeight.Medium), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (!total) Caption(group.coin.config.symbol)
         }
         if (total) {
-            Text(
+            Amount(
                 if (loading) "…" else formatAmount(group.total, group.coin.config.decimals),
-                style = manropeStyle(20f, FontWeight.ExtraBold, tabular = true).copy(letterSpacing = (-0.3 / 20).em),
-                color = p.text,
-                maxLines = 1,
+                style = manropeStyle(20f, FontWeight.SemiBold, tabular = true).copy(letterSpacing = (-0.3 / 20).em),
             )
         }
     }
@@ -179,7 +177,7 @@ fun AccountPicker(
     Sheet(onClose = onClose, title = "Send from") {
         for (g in groups) {
             val shape = RoundedCornerShape(16.dp)
-            Column(Modifier.fillMaxWidth().clip(shape).border(1.dp, p.border, shape)) {
+            Column(Modifier.fillMaxWidth().clip(shape).border(Dp.Hairline, p.border, shape)) {
                 CoinHead(g, total = false)
                 Hairline()
                 g.views.forEachIndexed { i, v ->

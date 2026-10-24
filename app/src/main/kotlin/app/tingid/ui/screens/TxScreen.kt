@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.CalendarMonth
@@ -37,7 +36,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import app.tingid.chain.Id
 import app.tingid.chain.TransactionLookup
@@ -46,6 +44,7 @@ import app.tingid.chain.formatAmount
 import app.tingid.chain.fromUtf8
 import app.tingid.chain.hex
 import app.tingid.chain.nowSeconds
+import app.tingid.chain.shortId
 import app.tingid.chain.unhex
 import app.tingid.state.ActivityItem
 import app.tingid.state.TxPayment
@@ -59,6 +58,7 @@ import app.tingid.state.txEvents
 import app.tingid.state.txStage
 import app.tingid.text.describeActivity
 import app.tingid.text.statusWords
+import app.tingid.ui.AccountBox
 import app.tingid.ui.Banner
 import app.tingid.ui.BannerTone
 import app.tingid.ui.Button
@@ -146,12 +146,20 @@ fun TxScreen(route: TxRoute) {
     val to = submitted?.to
     val payment = paymentOf(events, mine, w.coinById) ?: if (to != null) TxPayment("To", unhex(to)) else null
     val paymentName = payment?.let { w.names[it.account.hex()] }
+    // What it was: as this phone sent it, else the payment the chain shows, such as one received.
+    val headline = submitted?.summary ?: payment?.let { pay ->
+        val who = paymentName ?: shortId(pay.account, 6, 4)
+        val amount = pay.amount
+        val coin = pay.coin
+        val what = if (amount != null && coin != null) "${formatAmount(amount, coin.config.decimals)} ${coin.config.symbol} " else ""
+        "$what${if (pay.label == "From") "from" else "to"} $who".replaceFirstChar { it.uppercase() }
+    } ?: "Transaction"
 
     Screen(title = "Transaction") {
         Column(Modifier.fillMaxWidth().padding(vertical = Spacing.lg), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             IconCircle(head.icon, headFg, headBg, 72.dp)
-            Text(submitted?.summary ?: "Transaction", style = Type.heading, color = p.text, textAlign = TextAlign.Center)
-            Text(head.label, style = manropeStyle(14f, FontWeight.Bold), color = headFg, textAlign = TextAlign.Center)
+            Text(headline, style = Type.heading, color = p.text, textAlign = TextAlign.Center)
+            Text(head.label, style = manropeStyle(14f, FontWeight.Medium), color = headFg, textAlign = TextAlign.Center)
         }
         if (route.unsure && (stage == TxStage.Pending || stage == TxStage.Unknown || stage == TxStage.Loading)) {
             Banner(
@@ -189,10 +197,12 @@ fun TxScreen(route: TxRoute) {
             Card {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Caption(payment.label, Modifier.weight(1f))
-                    Text(paymentName ?: "Not in your contacts", style = Type.body.copy(fontWeight = FontWeight.Bold), color = p.text)
+                    Text(paymentName ?: "Not in your contacts", style = Type.body.copy(fontWeight = FontWeight.Medium), color = p.text)
                 }
-                SelectionContainer {
-                    Text(payment.account.hex(), style = Type.mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp), color = p.text)
+                if (paymentName != null) {
+                    IdChip(payment.account.hex(), label = "Account")
+                } else {
+                    AccountBox(payment.account.hex())
                 }
                 val amount = payment.amount
                 val coin = payment.coin
@@ -201,7 +211,7 @@ fun TxScreen(route: TxRoute) {
                         Caption("Amount", Modifier.weight(1f))
                         Text(
                             "${formatAmount(amount, coin.config.decimals)} ${coin.config.symbol}",
-                            style = Type.body.copy(fontWeight = FontWeight.Bold, fontFeatureSettings = TABULAR),
+                            style = Type.body.copy(fontWeight = FontWeight.Medium, fontFeatureSettings = TABULAR),
                             color = p.text,
                         )
                     }
@@ -242,7 +252,7 @@ fun TxScreen(route: TxRoute) {
                         )
                         val d = if (item.coin != null || item.identity != null) describeActivity(item, w.coinById, w.names, mine, w.advanced) else null
                         val (bg, fg) = toneColors(d?.tone?.let(::toneOf) ?: Tone.Neutral)
-                        if (i > 0) Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+                        if (i > 0) Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -250,7 +260,7 @@ fun TxScreen(route: TxRoute) {
                         ) {
                             IconCircle(d?.icon?.let(::iconOf) ?: Icons.Outlined.Circle, fg, bg)
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(d?.title ?: "Event from ${e.contract.hex().take(12)}…", style = Type.body.copy(fontWeight = FontWeight.Bold), color = p.text)
+                                Text(d?.title ?: "Event from ${e.contract.hex().take(12)}…", style = Type.body.copy(fontWeight = FontWeight.Medium), color = p.text)
                                 d?.detail?.let { Caption(it) }
                             }
                             val amount = d?.amount
@@ -258,7 +268,7 @@ fun TxScreen(route: TxRoute) {
                                 val tone = d.amountTone
                                 Text(
                                     amount,
-                                    style = Type.body.copy(fontWeight = FontWeight.Bold, fontFeatureSettings = TABULAR),
+                                    style = Type.body.copy(fontWeight = FontWeight.Medium, fontFeatureSettings = TABULAR),
                                     color = if (tone != null) toneColors(toneOf(tone)).second else p.text,
                                 )
                             }
@@ -277,7 +287,7 @@ fun TxScreen(route: TxRoute) {
 private fun TxDetail(label: String, first: Boolean = false, value: @Composable () -> Unit) {
     val p = t
     Column {
-        if (!first) Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+        if (!first) Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
         Row(Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Caption(label, Modifier.weight(1f))
             value()

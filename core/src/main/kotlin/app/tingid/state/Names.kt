@@ -4,6 +4,7 @@ package app.tingid.state
 import app.tingid.chain.Canonical
 import app.tingid.chain.Id
 import app.tingid.chain.hex
+import app.tingid.chain.isHex
 import app.tingid.chain.policyAccount
 import app.tingid.chain.unhex
 import app.tingid.text.Names
@@ -12,12 +13,17 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
- * Account and ID (hex) → name: contacts by their names, identities by their
- * users' names and their accounts as "Anna · Savings", and key users' accounts.
+ * Account and ID (hex) → name: contacts by their names, the identity a contact
+ * is for by its name too, identities by their users' names and their accounts
+ * as "Anna · Savings", key users' accounts, and a user's guardian by the
+ * contact that has its Spending account.
  */
 fun names(users: List<User>, keys: List<KeyMeta>, contacts: List<Contact>, c: Canonical?): Names {
     val names = LinkedHashMap<String, String>()
-    for (contact in contacts) names[contact.account.lowercase()] = contact.name
+    for (contact in contacts) {
+        names[contact.account.lowercase()] = contact.name
+        contact.identity?.let { names[it.lowercase()] = contact.name }
+    }
     for (user in users) {
         if (user.kind == UserKind.Identity && user.identityId != null && user.registry != null) {
             names[user.identityId.lowercase()] = user.name
@@ -32,7 +38,24 @@ fun names(users: List<User>, keys: List<KeyMeta>, contacts: List<Contact>, c: Ca
             if (key != null) names[policyAccount(c.policyFor(key.scheme), unhex(key.pub)).hex()] = user.name
         }
     }
+    // A guardian saved as a contact by its Spending account alone, as one paid before, goes by that contact's name.
+    if (c != null) {
+        for (g in users.flatMap(::guardiansOf).distinct()) {
+            if (g in names) continue
+            names[Id.account(c.registry, unhex(g), 0).hex()]?.let { names[g] = it }
+        }
+    }
     return names
+}
+
+/** The name of identity `id` (hex) here: its own, or that of the contact with its Spending account on `registry`. */
+fun identityName(names: Names, registry: ByteArray?, id: String): String? =
+    names[id] ?: registry?.let { names[Id.account(it, unhex(id), 0).hex()] }
+
+/** The guardians this device knows a user to have (hex IDs): named when it was created here, or linked from here since. */
+fun guardiansOf(user: User): List<String> {
+    val created = user.creation?.let { Id.decodeCreation(unhex(it)) }?.guardians?.map { it.hex() } ?: emptyList()
+    return (created + user.knownGuardians.filter { isHex(it, 32) }.map { it.lowercase() }).distinct()
 }
 
 /** The names this device knows, with the contacts of the chain the app is on. */

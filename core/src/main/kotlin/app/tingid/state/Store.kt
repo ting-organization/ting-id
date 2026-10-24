@@ -3,8 +3,10 @@
 // never here.
 package app.tingid.state
 
+import app.tingid.chain.Id
 import app.tingid.chain.hex
 import app.tingid.chain.nodeAddress
+import app.tingid.chain.unhex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -23,6 +25,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
+import java.util.UUID
 
 /** Where the app keeps its files: the app's own storage on the phone, a map in tests. */
 interface TextStorage {
@@ -226,6 +229,25 @@ class Store(
     fun setActiveSlot(slot: Int) = update { it.copy(activeSlot = slot) }
     fun addContact(contact: Contact) = update { it.copy(contacts = it.contacts + contact.copy(chain = contact.chain ?: currentChain())) }
     fun removeContact(id: String) = update { d -> d.copy(contacts = d.contacts.filter { it.id != id }) }
+    fun renameContact(id: String, name: String) = update { d -> d.copy(contacts = d.contacts.map { if (it.id == id) it.copy(name = name) else it }) }
+
+    /**
+     * Names identity `identity` (hex ID) on `registry`'s chain: the contact
+     * with its Spending account gets the name and the identity, or a new one
+     * is saved for them.
+     */
+    fun nameIdentity(name: String, identity: String, registry: ByteArray) = update { d ->
+        val id = identity.lowercase()
+        val account = Id.account(registry, unhex(id), 0).hex()
+        val chain = currentChain()
+        val same = d.contacts.firstOrNull { it.account == account && (it.chain == null || it.chain == chain) }
+        val contacts = if (same != null) {
+            d.contacts.map { if (it.id == same.id) it.copy(name = name, identity = id) else it }
+        } else {
+            d.contacts + Contact(UUID.randomUUID().toString(), name, account, chain, identity = id)
+        }
+        d.copy(contacts = contacts)
+    }
 
     /** A new submission is followed until a block includes it, on the chain it was sent to. */
     fun addSubmitted(tx: SubmittedTx) = update { d ->

@@ -135,7 +135,7 @@ fun CoinScreen(route: CoinRoute) {
                 Text(
                     "${c.config.name} · ${account.label}",
                     Modifier.weight(1f),
-                    style = manropeStyle(15f, FontWeight.Bold),
+                    style = manropeStyle(15f, FontWeight.Medium),
                     color = p.onHeader,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -146,7 +146,7 @@ fun CoinScreen(route: CoinRoute) {
                 Text("Available", style = manropeStyle(12.5f, FontWeight.SemiBold), color = p.onHeaderMuted)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(if (accountViews.loading && view == null) "…" else formatAmount(available, decimals), Modifier.alignByBaseline(), style = Type.amount, color = p.onHeader)
-                    Text(symbol, Modifier.alignByBaseline(), style = manropeStyle(16f, FontWeight.Bold), color = p.onHeaderMuted)
+                    Text(symbol, Modifier.alignByBaseline(), style = manropeStyle(16f, FontWeight.Medium), color = p.onHeaderMuted)
                 }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Pill(if (locked) lockOf(account.delay) else "Instant", small = true, light = true)

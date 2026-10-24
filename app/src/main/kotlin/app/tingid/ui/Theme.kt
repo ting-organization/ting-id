@@ -1,6 +1,6 @@
 // The app's look: a dark ink header over a light page, white cards with a
-// hairline, ink buttons, and indigo for links and highlights. Manrope, one
-// variable font for every weight.
+// hairline and no shadow, ink buttons, and indigo for links and highlights.
+// Manrope, one variable font, kept to light weights: semibold at most.
 package app.tingid.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -107,13 +107,13 @@ val Manrope = FontFamily(manrope(400), manrope(500), manrope(600), manrope(700),
 const val TABULAR = "tnum"
 
 object Type {
-    val title = TextStyle(fontFamily = Manrope, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, letterSpacing = (-0.5 / 26).em)
-    val heading = TextStyle(fontFamily = Manrope, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp, letterSpacing = (-0.3 / 19).em)
-    val subheading = TextStyle(fontFamily = Manrope, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+    val title = TextStyle(fontFamily = Manrope, fontWeight = FontWeight.SemiBold, fontSize = 24.sp, letterSpacing = (-0.4 / 24).em)
+    val heading = TextStyle(fontFamily = Manrope, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, letterSpacing = (-0.2 / 18).em)
+    val subheading = TextStyle(fontFamily = Manrope, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
     val body = TextStyle(fontFamily = Manrope, fontWeight = FontWeight.Normal, fontSize = 15.sp, lineHeight = 22.sp)
     val caption = TextStyle(fontFamily = Manrope, fontWeight = FontWeight.Medium, fontSize = 12.5.sp, lineHeight = 18.sp)
     val mono = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp)
-    val amount = TextStyle(fontFamily = Manrope, fontWeight = FontWeight.ExtraBold, fontSize = 40.sp, letterSpacing = (-1.0 / 40).em, fontFeatureSettings = TABULAR)
+    val amount = TextStyle(fontFamily = Manrope, fontWeight = FontWeight.SemiBold, fontSize = 38.sp, letterSpacing = (-0.8 / 38).em, fontFeatureSettings = TABULAR)
 }
 
 /** A weight of the app's font at a size. */

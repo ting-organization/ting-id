@@ -80,6 +80,8 @@ data class Contact(
     val account: String,
     /** The chain it was saved on (hex): an account is only meaningful on its own chain. */
     val chain: String? = null,
+    /** The identity (hex ID) whose Spending account `account` is, when known, as for a guardian: the name is its name too. */
+    val identity: String? = null,
 )
 
 @Serializable

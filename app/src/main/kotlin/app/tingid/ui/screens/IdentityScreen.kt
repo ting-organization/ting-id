@@ -24,6 +24,8 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.PanTool
 import androidx.compose.material.icons.outlined.People
@@ -68,6 +70,7 @@ import app.tingid.state.User
 import app.tingid.state.UserKind
 import app.tingid.state.WorkspaceState
 import app.tingid.state.deviceKeyOf
+import app.tingid.state.guardiansOf
 import app.tingid.state.linkedDeviceKeys
 import app.tingid.state.policyLabel
 import app.tingid.state.sent
@@ -100,6 +103,7 @@ import app.tingid.ui.ListItem
 import app.tingid.ui.LocalActivity
 import app.tingid.ui.LocalNav
 import app.tingid.ui.LocalServices
+import app.tingid.ui.NameIdentitySheet
 import app.tingid.ui.NewUserRoute
 import app.tingid.ui.Pill
 import app.tingid.ui.ProfileButton
@@ -138,7 +142,7 @@ fun IdentityScreen() {
     val w by services.workspace.state.collectAsState()
     val user = w.user
     if (user == null) {
-        Screen(title = "Identity") { Welcome() }
+        Screen(title = "Identity", tab = true) { Welcome() }
         return
     }
     if (user.kind == UserKind.Key) {
@@ -152,7 +156,7 @@ fun IdentityScreen() {
 @Composable
 private fun SimpleAccount(user: User) {
     val nav = LocalNav.current
-    Screen(title = "Identity", right = { ProfileButton() }) {
+    Screen(title = "Identity", tab = true) {
         Card {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 Avatar(user.name, user.color, 48.dp)
@@ -177,16 +181,18 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
     val nav = LocalNav.current
     val p = t
     val users = services.store.data.collectAsState().value.users
+    val contacts = services.store.data.collectAsState().value.contacts
     val sending = rememberSending()
     HoldWhileBusy(sending.busy != null)
     val me = userIdentity(user)
     val id = w.identity
     val info = w.info
 
-    // Who may be a guardian, as this device knows: the ones named at creation and the other identities here.
+    // Who may be a guardian, as this device knows: the ones named at creation or linked from here, the contacts
+    // that are identities, and the other identities here. A restored identity finds its guardians among the contacts.
     val known = LinkedHashMap<String, ByteArray>()
-    user.creation?.let { Id.decodeCreation(unhex(it)) }?.guardians?.forEach { known[it.hex()] = it }
-    user.knownGuardians.filter { isHex(it, 32) }.forEach { known[it.lowercase()] = unhex(it) }
+    guardiansOf(user).forEach { known[it] = unhex(it) }
+    for (c in contacts) c.identity?.takeIf { isHex(it, 32) }?.let { known[it.lowercase()] = unhex(it) }
     for (u in users) {
         val other = userIdentity(u) ?: continue
         if (me != null && !equal(other.id, me.id)) known[other.id.hex()] = other.id
@@ -276,7 +282,7 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
     val header: @Composable () -> Unit = {
         InkHeader {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Identity", style = manropeStyle(14f, FontWeight.Bold), color = p.onHeaderMuted)
+                Text("Identity", style = manropeStyle(14f, FontWeight.Medium), color = p.onHeaderMuted)
                 ProfileButton(34.dp)
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -284,7 +290,7 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         user.name,
-                        style = manropeStyle(24f, FontWeight.ExtraBold).copy(letterSpacing = (-0.5).sp),
+                        style = manropeStyle(24f, FontWeight.SemiBold).copy(letterSpacing = (-0.5).sp),
                         color = p.onHeader,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -362,7 +368,7 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
 
 /** A hairline between rows of a card. */
 @Composable
-private fun Rule(color: Color = t.border) = Spacer(Modifier.fillMaxWidth().height(1.dp).background(color))
+private fun Rule(color: Color = t.border) = Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(color))
 
 /** The fee in a confirmation, between hairlines. */
 @Composable
@@ -473,6 +479,8 @@ private fun KeysSection(w: WorkspaceState, user: User, id: IdentityInfo, canAct:
 @Composable
 private fun GuardiansSection(w: WorkspaceState, id: IdentityInfo, guardians: List<ByteArray>, canAct: Boolean, propose: (ProposeRoute) -> Unit) {
     val p = t
+    // A guardian with no name here can be given one.
+    var naming by remember { mutableStateOf<String?>(null) }
     val required = id.core.required
     SectionHeader(
         "Guardians",
@@ -490,15 +498,26 @@ private fun GuardiansSection(w: WorkspaceState, id: IdentityInfo, guardians: Lis
             }
             guardians.forEachIndexed { i, g ->
                 if (i > 0) Rule()
+                val unnamed = w.names[g.hex()] == null
                 ListItem(
                     nameOf(w.names, g),
                     subtitle = shortId(g, 10, 6),
                     left = { IconCircle(Icons.Outlined.VerifiedUser, p.accent, p.accentSoft) },
-                    right = if (canAct) ({ Button("Unlink", onClick = { propose(ProposeRoute(kind = "removeGuardian", id = g.hex())) }, kind = ButtonKind.Ghost, small = true) }) else null,
+                    right = if (unnamed || canAct) {
+                        {
+                            Row {
+                                if (unnamed) Button("Name", onClick = { naming = g.hex() }, kind = ButtonKind.Ghost, small = true)
+                                if (canAct) Button("Unlink", onClick = { propose(ProposeRoute(kind = "removeGuardian", id = g.hex())) }, kind = ButtonKind.Ghost, small = true)
+                            }
+                        }
+                    } else {
+                        null
+                    },
                 )
             }
         }
     }
+    naming?.let { NameIdentitySheet(it, onClose = { naming = null }) }
 }
 
 @Composable
@@ -554,7 +573,7 @@ private fun PendingSection(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
                 Icon(Icons.Outlined.HourglassEmpty, null, tint = p.warning, modifier = Modifier.size(16.dp))
-                Text("$n pending ${if (n == 1) "change" else "changes"}", style = manropeStyle(13.5f, FontWeight.ExtraBold), color = p.warning)
+                Text("$n pending ${if (n == 1) "change" else "changes"}", style = manropeStyle(13.5f, FontWeight.SemiBold), color = p.warning)
                 Info(
                     "Pending changes",
                     "A change waits ${relativeDuration(id.core.changeDelay)}, and any of your devices can cancel it meanwhile. " +
@@ -564,7 +583,7 @@ private fun PendingSection(
                 if (linked.isNotEmpty() && n > 1) {
                     Text(
                         if (busy == "cancel-all") "Cancelling…" else "Cancel all",
-                        style = manropeStyle(13.5f, FontWeight.Bold),
+                        style = manropeStyle(13.5f, FontWeight.Medium),
                         color = p.danger,
                         modifier = Modifier.clickable(role = Role.Button) { if (busy == null) confirmCancel(id.pending.map { it.changeNo }, "cancel-all") }.padding(4.dp),
                     )
@@ -581,7 +600,7 @@ private fun PendingSection(
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                             Text(
                                 record.operations.joinToString("; ") { describeOperation(it, w.names, w.advanced, onThisDevice) },
-                                style = manropeStyle(14.5f, FontWeight.Bold),
+                                style = manropeStyle(14.5f, FontWeight.Medium),
                                 color = p.text,
                             )
                             Text("#$changeNo · ${if (due) "ready to apply" else "applies ${relativeTime(record.effectiveAt)}"}", style = Type.caption, color = p.warning)
@@ -611,12 +630,21 @@ private fun RecoverySection() {
         info = "Lost your phone? On the new one, restore with your recovery phrase. Without it, add the identity by its ID (Add a user → Restore → Identity ID) and start a recovery there: " +
             "it shows a link for your guardians. Once enough approve and the recovery delay passes, the new phone takes over with a new recovery phrase, and the old devices and words stop working.",
     )
+    // What to do when the phone or the words are stolen, in steps, opened on a tap.
+    var stolen by remember { mutableStateOf(false) }
     Card {
-        Caption(
-            "Phone or words stolen? Cancel every withdrawal and change you did not make, under Scheduled on the wallet and Pending changes here. Then ask your guardians to " +
-                "recover the identity to a new phrase: that voids the thief’s changes, and the old phone and words stop working. Spending is instant, so move what is left " +
-                "there to Savings first.",
-        )
+        Row(
+            Modifier.fillMaxWidth().clickable(role = Role.Button) { stolen = !stolen },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Phone or words stolen?", Modifier.weight(1f), style = Type.subheading, color = t.text)
+            Icon(if (stolen) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, if (stolen) "Hide the steps" else "Show the steps", tint = t.muted)
+        }
+        if (stolen) {
+            Caption("1. Cancel every withdrawal and change you did not make: under Scheduled on the wallet, and Pending changes here.")
+            Caption("2. Move what is left in Spending to Savings: Spending is instant.")
+            Caption("3. Ask your guardians to recover the identity to a new phrase. That voids the thief’s changes, and the old phone and words stop working.")
+        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
             Button("Recover this identity", onClick = { nav.navigate(RecoveryRoute(mode = "mine")) }, kind = ButtonKind.Secondary, small = true, icon = Icons.Outlined.Refresh)
             Button("Help someone", onClick = { nav.navigate(RecoveryRoute(mode = "help")) }, kind = ButtonKind.Ghost, small = true, icon = Icons.Outlined.PanTool)

@@ -60,6 +60,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
@@ -352,11 +353,11 @@ private fun Review(
     // Who asks: the site, as the app knows it.
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         val shape = RoundedCornerShape(Radius.md)
-        Box(Modifier.size(40.dp).clip(shape).background(p.card).border(1.dp, p.border, shape), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(40.dp).clip(shape).background(p.card).border(Dp.Hairline, p.border, shape), contentAlignment = Alignment.Center) {
             Icon(Icons.Outlined.Language, null, tint = p.muted, modifier = Modifier.size(20.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(site, style = manropeStyle(15f, FontWeight.Bold), color = p.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(site, style = manropeStyle(15f, FontWeight.Medium), color = p.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (secure) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Icon(Icons.Outlined.Lock, null, tint = p.success, modifier = Modifier.size(12.dp))
@@ -381,7 +382,7 @@ private fun Review(
                     s,
                     style = Type.mono.copy(fontSize = 12.5.sp),
                     color = p.text,
-                    modifier = Modifier.clip(shape).background(p.cardAlt).border(1.dp, p.border, shape).padding(horizontal = 8.dp, vertical = 2.dp),
+                    modifier = Modifier.clip(shape).background(p.cardAlt).border(Dp.Hairline, p.border, shape).padding(horizontal = 8.dp, vertical = 2.dp),
                 )
             }
         }
@@ -394,7 +395,7 @@ private fun Review(
                     val selected = u.id == user?.id
                     val shape = RoundedCornerShape(999.dp)
                     Row(
-                        Modifier.clip(shape).background(p.card).border(1.dp, if (selected) p.ink else p.border, shape)
+                        Modifier.clip(shape).background(p.card).border(Dp.Hairline, if (selected) p.ink else p.border, shape)
                             .clickable(enabled = !busy, role = Role.RadioButton) { onSigner(u.id) }
                             .semantics { contentDescription = if (selected) "${u.name}, signing" else "Sign as ${u.name}" }
                             .padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
@@ -415,13 +416,13 @@ private fun Review(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val shape = RoundedCornerShape(Radius.lg)
             Row(
-                Modifier.fillMaxWidth().clip(shape).background(p.card).border(1.dp, if (file == FileState.Opened) p.success else p.border, shape).padding(Spacing.md),
+                Modifier.fillMaxWidth().clip(shape).background(p.card).border(Dp.Hairline, if (file == FileState.Opened) p.success else p.border, shape).padding(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 IconCircle(Icons.Outlined.Description, p.muted, p.cardAlt, 40.dp)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text(attachment.name, style = manropeStyle(14.5f, FontWeight.Bold), color = p.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(attachment.name, style = manropeStyle(14.5f, FontWeight.Medium), color = p.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Caption(if (file == FileState.Opened) "Checked: it is the file the statement names" else attachment.mediaType)
                 }
                 Button(
@@ -455,7 +456,7 @@ private fun Review(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(Offchain.matchCode(request.nonce), style = manropeStyle(40f, FontWeight.ExtraBold, tabular = true).copy(letterSpacing = 1.sp, lineHeight = 46.sp), color = p.primary)
+            Text(Offchain.matchCode(request.nonce), style = manropeStyle(40f, FontWeight.SemiBold, tabular = true).copy(letterSpacing = 1.sp, lineHeight = 46.sp), color = p.primary)
             Text(
                 "The site shows the same number. If it shows another, decline.",
                 style = manropeStyle(14f, FontWeight.SemiBold).copy(lineHeight = 20.sp),
@@ -487,9 +488,9 @@ private fun Review(
         }
         if (doc.fields.isNotEmpty()) {
             Column(Modifier.padding(top = 4.dp)) {
-                Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+                Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
                 doc.fields.forEachIndexed { i, f ->
-                    if (i > 0) Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+                    if (i > 0) Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
                     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Caption(f.label, Modifier.weight(0.45f, fill = false).padding(end = Spacing.md))
                         Text(f.value, style = manropeStyle(14f, FontWeight.SemiBold), color = p.text, textAlign = TextAlign.End, modifier = Modifier.weight(0.55f, fill = false))
@@ -531,7 +532,7 @@ private fun Review(
 private fun Spans(spans: List<Offchain.Span>) {
     val text = buildAnnotatedString {
         for (s in spans) {
-            withStyle(SpanStyle(fontWeight = if (s.bold) FontWeight.Bold else null, fontStyle = if (s.italic) FontStyle.Italic else null)) { append(s.text) }
+            withStyle(SpanStyle(fontWeight = if (s.bold) FontWeight.Medium else null, fontStyle = if (s.italic) FontStyle.Italic else null)) { append(s.text) }
         }
     }
     Text(text, style = Type.body, color = t.text)

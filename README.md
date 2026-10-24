@@ -3,23 +3,21 @@
 Ting ID is a wallet and identity app for Android, for the
 [Ting](https://github.com/ting-organization/ting) network.
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/screenshots/welcome.png" width="190" alt="Welcome: Spending, Savings and Recovery, with Create and Restore an identity"><br>Welcome</td>
-    <td align="center"><img src="docs/screenshots/wallet.png" width="190" alt="Wallet: Daler in Spending and Savings, and the activity"><br>Wallet</td>
-    <td align="center"><img src="docs/screenshots/send.png" width="190" alt="Send: an amount to a contact"><br>Send</td>
-    <td align="center"><img src="docs/screenshots/review.png" width="190" alt="Review payment before it goes"><br>Review</td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/screenshots/receive.png" width="190" alt="Receive: a pay link as a QR code"><br>Receive</td>
-    <td align="center"><img src="docs/screenshots/transaction.png" width="190" alt="A confirmed payment and what it did"><br>Transaction</td>
-    <td align="center"><img src="docs/screenshots/identity.png" width="190" alt="Identity: devices, guardians and accounts"><br>Identity</td>
-    <td align="center"><img src="docs/screenshots/people.png" width="190" alt="People: the users on the phone and contacts"><br>People</td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/screenshots/welcome.png" width="190" alt="Welcome: Spending, Savings and Recovery, with Create and Restore an identity">
+  <img src="docs/screenshots/wallet.png" width="190" alt="Wallet: the Daler total, Spending and Savings, and the activity">
+  <img src="docs/screenshots/send.png" width="190" alt="Send: an amount to a contact">
+  <img src="docs/screenshots/review.png" width="190" alt="Review: a payment to an account that is not a contact, its address in full">
+</p>
+<p align="center">
+  <img src="docs/screenshots/receive.png" width="190" alt="Receive: a pay link as a QR code">
+  <img src="docs/screenshots/transaction.png" width="190" alt="A confirmed payment and what it did">
+  <img src="docs/screenshots/identity.png" width="190" alt="Identity: devices, guardians and accounts">
+  <img src="docs/screenshots/people.png" width="190" alt="People: the user on this phone and contacts">
+</p>
 
 The pictures are of a [development chain](#a-development-chain) with test
-identities.
+identities, framed by `java scripts/FrameScreenshot.java <screenshot> <framed.png>`.
 
 ## Download
 

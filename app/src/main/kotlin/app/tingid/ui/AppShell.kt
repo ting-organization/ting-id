@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
@@ -40,6 +41,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -180,6 +183,18 @@ private fun routeOf(target: LinkTarget, at: Long): Any = when (target) {
 /** Opens a link scanned or pasted in the app, which opens every kind. */
 fun NavHostController.openLink(target: LinkTarget) = navigate(routeOf(target, System.currentTimeMillis()))
 
+/**
+ * Opens a tab, as the tab bar does: what is open over the wallet closes, and
+ * the tab shows over it. Nothing closed is kept to come back: navigation keeps
+ * saved screens under the wallet's name too, and a tab opened from deeper in
+ * then brought back Send or Settings for a tap on Wallet. The send form, the
+ * one thing worth keeping, lives with the activity instead (SendScreen).
+ */
+fun NavHostController.openTab(route: Any) = navigate(route) {
+    popUpTo(graph.findStartDestination().id)
+    launchSingleTop = true
+}
+
 /** The notices on every screen: the nodes, and a change the phone did not save. */
 @Composable
 private fun Notices() {
@@ -222,24 +237,24 @@ private fun TabBar(nav: NavHostController, coinTools: Boolean) {
     if (!onTab) return
     val p = t
     Column(Modifier.fillMaxWidth().background(p.card)) {
-        Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+        Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
         Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(vertical = 6.dp)) {
             for (tab in tabs) {
                 val selected = destination.hasRoute(tab.route::class)
                 val color = if (selected) p.ink else p.faint
                 Column(
-                    Modifier.weight(1f).clickable(role = Role.Tab) {
-                        nav.navigate(tab.route) {
-                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }.padding(vertical = 4.dp),
+                    Modifier.weight(1f).clickable(role = Role.Tab) { nav.openTab(tab.route) }.padding(vertical = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
-                    Icon(tab.icon, null, tint = color, modifier = Modifier.size(24.dp))
-                    Text(tab.label, style = manropeStyle(11f, FontWeight.Bold), color = color)
+                    // The open tab's icon sits on a soft pill.
+                    Box(
+                        Modifier.clip(RoundedCornerShape(50)).background(if (selected) p.primarySoft else Color.Transparent).padding(horizontal = 18.dp, vertical = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(tab.icon, null, tint = if (selected) p.primary else color, modifier = Modifier.size(22.dp))
+                    }
+                    Text(tab.label, style = manropeStyle(11f, if (selected) FontWeight.SemiBold else FontWeight.Medium), color = color)
                 }
             }
         }

@@ -79,4 +79,4 @@ internal fun ToolsLabel(text: String) = Text(text, style = manropeStyle(12.5f, F
 
 /** The hairline between the rows of a card. */
 @Composable
-internal fun ToolsHairline() = Spacer(Modifier.fillMaxWidth().height(1.dp).background(t.border))
+internal fun ToolsHairline() = Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(t.border))

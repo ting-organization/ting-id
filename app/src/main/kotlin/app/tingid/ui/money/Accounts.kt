@@ -120,13 +120,13 @@ fun ScheduledRows(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (who != null) {
                     Box(Modifier.size(38.dp).clip(CircleShape).background(p.warningLine), contentAlignment = Alignment.Center) {
-                        Text(initialsOf(who), style = manropeStyle(14f, FontWeight.ExtraBold), color = p.warning)
+                        Text(initialsOf(who), style = manropeStyle(14f, FontWeight.SemiBold), color = p.warning)
                     }
                 } else {
                     IconCircle(if (due) Icons.Outlined.PlayArrow else Icons.Outlined.Schedule, p.warning, p.warningLine, 38.dp)
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text(effectTitle(e, names), style = manropeStyle(14.5f, FontWeight.Bold), color = p.text)
+                    Text(effectTitle(e, names), style = manropeStyle(14.5f, FontWeight.Medium), color = p.text)
                     val tip = e.record.tip
                     ToneCaption(
                         "From ${e.view.account.label} · ${if (due) "" else "${relativeTime(e.record.executeAt)} · "}${runNote(status, due)}" +
@@ -219,13 +219,13 @@ fun ScheduledSection(w: WorkspaceState, entries: List<ScheduledEntry>, acting: A
                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
                 Icon(Icons.Outlined.Schedule, null, tint = p.warning, modifier = Modifier.size(16.dp))
-                Text("${entries.size} scheduled ${if (entries.size == 1) "action" else "actions"}", style = manropeStyle(13.5f, FontWeight.ExtraBold), color = p.warning)
+                Text("${entries.size} scheduled ${if (entries.size == 1) "action" else "actions"}", style = manropeStyle(13.5f, FontWeight.SemiBold), color = p.warning)
                 if (info != null) Info("Scheduled", info)
                 Spacer(Modifier.weight(1f))
                 if (entries.size > 1 && w.user != null) {
                     Text(
                         if (busy == "cancel-all") "Cancelling…" else "Cancel all",
-                        style = manropeStyle(13.5f, FontWeight.Bold),
+                        style = manropeStyle(13.5f, FontWeight.Medium),
                         color = p.danger,
                         modifier = Modifier.clickable(role = Role.Button) { if (busy == null) cancelAll() }.padding(4.dp),
                     )

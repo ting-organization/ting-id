@@ -37,7 +37,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import app.tingid.chain.DELAY_PRESETS
 import app.tingid.chain.Id
@@ -59,6 +58,7 @@ import app.tingid.state.User
 import app.tingid.state.UserKind
 import app.tingid.state.fetchIdentity
 import app.tingid.state.findIdentitiesWithKey
+import app.tingid.state.identityName
 import app.tingid.state.keyNameFor
 import app.tingid.state.nextColor
 import app.tingid.state.sent
@@ -89,8 +89,11 @@ import app.tingid.ui.SecureWindow
 import app.tingid.ui.Segmented
 import app.tingid.ui.Spacing
 import app.tingid.ui.Sub
+import app.tingid.ui.TAKEN
 import app.tingid.ui.Tone
 import app.tingid.ui.identity.PhraseInput
+import app.tingid.ui.nameTaken
+import app.tingid.ui.openTab
 import app.tingid.ui.sentence
 import app.tingid.ui.t
 import app.tingid.vault.NotConfirmed
@@ -164,6 +167,13 @@ fun NewUserScreen(route: NewUserRoute) {
     var existingId by remember { mutableStateOf("") }
     var guardians by remember { mutableStateOf(listOf<String>()) }
     var guardianHex by remember { mutableStateOf("") }
+    // A pasted guardian with no name here is named with it, as a contact.
+    var guardianName by remember { mutableStateOf("") }
+    val names = services.workspace.state.collectAsState().value.names
+    val registry = info?.canonical?.registry
+    val pastedHex = trimWhiteSpace(guardianHex).lowercase()
+    val naming = isHex(pastedHex, 32) && identityName(names, registry, pastedHex) == null
+    val nameClash = naming && nameTaken(data.contacts, guardianName.trim())
     var threshold by remember { mutableStateOf("0") }
     var locks by remember { mutableStateOf(false) }
     var changeDelay by remember { mutableLongStateOf(Id.DEFAULT_CHANGE_DELAY) }
@@ -193,10 +203,7 @@ fun NewUserScreen(route: NewUserRoute) {
     val otherIdentities = users.mapNotNull { u -> userIdentity(u)?.let { u to it.id.hex() } }
 
     /** The identity tab, in place of this screen. */
-    fun toIdentity() = nav.navigate(IdentityTab) {
-        popUpTo(nav.graph.findStartDestination().id)
-        launchSingleTop = true
-    }
+    fun toIdentity() = nav.openTab(IdentityTab)
 
     /** A key made here for an identity that will not be: its secret leaves the vault, and the key the list. */
     suspend fun forgetKey(key: KeyMeta) {
@@ -403,7 +410,7 @@ fun NewUserScreen(route: NewUserRoute) {
                 Column {
                     RESTORE_BY.forEachIndexed { i, r ->
                         val on = r.value == restoreBy
-                        if (i > 0) Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+                        if (i > 0) Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
                         ListItem(
                             r.label,
                             subtitle = r.hint,
@@ -485,7 +492,7 @@ fun NewUserScreen(route: NewUserRoute) {
                 }
                 for (g in guardians.filter { g -> otherIdentities.none { it.second == g } }) {
                     ListItem(
-                        "${g.take(12)}…",
+                        identityName(names, registry, g) ?: "${g.take(12)}…",
                         subtitle = "pasted ID",
                         right = { Button("Remove", onClick = { guardians = guardians - g }, kind = ButtonKind.Ghost, small = true) },
                     )
@@ -496,7 +503,6 @@ fun NewUserScreen(route: NewUserRoute) {
                         "Add",
                         onClick = {
                             val pasted = trimWhiteSpace(guardianHex).lowercase()
-                            val registry = info?.canonical?.registry
                             error = null
                             if (registry != null) {
                                 scope.launch {
@@ -512,13 +518,26 @@ fun NewUserScreen(route: NewUserRoute) {
                                         return@launch
                                     }
                                     if (pasted !in guardians) guardians = guardians + pasted
+                                    val named = guardianName.trim()
+                                    if (named.isNotEmpty() && identityName(names, registry, pasted) == null) services.store.nameIdentity(named, pasted, registry)
                                     guardianHex = ""
+                                    guardianName = ""
                                 }
                             }
                         },
                         kind = ButtonKind.Secondary,
                         small = true,
-                        enabled = isHex(trimWhiteSpace(guardianHex), 32) && info != null,
+                        enabled = isHex(trimWhiteSpace(guardianHex), 32) && info != null && !nameClash,
+                    )
+                }
+                if (naming) {
+                    Field(
+                        guardianName,
+                        { guardianName = it },
+                        label = "Their name",
+                        placeholder = "Bob",
+                        hint = "Optional: saved as a contact, with their Spending account.",
+                        error = if (nameClash) TAKEN else null,
                     )
                 }
                 if (advanced) Field(threshold, { threshold = it }, label = "Approvals needed (0 = more than half)", keyboardType = KeyboardType.Number)
