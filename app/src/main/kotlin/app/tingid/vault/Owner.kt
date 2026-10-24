@@ -1,7 +1,8 @@
 // The phone's own check of its owner: fingerprint or face (strong biometrics
 // only), or the screen lock's PIN, pattern or password. Ting ID asks it when
 // it opens and before a payment goes (Settings → Security); the keystore asks
-// it itself, bound to the key, before the vault shows a recovery phrase.
+// it itself, bound to the key, before the vault shows a recovery phrase. The
+// screen lock's credential alone opens keys the keystore holds shut (KeysShut).
 package app.tingid.vault
 
 import android.app.KeyguardManager
@@ -46,6 +47,20 @@ object Owner {
         }
     }
 
+    /**
+     * Asks for the screen lock's PIN, pattern or password only, no biometrics:
+     * entered, it also opens the keys the keystore holds shut until then.
+     */
+    suspend fun checkCredential(activity: FragmentActivity, title: String, subtitle: String? = null): OwnerCheck {
+        if (!available(activity)) return OwnerCheck.Unavailable
+        return try {
+            prompt(activity, title, subtitle, null, DEVICE_CREDENTIAL)
+            OwnerCheck.Confirmed
+        } catch (e: NotConfirmed) {
+            if (e.message == CANCELLED) OwnerCheck.Cancelled else OwnerCheck.Failed
+        }
+    }
+
     /** The vault's prompt: the keystore lets `cipher` work once the owner confirms. */
     fun prompt(activity: FragmentActivity): OwnerPrompt = OwnerPrompt { title, subtitle, cipher ->
         prompt(activity, title, subtitle, cipher) ?: throw NotConfirmed("the phone did not confirm it is you")
@@ -53,7 +68,7 @@ object Owner {
 
     private const val CANCELLED = "cancelled"
 
-    private suspend fun prompt(activity: FragmentActivity, title: String, subtitle: String?, cipher: Cipher?): Cipher? =
+    private suspend fun prompt(activity: FragmentActivity, title: String, subtitle: String?, cipher: Cipher?, allowed: Int = ALLOWED): Cipher? =
         suspendCancellableCoroutine { cont ->
             running++
             val callback = object : BiometricPrompt.AuthenticationCallback() {
@@ -78,7 +93,7 @@ object Owner {
             val info = BiometricPrompt.PromptInfo.Builder()
                 .setTitle(title)
                 .apply { if (subtitle != null) setSubtitle(subtitle) }
-                .setAllowedAuthenticators(ALLOWED)
+                .setAllowedAuthenticators(allowed)
                 .setConfirmationRequired(true)
                 .build()
             if (cipher == null) prompt.authenticate(info) else prompt.authenticate(info, BiometricPrompt.CryptoObject(cipher))

@@ -23,6 +23,7 @@ import android.security.keystore.KeyInfo
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
+import android.security.keystore.UserNotAuthenticatedException
 import android.util.AtomicFile
 import app.tingid.chain.Phrase
 import app.tingid.chain.SigningKey
@@ -46,6 +47,14 @@ open class VaultError(message: String) : Exception(message)
 
 /** The owner cancelled the check, or the phone did not confirm it was them. */
 class NotConfirmed(message: String) : VaultError(message)
+
+/**
+ * The keystore holds the vault's keys shut: it opens them only once the phone
+ * counts as unlocked, and some phones count that only after the screen lock's
+ * PIN, pattern or password, not a face, a trusted device or a fingerprint
+ * asked in an app.
+ */
+class KeysShut : VaultError("this phone keeps your keys shut until its PIN, pattern or password is entered: confirm with it, or unlock the phone with it, and try again")
 
 /** The keystore destroyed the phrase's key: a new fingerprint or face, or the screen lock was removed. */
 class PhraseGone : VaultError("this phone can no longer show the words, as its fingerprints, face or screen lock changed; your written copy still works")
@@ -95,6 +104,24 @@ class Vault(dir: File, private val ownerLockAvailable: () -> Boolean) : Secrets<
                 secret.wipe()
             }
         }
+    }
+
+    /**
+     * Whether the keystore opens the vault's keys now, asked without a prompt:
+     * false while it holds them shut (KeysShut), which the screen lock's own
+     * PIN, pattern or password ends.
+     */
+    fun keysOpen(): Boolean = try {
+        val cipher = Cipher.getInstance(AES_GCM).apply { init(Cipher.DECRYPT_MODE, sealKey(), GCMParameterSpec(128, ByteArray(12))) }
+        // Finished at once, so the keystore keeps no operation open: a tag that cannot match is expected.
+        try {
+            cipher.doFinal(ByteArray(16))
+        } catch (e: javax.crypto.AEADBadTagException) {
+            // The probe's own record, which no key seals.
+        }
+        true
+    } catch (e: UserNotAuthenticatedException) {
+        false
     }
 
     // ---- Recovery phrases --------------------------------------------------------
@@ -260,20 +287,27 @@ class Vault(dir: File, private val ownerLockAvailable: () -> Boolean) : Secrets<
 
     private fun aad(kind: Kind, id: String): ByteArray = "ting-vault-v1\u0000${kind.tag}\u0000$id".encodeToByteArray()
 
-    private fun seal(key: SecretKey, kind: Kind, id: String, plain: ByteArray): Blob {
+    private fun seal(key: SecretKey, kind: Kind, id: String, plain: ByteArray): Blob = shutAsKeysShut {
         val cipher = Cipher.getInstance(AES_GCM).apply { init(Cipher.ENCRYPT_MODE, key) }
         cipher.updateAAD(aad(kind, id))
-        return Blob(SEAL_ALIAS, cipher.iv, cipher.doFinal(plain))
+        Blob(SEAL_ALIAS, cipher.iv, cipher.doFinal(plain))
     }
 
-    private fun openBlob(key: SecretKey, kind: Kind, id: String, blob: Blob): ByteArray {
+    private fun openBlob(key: SecretKey, kind: Kind, id: String, blob: Blob): ByteArray = shutAsKeysShut {
         val cipher = Cipher.getInstance(AES_GCM).apply { init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, blob.iv)) }
         cipher.updateAAD(aad(kind, id))
-        return try {
+        try {
             cipher.doFinal(blob.sealed)
         } catch (e: javax.crypto.AEADBadTagException) {
             throw VaultError("a sealed record on this phone was changed")
         }
+    }
+
+    /** The seal key's work, with the keystore's "User not authenticated" said as what it means here. */
+    private inline fun <T> shutAsKeysShut(work: () -> T): T = try {
+        work()
+    } catch (e: UserNotAuthenticatedException) {
+        throw KeysShut()
     }
 
     /** The secret of a sealed key record, or null when there is none; the caller wipes it. */

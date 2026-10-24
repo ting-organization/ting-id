@@ -181,7 +181,7 @@ private fun SignFlow(linked: String) {
         scope.launch {
             // The phone's owner first, as for a payment. The site's title is quoted: it is the site's.
             try {
-                if (!confirmOwner(activity, services.store, "Sign for ${request.origin}", "“${request.request.title}”")) return@launch
+                if (!confirmOwner(activity, services, "Sign for ${request.origin}", "“${request.request.title}”")) return@launch
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 error = e.message ?: "the phone did not confirm it is you"

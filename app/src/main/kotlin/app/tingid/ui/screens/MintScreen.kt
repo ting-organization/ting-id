@@ -103,7 +103,7 @@ private fun Mint(id: String) {
         error = null
         ui.launch {
             try {
-                if (!confirmOwner(activity, services.store, "Mint $shown", "to $toLabel")) return@launch
+                if (!confirmOwner(activity, services, "Mint $shown", "to $toLabel")) return@launch
                 val summary = "${if (delayed) "Schedule mint of" else "Mint"} $shown to $toLabel"
                 // Once signed it goes on even if the screen goes: the node may have it.
                 val sent = services.submitBeyondScreen {

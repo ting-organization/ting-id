@@ -236,7 +236,7 @@ fun RecoveryScreen(route: RecoveryRoute) {
     val targetName = targetId?.let { nameOf(w.names, it) } ?: "them"
     var confirming by remember { mutableStateOf(false) }
     // Approving and finishing a recovery ask the phone to confirm its owner, as payments do.
-    val owner = { title: String -> suspend { confirmOwner(activity, services.store, title) } }
+    val owner = { title: String -> suspend { confirmOwner(activity, services, title) } }
     fun finish() {
         val chosenFee = fee
         act("recover", "Recover ${if (mode == RecoveryMode.Mine) "identity" else targetName}", check = owner("Finish the recovery")) {
@@ -252,7 +252,7 @@ fun RecoveryScreen(route: RecoveryRoute) {
             paid = false,
             check = {
                 if (executableAt == null) throw IllegalStateException("not approved yet")
-                confirmOwner(activity, services.store, "Finish the recovery when due")
+                confirmOwner(activity, services, "Finish the recovery when due")
             },
         ) {
             if (info == null || targetId == null || keyList == null || executableAt == null) throw IllegalStateException("the identities are still loading: try again in a moment")
