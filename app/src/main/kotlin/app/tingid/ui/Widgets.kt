@@ -81,7 +81,7 @@ fun Welcome() {
     Card(padded = false) {
         Column {
             FEATURES.forEachIndexed { i, f ->
-                if (i > 0) Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+                if (i > 0) Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
                 ListItem(f.title, subtitle = f.text, left = { IconCircle(f.icon, p.primary, p.primarySoft) })
             }
         }
@@ -117,9 +117,9 @@ fun ProfileButton(size: Dp = 38.dp) {
 fun RowGroup(rows: List<@Composable () -> Unit>) {
     val p = t
     val shape = RoundedCornerShape(Radius.lg)
-    Column(Modifier.fillMaxWidth().clip(shape).border(1.dp, p.border, shape)) {
+    Column(Modifier.fillMaxWidth().clip(shape).border(Dp.Hairline, p.border, shape)) {
         rows.forEachIndexed { i, row ->
-            if (i > 0) Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+            if (i > 0) Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
             row()
         }
     }
@@ -266,12 +266,12 @@ private fun androidx.compose.foundation.layout.RowScope.Choice(icon: ImageVector
     val p = t
     val shape = RoundedCornerShape(Radius.md)
     Row(
-        Modifier.weight(1f).heightIn(min = 46.dp).clip(shape).background(p.card).border(1.dp, p.border, shape)
+        Modifier.weight(1f).heightIn(min = 46.dp).clip(shape).background(p.card).border(Dp.Hairline, p.border, shape)
             .clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = description }.padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Icon(icon, null, tint = p.primary, modifier = Modifier.size(17.dp))
-        Text(label, style = manropeStyle(14.5f, FontWeight.Bold, tabular = true), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(label, style = manropeStyle(14.5f, FontWeight.Medium, tabular = true), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

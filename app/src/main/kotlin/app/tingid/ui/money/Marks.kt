@@ -89,7 +89,7 @@ fun toneOf(tone: TextTone): Tone = when (tone) {
 
 /** The hairline between the rows of a card. */
 @Composable
-internal fun Hairline(color: Color = t.border) = Spacer(Modifier.fillMaxWidth().height(1.dp).background(color))
+internal fun Hairline(color: Color = t.border) = Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(color))
 
 /** A caption in a color of its own, such as a warning under a fee. */
 @Composable

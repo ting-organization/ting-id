@@ -33,6 +33,7 @@ import app.tingid.text.supplyModel
 import app.tingid.ui.Banner
 import app.tingid.ui.BannerTone
 import app.tingid.ui.Button
+import app.tingid.ui.ButtonKind
 import app.tingid.ui.Caption
 import app.tingid.ui.Card
 import app.tingid.ui.CoinToolsRoute
@@ -82,8 +83,9 @@ private fun CoinBrowser() {
 
     Screen(
         title = "Coins",
+        tab = true,
         right = {
-            Button("Create coin", onClick = { nav.navigate(NewCoinRoute) }, small = true, icon = Icons.Outlined.Add, enabled = w.user != null && w.info != null)
+            Button("Create coin", onClick = { nav.navigate(NewCoinRoute) }, kind = ButtonKind.Light, small = true, icon = Icons.Outlined.Add, enabled = w.user != null && w.info != null)
         },
     ) {
         Field(query, { query = it }, placeholder = "Search by name, symbol or contract ID")

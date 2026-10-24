@@ -139,7 +139,7 @@ fun SettingsScreen() {
     }
     val missing = STANDARD.filter { deployed[it.label] == false }.map { it.label }
 
-    Screen(title = "Settings") {
+    Screen(title = "Settings", tab = true) {
         SecuritySettings()
         CoinsSection(w, confirm)
         FeeSettings(w)

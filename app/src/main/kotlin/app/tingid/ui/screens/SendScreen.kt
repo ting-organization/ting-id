@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.SwapHoriz
@@ -56,6 +57,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
@@ -97,6 +99,7 @@ import app.tingid.state.recipients
 import app.tingid.state.sent
 import app.tingid.state.ungroupTyped
 import app.tingid.text.relativeDuration
+import app.tingid.ui.AccountBox
 import app.tingid.ui.Avatar
 import app.tingid.ui.Banner
 import app.tingid.ui.BannerTone
@@ -108,6 +111,8 @@ import app.tingid.ui.ConfirmHost
 import app.tingid.ui.ConfirmOptions
 import app.tingid.ui.Field
 import app.tingid.ui.IconButton
+import app.tingid.ui.IconCircle
+import app.tingid.ui.IdChip
 import app.tingid.ui.IdentityTab
 import app.tingid.ui.ListItem
 import app.tingid.ui.LocalActivity
@@ -447,14 +452,14 @@ fun SendScreen(route: SendTab) {
     ConfirmHost(confirm)
     val user = w.user
     if (user == null) {
-        Screen(title = "Send") { Welcome() }
+        Screen(title = "Send", tab = true) { Welcome() }
         return
     }
     // An identity this phone signs for no key of cannot send from here yet.
     val identity = w.identity
     val info = w.info
     if (user.kind == UserKind.Identity && identity != null && info != null && linkedDeviceKeys(info.canonical, identity, w.keys).isEmpty()) {
-        Screen(title = "Send") {
+        Screen(title = "Send", tab = true) {
             Card {
                 Sub("This phone can’t act for ${user.name} yet")
                 Caption("Its balances show on the wallet, but sending needs a key the identity lists. Add this phone from one that has access, or recover the identity.")
@@ -464,7 +469,7 @@ fun SendScreen(route: SendTab) {
         return
     }
 
-    Screen(title = "Send") {
+    Screen(title = "Send", tab = true) {
         if (selectedCoin != null) {
             CardRows(
                 Modifier.clip(RoundedCornerShape(Radius.lg)).clickable(role = Role.Button) { fromSheet = true }
@@ -473,7 +478,7 @@ fun SendScreen(route: SendTab) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     CoinMark(selectedCoin, 38.dp)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                        Text("${user.name} · ${from?.account?.label ?: "…"}", style = manropeStyle(14.5f, FontWeight.Bold), color = p.text)
+                        Text("${user.name} · ${from?.account?.label ?: "…"}", style = manropeStyle(14.5f, FontWeight.Medium), color = p.text)
                         val line = if (from != null) {
                             buildAnnotatedString {
                                 withStyle(SpanStyle(fontFeatureSettings = TABULAR)) { append(formatAmount(check.availableNow, decimals)) }
@@ -506,22 +511,10 @@ fun SendScreen(route: SendTab) {
         CardRows {
             if (recipientSet) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(toLabel ?: "#", "", 40.dp, soft = true)
+                    if (toLabel != null) Avatar(toLabel, "", 40.dp, soft = true) else IconCircle(Icons.Outlined.Person, p.muted, p.cardAlt, 40.dp)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                         Caption("To")
-                        Text(toLabel ?: "New recipient", style = manropeStyle(15f, FontWeight.Bold), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(form.to, style = Type.mono.copy(fontSize = 12.sp), color = p.faint)
-                        form.note?.let { Caption("For: $it", maxLines = 2) }
-                        if (idCheck != null && idCheck.to == form.to && idCheck.identity && registry != null) {
-                            Button(
-                                "This is an identity ID: send to its Spending",
-                                onClick = { form.to = Id.account(registry, unhex(form.to), 0).hex() },
-                                kind = ButtonKind.Ghost,
-                                small = true,
-                                icon = Icons.Outlined.SwapHoriz,
-                            )
-                        }
-                        if (toLabel == null) Button("Save as contact", onClick = { naming = true }, kind = ButtonKind.Ghost, small = true, icon = Icons.Outlined.PersonAdd)
+                        Text(toLabel ?: "New recipient", style = manropeStyle(15f, FontWeight.Medium), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Button(
                         "Change",
@@ -533,6 +526,19 @@ fun SendScreen(route: SendTab) {
                         small = true,
                     )
                 }
+                // A name of this phone's says who, the account short to copy; one it has no name for shows in full, to check.
+                if (toLabel != null) IdChip(form.to, label = "Account") else AccountBox(form.to)
+                form.note?.let { Caption("For: $it", maxLines = 2) }
+                if (idCheck != null && idCheck.to == form.to && idCheck.identity && registry != null) {
+                    Button(
+                        "This is an identity ID: send to its Spending",
+                        onClick = { form.to = Id.account(registry, unhex(form.to), 0).hex() },
+                        kind = ButtonKind.Ghost,
+                        small = true,
+                        icon = Icons.Outlined.SwapHoriz,
+                    )
+                }
+                if (toLabel == null) Button("Save as contact", onClick = { naming = true }, kind = ButtonKind.Ghost, small = true, icon = Icons.Outlined.PersonAdd)
             } else {
                 Caption("To")
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -636,7 +642,7 @@ private fun AmountEntry(amount: String, onAmount: (String) -> Unit, symbol: Stri
     val marks = shown.count { it !in '0'..'9' }
     // As wide as its figures, so the symbol sits beside them.
     val width = min(320f * fontScale, ceil(((shown.length - marks) * 0.58f + marks * 0.3f) * size * fontScale) + 12f)
-    val style = manropeStyle(size, FontWeight.ExtraBold, tabular = true).copy(color = p.text, letterSpacing = (-2).sp, textAlign = TextAlign.Center)
+    val style = manropeStyle(size, FontWeight.SemiBold, tabular = true).copy(color = p.text, letterSpacing = (-2).sp, textAlign = TextAlign.Center)
     Column(Modifier.fillMaxWidth().padding(vertical = Spacing.md), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
             BasicTextField(
@@ -655,18 +661,18 @@ private fun AmountEntry(amount: String, onAmount: (String) -> Unit, symbol: Stri
                     }
                 },
             )
-            Text(symbol, Modifier.alignByBaseline(), style = manropeStyle(20f, FontWeight.Bold), color = p.faint)
+            Text(symbol, Modifier.alignByBaseline(), style = manropeStyle(20f, FontWeight.Medium), color = p.faint)
         }
         if (dotCaution != null) Caption(dotCaution)
         if (max != null) {
             val shape = RoundedCornerShape(999.dp)
             Text(
                 "Max",
-                Modifier.clip(shape).background(p.card).border(1.dp, p.border, shape)
+                Modifier.clip(shape).background(p.card).border(Dp.Hairline, p.border, shape)
                     .clickable(role = Role.Button) { onAmount(max) }
                     .semantics { contentDescription = "Send the most this account can" }
                     .padding(horizontal = 12.dp, vertical = 4.dp),
-                style = manropeStyle(12.5f, FontWeight.Bold),
+                style = manropeStyle(12.5f, FontWeight.Medium),
                 color = p.muted,
             )
         }

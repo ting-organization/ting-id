@@ -402,9 +402,9 @@ fun RecoveryScreen(route: RecoveryRoute) {
                 ready = fee.problem == null,
             ) {
                 Column(Modifier.fillMaxWidth()) {
-                    Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+                    Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
                     Box(Modifier.padding(vertical = 6.dp)) { FeeRow(fee) }
-                    Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+                    Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
                 }
             }
         }

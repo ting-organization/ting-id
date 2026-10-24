@@ -9,11 +9,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -25,6 +30,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -92,8 +98,10 @@ fun AppLock() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(Spacing.lg, Alignment.CenterVertically),
         ) {
-            Logo(64.dp)
-            Text("Ting ID is locked", style = manropeStyle(22f, FontWeight.ExtraBold), color = p.onHeader)
+            Box(Modifier.size(64.dp).clip(CircleShape).background(p.headerRaised), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Lock, null, tint = p.onHeader, modifier = Modifier.size(28.dp))
+            }
+            Text("Ting ID is locked", style = manropeStyle(22f, FontWeight.SemiBold), color = p.onHeader)
             Text(problem ?: "Unlock with your fingerprint, face or screen lock.", style = manropeStyle(14f, FontWeight.Medium), color = p.onHeaderMuted, textAlign = TextAlign.Center)
             Button("Unlock", onClick = { scope.launch { unlock() } }, kind = ButtonKind.Light, icon = Icons.Outlined.LockOpen)
         }

@@ -30,6 +30,7 @@ import app.tingid.text.Names
 import app.tingid.text.describeActivity
 import app.tingid.text.groupMinerPayments
 import app.tingid.ui.Avatar
+import app.tingid.ui.Amount
 import app.tingid.ui.Button
 import app.tingid.ui.ButtonKind
 import app.tingid.ui.Caption
@@ -93,12 +94,13 @@ fun ActivityList(activity: Activity, coins: Map<String, CoinInfo>, names: Names,
                 val d = describeActivity(item, coins, names, mine, advanced)
                 val heading = headings[i]
                 val c = coins[item.contract.hex()]
-                val party = d.party
+                // A party this phone has no name for shows as the action, its account in the line under it.
+                val party = d.party?.takeIf { it.known || it.coin }
                 if (heading != null) {
                     Text(
                         heading.uppercase(),
                         Modifier.padding(start = Spacing.lg, end = Spacing.lg, top = if (i == 0) 12.dp else 16.dp, bottom = 2.dp),
-                        style = manropeStyle(11.5f, FontWeight.Bold).copy(letterSpacing = 0.6.sp),
+                        style = manropeStyle(11.5f, FontWeight.Medium).copy(letterSpacing = 0.6.sp),
                         color = p.faint,
                     )
                 } else if (i > 0) {
@@ -116,16 +118,16 @@ fun ActivityList(activity: Activity, coins: Map<String, CoinInfo>, names: Names,
                     val what = (if (party != null) d.short else d.detail)?.takeIf { it.isNotEmpty() }
                     val time = if (item.time != 0L) formatClock(item.time) else null
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                        Text(party?.name ?: d.title, style = manropeStyle(14.5f, FontWeight.Bold), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(party?.name ?: d.title, style = manropeStyle(14.5f, FontWeight.Medium), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (what != null || time != null) Caption(listOfNotNull(what, time).joinToString(" · "), maxLines = 2)
                     }
                     val amount = d.amount
                     val planned = d.planned
                     if (amount != null) {
                         val tone = d.amountTone
-                        Text(amount, style = manropeStyle(14.5f, FontWeight.Bold, tabular = true), color = if (tone != null) toneColors(toneOf(tone)).second else p.text)
+                        Amount(amount, style = manropeStyle(14.5f, FontWeight.Medium, tabular = true), color = if (tone != null) toneColors(toneOf(tone)).second else p.text)
                     } else if (planned != null) {
-                        Text(planned, style = manropeStyle(14.5f, FontWeight.Bold, tabular = true), color = p.faint)
+                        Amount(planned, style = manropeStyle(14.5f, FontWeight.Medium, tabular = true), color = p.faint)
                     }
                 }
             }

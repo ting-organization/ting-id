@@ -204,7 +204,7 @@ private fun Header(c: CoinInfo, listed: Boolean, mine: Boolean, followed: Boolea
     InkHeader {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             IconButton(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, "Back", onClick = onBack, kind = ButtonKind.Raised, size = 36.dp)
-            Text(c.shownName, Modifier.weight(1f), style = manropeStyle(15f, FontWeight.Bold), color = p.onHeader, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(c.shownName, Modifier.weight(1f), style = manropeStyle(15f, FontWeight.Medium), color = p.onHeader, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             CoinMark(c, 40.dp)
@@ -223,7 +223,7 @@ private fun Header(c: CoinInfo, listed: Boolean, mine: Boolean, followed: Boolea
             Text("Circulating", style = manropeStyle(12.5f, FontWeight.SemiBold), color = p.onHeaderMuted)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(formatAmount(circulating(c), c.config.decimals), Modifier.alignByBaseline().weight(1f, fill = false), style = Type.amount, color = p.onHeader)
-                Text(c.shownSymbol, Modifier.alignByBaseline(), style = manropeStyle(16f, FontWeight.Bold), color = p.onHeaderMuted)
+                Text(c.shownSymbol, Modifier.alignByBaseline(), style = manropeStyle(16f, FontWeight.Medium), color = p.onHeaderMuted)
             }
             Text(
                 if (capped(c)) "of at most ${amountOf(c, c.config.maxSupply)}" else "no supply cap",

@@ -5,7 +5,6 @@ import android.content.ClipData
 import android.content.ClipDescription
 import android.os.PersistableBundle
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -65,12 +64,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
@@ -78,6 +73,9 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -95,14 +93,17 @@ private val MAX_WIDTH = 680.dp
 
 /**
  * A screen: an optional dark `header` band across the top, then the content.
- * `title` puts a large title above the content instead. Every screen shows
- * the app's notices first (no node answers, a change could not be saved).
+ * `title` puts a large title above the content instead, or, for a `tab`, on
+ * the dark band as the wallet and the identity have theirs, with the profile
+ * button beside it. Every screen shows the app's notices first (no node
+ * answers, a change could not be saved).
  */
 @Composable
 fun Screen(
     title: String? = null,
     right: @Composable (() -> Unit)? = null,
     header: @Composable (() -> Unit)? = null,
+    tab: Boolean = false,
     scroll: Boolean = true,
     padded: Boolean = true,
     /** Under a top bar, which keeps clear of the status bar itself. */
@@ -110,24 +111,36 @@ fun Screen(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val p = t
-    val top = if (header != null || belowHeader) Modifier else Modifier.windowInsetsPadding(WindowInsets.statusBars)
+    val band = header ?: if (tab && title != null) ({ TabHeader(title, right) }) else null
+    val top = if (band != null || belowHeader) Modifier else Modifier.windowInsetsPadding(WindowInsets.statusBars)
     Column(
         Modifier.fillMaxSize().background(p.background).then(top).then(if (scroll) Modifier.verticalScroll(rememberScrollState()) else Modifier).imePadding(),
     ) {
-        header?.invoke()
+        band?.invoke()
         Column(
             Modifier.fillMaxWidth().widthIn(max = MAX_WIDTH).align(Alignment.CenterHorizontally)
-                .padding(if (padded) PaddingValues(start = Spacing.lg, end = Spacing.lg, top = if (header != null) Spacing.lg + 2.dp else Spacing.lg, bottom = Spacing.xxl) else PaddingValues(bottom = Spacing.xxl)),
+                .padding(if (padded) PaddingValues(start = Spacing.lg, end = Spacing.lg, top = if (band != null) Spacing.lg + 2.dp else Spacing.lg, bottom = Spacing.xxl) else PaddingValues(bottom = Spacing.xxl)),
             verticalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
             LocalNotices.current()
-            if (title != null) {
+            if (title != null && band == null) {
                 Row(Modifier.padding(horizontal = 4.dp).padding(bottom = Spacing.xs), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
                     Text(title, style = Type.title, color = p.text, modifier = Modifier.weight(1f))
                     right?.invoke()
                 }
             }
             content()
+        }
+    }
+}
+
+/** A tab's title on the dark band, with `right` beside it, else the profile button. */
+@Composable
+private fun TabHeader(title: String, right: @Composable (() -> Unit)?) {
+    InkHeader {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+            Text(title, style = Type.title, color = t.onHeader, modifier = Modifier.weight(1f))
+            if (right != null) right() else ProfileButton(34.dp)
         }
     }
 }
@@ -157,18 +170,6 @@ object InkHeaders {
     var count by androidx.compose.runtime.mutableIntStateOf(0)
 }
 
-/** The Ting ID mark: a T in a ring on indigo. */
-@Composable
-fun Logo(size: Dp = 24.dp) {
-    Canvas(Modifier.size(size).semantics { contentDescription = "Ting ID" }) {
-        val u = this.size.width / 1024f
-        drawRoundRect(Color(0xFF4F46E5), cornerRadius = CornerRadius(224 * u))
-        drawCircle(Color.White, radius = 300 * u, center = Offset(512 * u, 512 * u), style = Stroke(width = 76 * u))
-        drawRoundRect(Color.White, topLeft = Offset(382 * u, 368 * u), size = Size(260 * u, 84 * u), cornerRadius = CornerRadius(42 * u))
-        drawRoundRect(Color.White, topLeft = Offset(470 * u, 476 * u), size = Size(84 * u, 196 * u), cornerRadius = CornerRadius(42 * u))
-    }
-}
-
 enum class CardTone { Plain, Alt, Warning }
 
 @Composable
@@ -181,8 +182,8 @@ fun Card(modifier: Modifier = Modifier, tone: CardTone = CardTone.Plain, padded:
     }
     val shape = RoundedCornerShape(Radius.lg)
     Column(
-        modifier.fillMaxWidth().then(if (tone == CardTone.Plain && !p.dark) Modifier.shadow(1.dp, shape, ambientColor = Color(0x0A0F172A), spotColor = Color(0x0A0F172A)) else Modifier)
-            .clip(shape).background(bg).border(1.dp, line, shape).padding(if (padded) Spacing.lg else 0.dp),
+        modifier.fillMaxWidth()
+            .clip(shape).background(bg).border(Dp.Hairline, line, shape).padding(if (padded) Spacing.lg else 0.dp),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         content = content,
     )
@@ -204,9 +205,36 @@ fun Caption(text: String, modifier: Modifier = Modifier, maxLines: Int = Int.MAX
 @Composable
 fun Mono(text: String, modifier: Modifier = Modifier) = Text(text, modifier, style = Type.mono, color = t.text)
 
-/** An amount: figures in columns. */
+private val GROUP_SPACE = Regex("(?<=[0-9]) (?=[0-9])")
+private val FRACTION = Regex("[.][0-9]+")
+
+/**
+ * An amount as shown (`formatAmount`, with a sign or symbol or not): its groups
+ * split by a narrow space that keeps them on one line, and the digits after
+ * the point in `quiet`, so the whole units read first.
+ */
+fun quietAmount(text: String, quiet: SpanStyle): AnnotatedString {
+    val shown = text.replace(GROUP_SPACE, "\u202F")
+    return buildAnnotatedString {
+        append(shown)
+        FRACTION.find(shown)?.let { addStyle(quiet, it.range.first, it.range.last + 1) }
+    }
+}
+
+/** An amount: figures in columns, the decimals smaller and fainter than the whole units. */
 @Composable
-fun Amount(text: String, modifier: Modifier = Modifier, style: TextStyle = manropeStyle(15f, FontWeight.SemiBold, tabular = true)) = Text(text, modifier, style = style, color = t.text)
+fun Amount(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = manropeStyle(15f, FontWeight.SemiBold, tabular = true),
+    color: Color = t.text,
+) = Text(
+    quietAmount(text, SpanStyle(fontSize = style.fontSize * 0.78f, color = color.copy(alpha = 0.6f))),
+    modifier,
+    style = style.copy(fontFeatureSettings = TABULAR),
+    color = color,
+    maxLines = 1,
+)
 
 /** An (i) that explains on tap, in a sheet. `light`: on the dark header. */
 @Composable
@@ -228,11 +256,11 @@ fun SectionHeader(title: String, action: String? = null, onAction: (() -> Unit)?
     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp).padding(top = Spacing.xs), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (icon != null) Icon(icon, null, tint = p.muted, modifier = Modifier.size(16.dp))
-            Text(title, style = manropeStyle(16f, FontWeight.ExtraBold), color = p.text)
+            Text(title, style = manropeStyle(16f, FontWeight.SemiBold), color = p.text)
             if (info != null) Info(title, info)
         }
         if (action != null && onAction != null) {
-            Text(action, style = manropeStyle(13.5f, FontWeight.Bold), color = p.primary, modifier = Modifier.clickable(role = Role.Button, onClick = onAction).padding(4.dp))
+            Text(action, style = manropeStyle(13.5f, FontWeight.Medium), color = p.primary, modifier = Modifier.clickable(role = Role.Button, onClick = onAction).padding(4.dp))
         }
     }
 }
@@ -284,7 +312,7 @@ fun Button(
             .heightIn(min = if (link) 0.dp else if (large) 56.dp else if (small) 34.dp else 46.dp)
             .clip(shape)
             .background(c.bg)
-            .then(if (c.border != null) Modifier.border(BorderStroke(1.dp, c.border), shape) else Modifier)
+            .then(if (c.border != null) Modifier.border(BorderStroke(Dp.Hairline, c.border), shape) else Modifier)
             // A layer that stays: Modifier.alpha drops its layer at 1, and the change of chain left an
             // enabled button without its background.
             .graphicsLayer { alpha = if (!enabled) 0.4f else if (pressed) 0.8f else 1f }
@@ -295,7 +323,7 @@ fun Button(
     ) {
         if (loading) CircularProgressIndicator(color = c.fg, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
         else if (icon != null) Icon(icon, null, tint = c.fg, modifier = Modifier.size(if (small) 15.dp else 17.dp))
-        Text(title, style = manropeStyle(if (large) 16f else if (small) 13.5f else 15f, if (large) FontWeight.ExtraBold else FontWeight.Bold), color = c.fg)
+        Text(title, style = manropeStyle(if (large) 16f else if (small) 13.5f else 15f, FontWeight.SemiBold), color = c.fg)
     }
 }
 
@@ -307,7 +335,7 @@ fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, kind: Butt
     val c = colorsOf(kind)
     val shape = RoundedCornerShape(Radius.md)
     Box(
-        Modifier.size(size).clip(shape).background(c.bg).then(if (c.border != null) Modifier.border(1.dp, c.border, shape) else Modifier)
+        Modifier.size(size).clip(shape).background(c.bg).then(if (c.border != null) Modifier.border(Dp.Hairline, c.border, shape) else Modifier)
             .graphicsLayer { alpha = if (enabled) 1f else 0.4f }.clickable(enabled = enabled, role = Role.Button, onClick = onClick).semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) { Icon(icon, null, tint = c.fg, modifier = Modifier.size(size * 0.42f)) }
@@ -331,7 +359,7 @@ fun RowScope.StatTile(label: String, value: String, icon: ImageVector, hint: Str
             Icon(icon, null, tint = muted, modifier = Modifier.size(15.dp))
             Text(label, style = manropeStyle(12.5f, FontWeight.SemiBold), color = muted)
         }
-        Text(value, style = manropeStyle(22f, FontWeight.ExtraBold, tabular = true), color = fg)
+        Text(value, style = manropeStyle(22f, FontWeight.SemiBold, tabular = true), color = fg)
         if (hint != null) Text(hint, style = manropeStyle(12f, FontWeight.Medium), color = muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -373,7 +401,7 @@ fun Field(
             ),
             keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
             visualTransformation = VisualTransformation.None,
-            modifier = Modifier.fillMaxWidth().clip(shape).background(p.cardAlt).border(1.dp, if (error != null) p.danger else p.border, shape)
+            modifier = Modifier.fillMaxWidth().clip(shape).background(p.cardAlt).border(Dp.Hairline, if (error != null) p.danger else p.border, shape)
                 .heightIn(min = if (multiline) 80.dp else 0.dp).padding(horizontal = 14.dp, vertical = 12.dp),
             decorationBox = { inner ->
                 Box {
@@ -416,7 +444,7 @@ fun Pill(label: String, tone: Tone = Tone.Neutral, small: Boolean = false, light
     val (bg, fg) = if (light) (if (tone == Tone.Warning) Color(0x24FBBF24) to Color(0xFFFCD34D) else p.headerRaised to Color(0xFFCBD5E1)) else toneColors(tone)
     Text(
         label,
-        style = manropeStyle(if (small) 11f else 12f, FontWeight.Bold),
+        style = manropeStyle(if (small) 11f else 12f, FontWeight.Medium),
         color = fg,
         modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(bg).padding(horizontal = if (small) 8.dp else 10.dp, vertical = if (small) 2.dp else 3.dp),
     )
@@ -438,7 +466,46 @@ fun parseColor(hex: String): Color = try {
 fun Avatar(name: String, color: String, size: Dp = 40.dp, soft: Boolean = false) {
     val p = t
     Box(Modifier.size(size).clip(CircleShape).background(if (soft) p.primarySoft else parseColor(color)), contentAlignment = Alignment.Center) {
-        Text(initialsOf(name), style = manropeStyle(size.value * 0.38f, FontWeight.ExtraBold), color = if (soft) p.primary else Color.White)
+        Text(initialsOf(name), style = manropeStyle(size.value * 0.38f, FontWeight.SemiBold), color = if (soft) p.primary else Color.White)
+    }
+}
+
+/**
+ * An account in full, for one this phone has no name for: its hex in groups
+ * of four, easy to check by eye against what the other person shows, in a
+ * soft box that copies it on a tap.
+ */
+@Composable
+fun AccountBox(hex: String, modifier: Modifier = Modifier) {
+    val p = t
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1500)
+            copied = false
+        }
+    }
+    val shape = RoundedCornerShape(Radius.md)
+    Row(
+        modifier.fillMaxWidth().clip(shape).background(p.cardAlt)
+            .clickable(role = Role.Button) {
+                scope.launch {
+                    copyText(clipboard, hex)
+                    copied = true
+                }
+            }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(hex.chunked(4).joinToString(" "), Modifier.weight(1f), style = Type.mono.copy(fontSize = 13.sp, lineHeight = 20.sp), color = p.text)
+        Icon(
+            if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
+            if (copied) "Copied" else "Copy account",
+            tint = if (copied) p.success else p.faint,
+            modifier = Modifier.padding(top = 2.dp).size(16.dp),
+        )
     }
 }
 
@@ -508,7 +575,7 @@ fun ListItem(
     ) {
         left?.invoke()
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            if (titleContent != null) titleContent() else Text(title, style = manropeStyle(14.5f, FontWeight.Bold), color = p.text)
+            if (titleContent != null) titleContent() else Text(title, style = manropeStyle(14.5f, FontWeight.Medium), color = p.text)
             if (subtitleContent != null) subtitleContent() else if (subtitle != null) Caption(subtitle)
         }
         right?.invoke()
@@ -520,17 +587,24 @@ fun ListItem(
 @Composable
 fun <T> Segmented(options: List<Pair<T, String>>, value: T, onChange: (T) -> Unit) {
     val p = t
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+    // One track, the chosen option raised on it.
+    val track = RoundedCornerShape(Radius.md)
+    val shape = RoundedCornerShape(Radius.md - 3.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(track).background(p.cardAlt).border(Dp.Hairline, p.border, track).padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
         for ((v, label) in options) {
             val active = v == value
-            val shape = RoundedCornerShape(Radius.md)
             Box(
-                Modifier.weight(1f).heightIn(min = 38.dp).clip(shape).background(if (active) p.ink else p.card)
-                    .then(if (active) Modifier else Modifier.border(1.dp, p.border, shape))
+                Modifier.weight(1f).heightIn(min = 34.dp)
+                    .then(if (active && !p.dark) Modifier.shadow(1.dp, shape, ambientColor = Color(0x140F172A), spotColor = Color(0x140F172A)) else Modifier)
+                    .clip(shape).background(if (active) p.card else Color.Transparent)
+                    .then(if (active && p.dark) Modifier.border(Dp.Hairline, p.border, shape) else Modifier)
                     .clickable(role = Role.RadioButton) { onChange(v) }.padding(vertical = 6.dp, horizontal = 4.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(label, style = manropeStyle(13.5f, FontWeight.Bold), color = if (active) p.onInk else p.text, textAlign = TextAlign.Center, maxLines = 2)
+                Text(label, style = manropeStyle(13.5f, FontWeight.Medium), color = if (active) p.text else p.muted, textAlign = TextAlign.Center, maxLines = 2)
             }
         }
     }
@@ -548,7 +622,7 @@ fun Banner(text: String, tone: BannerTone = BannerTone.Info, icon: ImageVector? 
         BannerTone.Success -> Quad(p.successSoft, p.success, p.successSoft, Icons.Outlined.CheckCircle)
     }
     val shape = RoundedCornerShape(Radius.md)
-    Row(Modifier.fillMaxWidth().clip(shape).background(bg).border(1.dp, line, shape).padding(Spacing.md), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Row(Modifier.fillMaxWidth().clip(shape).background(bg).border(Dp.Hairline, line, shape).padding(Spacing.md), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Icon(icon ?: default, null, tint = fg, modifier = Modifier.size(18.dp).padding(top = 1.dp))
         Text(text, style = manropeStyle(14f, FontWeight.Medium).copy(lineHeight = 20.sp), color = fg, modifier = Modifier.weight(1f))
     }
@@ -601,7 +675,7 @@ fun Sheet(onClose: () -> Unit, title: String? = null, content: @Composable Colum
 fun DetailCard(content: @Composable ColumnScope.() -> Unit) {
     val p = t
     val shape = RoundedCornerShape(16.dp)
-    Column(Modifier.fillMaxWidth().clip(shape).background(p.card).border(1.dp, p.border, shape), content = content)
+    Column(Modifier.fillMaxWidth().clip(shape).background(p.card).border(Dp.Hairline, p.border, shape), content = content)
 }
 
 /** A label and its value, one row of a DetailCard; the first has no line above it. */
@@ -609,7 +683,7 @@ fun DetailCard(content: @Composable ColumnScope.() -> Unit) {
 fun Detail(label: String, first: Boolean = false, value: @Composable () -> Unit) {
     val p = t
     Column {
-        if (!first) Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+        if (!first) Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
         Row(Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
             Text(label, style = manropeStyle(13.5f, FontWeight.SemiBold), color = p.muted)
             Spacer(Modifier.weight(1f))
@@ -620,7 +694,7 @@ fun Detail(label: String, first: Boolean = false, value: @Composable () -> Unit)
 
 /** A value in a Detail row, its figures lined up. */
 @Composable
-fun DetailValue(text: String) = Text(text, style = manropeStyle(13.5f, FontWeight.Bold, tabular = true), color = t.text, textAlign = TextAlign.End)
+fun DetailValue(text: String) = Text(text, style = manropeStyle(13.5f, FontWeight.Medium, tabular = true), color = t.text, textAlign = TextAlign.End)
 
 @Composable
-fun Divider() = Spacer(Modifier.fillMaxWidth().padding(vertical = Spacing.xs).height(1.dp).background(t.border))
+fun Divider() = Spacer(Modifier.fillMaxWidth().padding(vertical = Spacing.xs).height(0.5.dp).background(t.border))

@@ -43,19 +43,28 @@ class DescribeActivityTest {
         describeActivity(ActivityItem(1, 0, "01", f.contract, coin = Coin.Event.Transfer(f.me, to, f.big(50_000))), f.coins, f.names, listOf(f.me))
 
     @Test
-    fun `a payment shows the address beside a known name`() {
+    fun `a payment to a known name says only that in its short line, the address in its detail`() {
         val d = sent(f.bob)
         assertEquals("Bob", d.party?.name)
-        assertEquals("Sent · 222222…2222", d.short)
+        assertEquals("Sent", d.short)
         assertEquals("to Bob · 222222…2222", d.detail)
         assertEquals("−5 DLR", d.amount)
+    }
+
+    @Test
+    fun `a move between one identity's accounts names the accounts alone`() {
+        assertEquals("Spending → Savings", movedBetween("Maja · Spending", "Maja · Savings"))
+        assertEquals("Maja · Spending → Erik · Savings", movedBetween("Maja · Spending", "Erik · Savings"))
+        assertEquals("Erik → 33333333…333333", movedBetween("Erik", "33333333…333333"))
     }
 
     @Test
     fun `a payment names an unknown account by its address alone`() {
         val d = sent(f.stranger)
         assertEquals("33333333…333333", d.party?.name)
+        assertEquals(false, d.party?.known)
         assertEquals("Sent", d.short)
+        assertEquals("to 33333333…333333", d.detail)
     }
 
     @Test

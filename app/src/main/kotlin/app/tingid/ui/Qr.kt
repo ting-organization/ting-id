@@ -97,7 +97,7 @@ fun QrCode(value: String, size: Dp = 216.dp) {
         Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center,
     ) {
-        Box(Modifier.clip(RoundedCornerShape(Radius.md)).background(Color.White).border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(Radius.md)).padding(10.dp).semantics { contentDescription = "QR code" }) {
+        Box(Modifier.clip(RoundedCornerShape(Radius.md)).background(Color.White).border(Dp.Hairline, Color(0xFFE5E7EB), RoundedCornerShape(Radius.md)).padding(10.dp).semantics { contentDescription = "QR code" }) {
             Canvas(Modifier.size(size)) {
                 val quiet = 2
                 val cells = matrix.width + 2 * quiet
@@ -119,9 +119,9 @@ fun QrCode(value: String, size: Dp = 216.dp) {
     }
 }
 
-/** A link to hand to someone: its QR code, the link, and buttons to copy it or share it in a message. */
+/** A link to hand to someone: its QR code, the link (unless `text` is false), and buttons to copy it or share it in a message. */
 @Composable
-fun LinkShare(link: String, qr: Boolean = true) {
+fun LinkShare(link: String, qr: Boolean = true, text: Boolean = true) {
     val p = t
     val context = LocalContext.current
     val clipboard = LocalClipboard.current
@@ -135,7 +135,7 @@ fun LinkShare(link: String, qr: Boolean = true) {
     }
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
         if (qr) Box(Modifier.padding(vertical = Spacing.xs)) { QrCode(link) }
-        Text(link, style = Type.mono.copy(fontSize = Type.mono.fontSize * 0.88f), color = p.muted, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        if (text) Text(link, style = Type.mono.copy(fontSize = Type.mono.fontSize * 0.88f), color = p.muted, maxLines = 3, overflow = TextOverflow.Ellipsis)
         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
             Button(
                 if (copied) "Copied" else "Copy link",
@@ -206,7 +206,7 @@ private fun Scanner(onClose: () -> Unit, onScan: (String) -> String?, title: Str
                 Modifier.fillMaxWidth().background(Color(0x73000000)).windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = Spacing.lg, vertical = Spacing.md),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(title, style = manropeStyle(17f, FontWeight.Bold), color = Color.White, modifier = Modifier.weight(1f))
+                Text(title, style = manropeStyle(17f, FontWeight.Medium), color = Color.White, modifier = Modifier.weight(1f))
                 Box(
                     Modifier.size(36.dp).clip(CircleShape).background(Color(0x29FFFFFF)).clickable(role = Role.Button, onClick = onClose).semantics { contentDescription = "Close" },
                     contentAlignment = Alignment.Center,

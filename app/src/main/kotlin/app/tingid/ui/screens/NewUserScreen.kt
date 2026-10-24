@@ -410,7 +410,7 @@ fun NewUserScreen(route: NewUserRoute) {
                 Column {
                     RESTORE_BY.forEachIndexed { i, r ->
                         val on = r.value == restoreBy
-                        if (i > 0) Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+                        if (i > 0) Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
                         ListItem(
                             r.label,
                             subtitle = r.hint,
