@@ -354,7 +354,7 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
                         asking = null
                         // The question without its question mark names the phone's check.
                         val title = a.options.title.removeSuffix("?")
-                        if (yes) a.run { confirmOwner(activity, services.store, title) }
+                        if (yes) a.run { confirmOwner(activity, services, title) }
                     },
                     ready = fee.problem == null,
                 ) { ConfirmFee(fee) }

@@ -241,7 +241,7 @@ fun ProposeScreen(route: ProposeRoute) {
         val adding = addingPhrase
         sending.send(
             "propose",
-            check = { confirmOwner(activity, services.store, title, "for ${u.name}") },
+            check = { confirmOwner(activity, services, title, "for ${u.name}") },
             submit = {
                 val payer = chosen.resolve()
                 val op = if (fromNewKey) {

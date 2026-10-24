@@ -105,7 +105,7 @@ fun ReviewScreen() {
         scope.launch {
             try {
                 val title = if (runsAt != null) "Confirm the scheduled payment" else "Confirm the payment"
-                if (!confirmOwner(activity, services.store, title, "${amount(payment.amount)} to ${toName ?: (payment.to.account.take(10) + "…")}")) {
+                if (!confirmOwner(activity, services, title, "${amount(payment.amount)} to ${toName ?: (payment.to.account.take(10) + "…")}")) {
                     busy = false
                     return@launch
                 }
