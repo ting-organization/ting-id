@@ -66,6 +66,12 @@ fun nameOf(names: Names, account: ByteArray): String = names[account.hex()] ?: s
 /** An account's short form after a name this device knows for it, as in "to 499d9b…e716"; nothing when no name is known, as the name is the short form then. */
 private fun idAfterName(names: Names, account: ByteArray): String = if (account.hex() in names) " · ${shortId(account, 6, 4)}" else ""
 
+/** A move between two accounts, as "Anna · Spending → Anna · Savings" reads when both are one identity's: "Spending → Savings". */
+fun movedBetween(from: String, to: String): String {
+    val owner = from.substringBefore(" · ", "")
+    return if (owner.isNotEmpty() && to.startsWith("$owner · ")) "${from.removePrefix("$owner · ")} → ${to.removePrefix("$owner · ")}" else "$from → $to"
+}
+
 fun amount(c: CoinInfo?, value: BigInteger): String = if (c == null) value.toString() else "${formatAmount(value, c.config.decimals)} ${c.config.symbol}"
 
 fun describeEffect(e: Coin.Effect, c: CoinInfo?, names: Names): String = when (e) {
@@ -167,7 +173,8 @@ fun runsIn(wait: Long, lock: Long): String {
 }
 
 /** Who or what an activity was with: the other account, or the coin itself for what it issued or burned. */
-data class Party(val name: String, val coin: Boolean = false)
+/** Who an activity was with. `known`: a name of this phone's, not the account's short form. */
+data class Party(val name: String, val coin: Boolean = false, val known: Boolean = true)
 
 data class Described(
     val title: String,
@@ -178,7 +185,7 @@ data class Described(
     val amount: String? = null,
     val amountTone: Tone? = null,
     val party: Party? = null,
-    /** The action in a few words, for a line under the party. */
+    /** The action in a few words, for a line under the party: the party's name says who, so no account follows it. */
     val short: String? = null,
     /** What a scheduled payment will move once it runs. */
     val planned: String? = null,
@@ -260,8 +267,8 @@ private fun describeEvent(item: ActivityItem, coins: Map<String, CoinInfo>, name
                         icon = Icon.ArrowDown,
                         amount = "+$value",
                         amountTone = Tone.Success,
-                        party = Party(nameOf(names, e.from)),
-                        short = "Received${idAfterName(names, e.from)}",
+                        party = Party(nameOf(names, e.from), known = e.from.hex() in names),
+                        short = "Received",
                     )
                     isMine(e.from) && !isMine(e.to) -> Described(
                         title = "Sent",
@@ -269,10 +276,10 @@ private fun describeEvent(item: ActivityItem, coins: Map<String, CoinInfo>, name
                         tone = Tone.Primary,
                         icon = Icon.ArrowUp,
                         amount = "−$value",
-                        party = Party(nameOf(names, e.to)),
-                        short = "Sent${idAfterName(names, e.to)}",
+                        party = Party(nameOf(names, e.to), known = e.to.hex() in names),
+                        short = "Sent",
                     )
-                    else -> Described("Moved", "${nameOf(names, e.from)} → ${nameOf(names, e.to)}", Tone.Neutral, Icon.Swap, amount = value)
+                    else -> Described("Moved", movedBetween(nameOf(names, e.from), nameOf(names, e.to)), Tone.Neutral, Icon.Swap, amount = value)
                 }
             }
             is Coin.Event.Scheduled -> {
@@ -282,8 +289,7 @@ private fun describeEvent(item: ActivityItem, coins: Map<String, CoinInfo>, name
                     is Coin.Effect.Mint -> effect.to
                     else -> null
                 }
-                val to = target?.let { Party(nameOf(names, it)) }
-                val toId = target?.let { idAfterName(names, it) } ?: ""
+                val to = target?.let { Party(nameOf(names, it), known = it.hex() in names) }
                 val planned = (e.effect as? Coin.Effect.Transfer)?.let { amount(c, it.amount) }
                 val effect = describeEffect(e.effect, c, names)
                 when (item.settled) {
@@ -293,7 +299,7 @@ private fun describeEvent(item: ActivityItem, coins: Map<String, CoinInfo>, name
                         tone = Tone.Neutral,
                         icon = Icon.CheckmarkCircle,
                         party = to,
-                        short = "Scheduled$toId · ran",
+                        short = "Scheduled · ran",
                         planned = planned,
                     )
                     Settled.Cancelled -> Described(
@@ -302,7 +308,7 @@ private fun describeEvent(item: ActivityItem, coins: Map<String, CoinInfo>, name
                         tone = Tone.Neutral,
                         icon = Icon.CloseCircle,
                         party = to,
-                        short = "Scheduled$toId · cancelled",
+                        short = "Scheduled · cancelled",
                         planned = planned,
                     )
                     null -> Described(
@@ -311,7 +317,7 @@ private fun describeEvent(item: ActivityItem, coins: Map<String, CoinInfo>, name
                         tone = Tone.Warning,
                         icon = Icon.Time,
                         party = to,
-                        short = "Scheduled$toId · runs ${relativeTime(e.executeAt, now)}",
+                        short = "Scheduled · runs ${relativeTime(e.executeAt, now)}",
                         planned = planned,
                     )
                 }

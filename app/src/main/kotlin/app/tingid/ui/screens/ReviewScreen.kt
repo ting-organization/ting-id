@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PersonAdd
@@ -34,6 +33,7 @@ import app.tingid.chain.formatAmount
 import app.tingid.state.PaymentDraft
 import app.tingid.state.paymentDrafts
 import app.tingid.text.lockOf
+import app.tingid.ui.AccountBox
 import app.tingid.ui.Banner
 import app.tingid.ui.BannerTone
 import app.tingid.ui.Button
@@ -43,6 +43,7 @@ import app.tingid.ui.Detail
 import app.tingid.ui.DetailCard
 import app.tingid.ui.DetailValue
 import app.tingid.ui.HoldWhileBusy
+import app.tingid.ui.IdChip
 import app.tingid.ui.LocalActivity
 import app.tingid.ui.LocalNav
 import app.tingid.ui.LocalServices
@@ -52,7 +53,6 @@ import app.tingid.ui.Screen
 import app.tingid.ui.SendTab
 import app.tingid.ui.Spacing
 import app.tingid.ui.TxRoute
-import app.tingid.ui.Type
 import app.tingid.ui.confirmOwner
 import app.tingid.ui.formatClock
 import app.tingid.ui.formatDay
@@ -127,24 +127,27 @@ fun ReviewScreen() {
                 Text(
                     formatAmount(d.amount, c.config.decimals),
                     Modifier.alignByBaseline(),
-                    style = manropeStyle(38f, FontWeight.ExtraBold, tabular = true).copy(letterSpacing = (-1.2).sp),
+                    style = manropeStyle(38f, FontWeight.SemiBold, tabular = true).copy(letterSpacing = (-1.2).sp),
                     color = p.text,
                 )
-                Text(c.config.symbol, Modifier.alignByBaseline(), style = manropeStyle(18f, FontWeight.Bold), color = p.faint)
+                Text(c.config.symbol, Modifier.alignByBaseline(), style = manropeStyle(18f, FontWeight.Medium), color = p.faint)
             }
             Caption(if (runsAt != null) "Runs ${formatDay(runsAt)} at ${formatClock(runsAt)}" else "Goes as soon as a block includes it")
         }
 
         DetailCard {
             Detail("From", first = true) { DetailValue(d.from.label) }
-            Spacer(Modifier.fillMaxWidth().height(1.dp).background(p.border))
+            Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
             Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("To", Modifier.weight(1f), style = manropeStyle(13.5f, FontWeight.SemiBold), color = p.muted)
                     DetailValue(toName ?: "New recipient")
                 }
-                SelectionContainer {
-                    Text(d.to.account, style = Type.mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp), color = p.text)
+                // A recipient this phone names shows the account short, to copy; one it does not, in full, to check.
+                if (toName != null) {
+                    IdChip(d.to.account, label = "Account")
+                } else {
+                    AccountBox(d.to.account)
                 }
                 if (toName == null) Button("Save as contact", onClick = { saving = true }, kind = ButtonKind.Ghost, small = true, icon = Icons.Outlined.PersonAdd)
             }

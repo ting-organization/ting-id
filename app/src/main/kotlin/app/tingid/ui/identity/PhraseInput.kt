@@ -51,6 +51,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.tingid.chain.Phrase
 import app.tingid.state.PhraseEntry
@@ -125,7 +126,7 @@ fun PhraseInput(words: List<String>, onChange: (List<String>) -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Text("${words.size} words", style = manropeStyle(13.5f, FontWeight.Bold), color = p.primary)
+                Text("${words.size} words", style = manropeStyle(13.5f, FontWeight.Medium), color = p.primary)
                 Icon(Icons.Outlined.KeyboardArrowDown, null, tint = p.primary, modifier = Modifier.size(14.dp))
             }
         }
@@ -204,7 +205,7 @@ private fun RowScope.WordField(
     val p = t
     val shape = RoundedCornerShape(Radius.md)
     Row(
-        Modifier.weight(1f).clip(shape).background(p.cardAlt).border(1.dp, if (bad) p.danger else if (focused) p.primary else p.border, shape).padding(start = 10.dp),
+        Modifier.weight(1f).clip(shape).background(p.cardAlt).border(Dp.Hairline, if (bad) p.danger else if (focused) p.primary else p.border, shape).padding(start = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("${i + 1}", style = manropeStyle(12f, FontWeight.SemiBold), color = p.muted, textAlign = TextAlign.End, modifier = Modifier.widthIn(min = 18.dp))

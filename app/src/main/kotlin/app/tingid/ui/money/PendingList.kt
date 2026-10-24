@@ -66,7 +66,7 @@ fun PendingList(items: List<PendingItem>, onRetry: suspend (id: String) -> Strin
                 PressRow({ nav.navigate(TxRoute(tx.id)) }, PaddingValues(vertical = 12.dp, horizontal = Spacing.lg)) {
                     IconCircle(iconOf(d.icon), fg, bg)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(tx.summary, style = manropeStyle(14.5f, FontWeight.Bold), color = p.text)
+                        Text(tx.summary, style = manropeStyle(14.5f, FontWeight.Medium), color = p.text)
                         Caption(d.detail, maxLines = 3)
                     }
                 }

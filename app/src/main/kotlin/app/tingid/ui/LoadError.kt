@@ -31,7 +31,7 @@ fun LoadError(message: String) {
         Modifier.fillMaxSize().background(p.background).windowInsetsPadding(WindowInsets.statusBars).verticalScroll(rememberScrollState()).padding(Spacing.lg),
         verticalArrangement = Arrangement.spacedBy(Spacing.md),
     ) {
-        Text("Ting ID could not read its saved data", style = manropeStyle(22f, FontWeight.ExtraBold), color = p.text)
+        Text("Ting ID could not read its saved data", style = manropeStyle(22f, FontWeight.SemiBold), color = p.text)
         Banner(sentence(message), BannerTone.Danger)
         Caption("Nothing has been changed: your users and settings stay as they were saved, and your keys stay in the phone's keystore. Closing Ting ID and opening it again tries once more.")
         Button("Start fresh", onClick = { confirming = true }, kind = ButtonKind.Danger, small = true)

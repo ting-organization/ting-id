@@ -168,7 +168,7 @@ fun PeopleScreen() {
 
     val close = { menu = null }
 
-    Screen(title = "People") {
+    Screen(title = "People", tab = true) {
         SectionHeader(
             "Users on this phone",
             info = "Each user is an identity, or an account of a single key. Tap one to make it active. Removing one only forgets it on this phone; its funds stay on chain.",

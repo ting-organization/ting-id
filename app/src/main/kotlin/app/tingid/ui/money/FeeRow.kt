@@ -78,7 +78,7 @@ fun FeeRow(fee: FeeChoice, boxed: Boolean = false, label: String = "Fee", run: F
             Text(
                 if (fee.fee.signum() > 0) "${feeText(fee.fee, payer.coin, run)} · ${payer.account.label}" else "none",
                 Modifier.weight(1f),
-                style = manropeStyle(13.5f, FontWeight.Bold, tabular = true),
+                style = manropeStyle(13.5f, FontWeight.Medium, tabular = true),
                 color = p.text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

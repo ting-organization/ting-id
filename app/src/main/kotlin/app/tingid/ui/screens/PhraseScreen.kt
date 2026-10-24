@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import app.tingid.chain.trimWhiteSpace
@@ -194,12 +195,12 @@ private fun WordGrid(words: List<String>) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 for (i in row) {
                     Row(
-                        Modifier.weight(1f).clip(shape).background(p.card).border(1.dp, p.border, shape).padding(horizontal = 14.dp, vertical = 10.dp),
+                        Modifier.weight(1f).clip(shape).background(p.card).border(Dp.Hairline, p.border, shape).padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text("${i + 1}", style = manropeStyle(12f, FontWeight.SemiBold), color = p.faint, textAlign = TextAlign.End, modifier = Modifier.width(20.dp))
-                        Text(words[i], style = Type.body.copy(fontWeight = FontWeight.Bold), color = p.text)
+                        Text(words[i], style = Type.body.copy(fontWeight = FontWeight.Medium), color = p.text)
                     }
                 }
                 if (row.size < 2) Spacer(Modifier.weight(1f))

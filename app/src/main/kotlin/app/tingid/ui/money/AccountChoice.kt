@@ -12,6 +12,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.tingid.state.UserAccount
 import app.tingid.text.relativeDuration
@@ -39,7 +40,7 @@ fun AccountChoice(
 ) {
     val p = t
     val shape = RoundedCornerShape(16.dp)
-    Column(Modifier.fillMaxWidth().clip(shape).border(1.dp, p.border, shape).background(p.card)) {
+    Column(Modifier.fillMaxWidth().clip(shape).border(Dp.Hairline, p.border, shape).background(p.card)) {
         accounts.forEachIndexed { i, a ->
             val locked = a.delay > 0
             if (i > 0) Hairline()
