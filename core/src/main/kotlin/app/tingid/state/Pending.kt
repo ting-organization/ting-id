@@ -208,7 +208,13 @@ class Pending(
         if (tx.chain != null && tx.chain != info.chainHex) return@async "it was sent to another chain"
         // As canSpeedUp asks, and again from the node: a payment signed for what is in a block already holds its nonce for nothing.
         if (tx.state != TxState.Pending || kept.twin != null) return@async "it is in a block, or paid for, already"
-        if (chain.node.transaction(id)?.occurrences?.isNotEmpty() == true) return@async "it is in a block already"
+        val included = try {
+            chain.node.transaction(id)?.occurrences?.isNotEmpty() == true
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return@async e.message ?: "no node answers"
+        }
+        if (included) return@async "it is in a block already"
         val call = unpaidCall(info.canonical, unhex(kept.raw), kept.unpaid) ?: return@async "it pays its own fee"
         try {
             val r = sent { chain.speedUp(info.canonical, info.status.chainId, BatchCall(call.target, call.input), fee.resolve(), call.budget) }

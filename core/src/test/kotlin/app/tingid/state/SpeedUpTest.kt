@@ -9,13 +9,16 @@ import app.tingid.chain.Budgets
 import app.tingid.chain.Coin
 import app.tingid.chain.Contracts
 import app.tingid.chain.FeePayer
+import app.tingid.chain.HttpFailure
 import app.tingid.chain.Id
+import app.tingid.chain.MaybeSent
 import app.tingid.chain.MemoryKey
 import app.tingid.chain.NodeStatus
 import app.tingid.chain.Reader
 import app.tingid.chain.Scheme
 import app.tingid.chain.Signer
 import app.tingid.chain.SigningKey
+import app.tingid.chain.Tcr
 import app.tingid.chain.batchPrefix
 import app.tingid.chain.decodeCall
 import app.tingid.chain.encodeCall
@@ -24,6 +27,8 @@ import app.tingid.chain.filled
 import app.tingid.chain.hex
 import app.tingid.chain.publicKey
 import app.tingid.chain.sponsoredCall
+import app.tingid.chain.transactionId
+import app.tingid.chain.u64le
 import app.tingid.chain.unhex
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -246,6 +251,33 @@ class SpeedUpTest {
         val batch = app.store.data.value.submitted.single().id
         assertEquals("it is in a block, or paid for, already", pending.speedUp(batch, fee))
         assertEquals(1, signing.signed.get())
+    }
+
+    @Test
+    fun `a speed-up whose lookup gets no answer says so, and signs nothing`() = runBlocking {
+        val alone = submittedAlone(apply, "Apply change")
+        node.other["/v1/transactions/$alone"] = { throw HttpFailure("could not be reached") }
+        assertNotNull(pending.speedUp(alone, fee))
+        assertEquals(0, signing.signed.get())
+    }
+
+    @Test
+    fun `a program call is noted even when the node's answer is lost or its batch refused`() = runBlocking {
+        val program = filled(0x5a)
+        val t = Tcr.templateHash("give(item:u64): Give item {item}")
+        val signer = Signer(signing, null, c.policySecp256k1, pub)
+        // Its payment carries its fee, and the answer is lost: noted as paying all the same.
+        node.accept = { throw HttpFailure("could not be reached") }
+        val lost = runCatching { app.chain.submitProgramCall(chainId, program, t, u64le(7), signer, dlr.id to Coin.Effect.Burn(BigInteger.ONE), null, payer) }
+            .exceptionOrNull() as MaybeSent
+        assertEquals(false, app.store.data.value.outbox.getValue(lost.txId).unpaid)
+        // The batch is refused: only the call sent alone is out, and it pays nothing.
+        node.accept = { tx ->
+            if (decodeCall(tx)!!.target.contentEquals(c.batch)) jsonResponse(buildJsonObject { put("error", "no room") }, 400)
+            else jsonResponse(buildJsonObject { put("id", transactionId(chainId, tx).hex()) })
+        }
+        val alone = app.chain.submitProgramCall(chainId, program, t, u64le(8), signer, null, null, payer).txId
+        assertEquals(true, app.store.data.value.outbox.getValue(alone).unpaid)
     }
 
     @Test

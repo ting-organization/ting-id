@@ -459,19 +459,25 @@ class Chain(
             ByteArray(0) to Tcr.Payment(coinId, Coin.executeInput(Coin.PolicyAuth(signer.policy, signer.params, coinNonce, signer.witness(coinMessage)), action))
         }
         val input = Tcr.callInput(template, values, Tcr.Auth(signer.policy, signer.params, nonce, validUntil, witness), pay)
+        // What a speed-up needs to know, which the call's bytes cannot say: whether it pays a miner itself. A
+        // batch pays already, and the call sent beside it alone pays nothing; a batch the node refused leaves
+        // only that call. A note on a batch is never read: a speed-up leaves batches alone.
+        fun mark(id: String) {
+            if (own || payer == null) store.markProgramCall(id, unpaid = !own)
+            else store.markProgramCall(store.data.value.outbox[id]?.twin ?: id, unpaid = true)
+        }
         val txId = try {
             submitWithFee(Contracts.canonical(chainId), chainId, BatchCall(program, input), if (own) null else payer, Budgets.BATCH)
         } catch (e: MaybeSent) {
             // Its nonces are taken all the same, so nothing is ever signed again with them.
             noteNonce(program, account, nonce, e.txId)
             paid?.let { noteNonce(it.first, account, it.second, e.txId) }
+            mark(e.txId)
             throw MaybeSent(e.txId)
         }
         noteNonce(program, account, nonce, txId)
         paid?.let { noteNonce(it.first, account, it.second, txId) }
-        // What a speed-up needs to know, which the call's bytes cannot say: whether it pays a miner itself.
-        // A batch pays already; the call sent beside it alone pays nothing.
-        if (own || payer == null) store.markProgramCall(txId, unpaid = !own) else store.data.value.outbox[txId]?.twin?.let { store.markProgramCall(it, unpaid = true) }
+        mark(txId)
         return Submitted(txId, account, nonce)
     }
 
