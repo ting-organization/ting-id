@@ -162,7 +162,7 @@ fun CoinScreen(route: CoinRoute) {
     }) {
         ScheduledSection(w, scheduled, Acting(c, account))
 
-        if (w.user != null) PendingList(waiting, onRetry = services.pending::retry, onDismiss = services.pending::dismiss)
+        if (w.user != null) PendingList(waiting, onRetry = services.pending::retry, onDismiss = services.pending::dismiss, onSpeedUp = services.pending::speedUp)
 
         if (w.user != null) {
             SectionHeader("Activity")

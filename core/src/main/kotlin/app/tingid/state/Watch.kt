@@ -32,6 +32,8 @@ data class PendingItem(
     val watch: Watch,
     /** Whether the app still holds the bytes, to send it again. */
     val canRetry: Boolean,
+    /** Whether a fee can pay for it now ([canSpeedUp]). */
+    val canSpeedUp: Boolean = false,
 )
 
 /** What to do about a submission. */

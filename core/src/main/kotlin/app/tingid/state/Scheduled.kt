@@ -1,10 +1,14 @@
 // Acting on the user's scheduled actions, wherever a screen lists them: cancel
 // (one signature per account and coin, any number of actions), run one that is
-// due, or hand its run to the node for when it falls due.
+// due, unpaid or with a fee that speeds it up, or hand its run to the node for
+// when it falls due.
 package app.tingid.state
 
+import app.tingid.chain.Budgets
 import app.tingid.chain.Coin
+import app.tingid.chain.hex
 import app.tingid.chain.nowSeconds
+import app.tingid.chain.transactionId
 import app.tingid.text.describeEffect
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -35,10 +39,13 @@ fun scheduledOf(coins: List<CoinInfo>, views: Map<String, List<AccountView>>): L
 /** Which run of the chain a scheduled action's is (Chain.runStatuses). */
 fun runRefOf(e: ScheduledAction): RunRef = RunRef(e.coin.id, e.view.account.account, e.sequence)
 
+/** The id of the run of `e` on chain `chainId`: the same transaction whoever submits it. */
+fun runIdOf(chainId: ByteArray, e: ScheduledAction): String = transactionId(chainId, runTransaction(e.coin.id, e.view.account.account, e.sequence)).hex()
+
 /**
  * Cancel, run and queue for scheduled actions. `busy` names the action in
- * progress (`cancel-<key>`, `run-<key>`, `queue-<key>`, or the label given to
- * a cancel); `opened` is told the transaction to show, from `scope`. The
+ * progress (`cancel-<key>`, `run-<key>`, `speed-<key>`, `queue-<key>`, or the
+ * label given to a cancel); `opened` is told the transaction to show, from `scope`. The
  * workspace and the fee are taken as they are when an action starts. What was
  * begun finishes in `scope` even when the screen goes, as the transaction may
  * be sent already.
@@ -115,6 +122,25 @@ class ScheduledActions(
         val w = workspace()
         val r = sent { chain.submitRun(e.coin.id, e.view.account.account, e.sequence) }
         w.user?.let { submitted(r.txId, "Run now: ${describeEffect(e.record.effect, e.coin, w.names)}", it.id) }
+        r.txId
+    }
+
+    /**
+     * Pays a miner for the run of `e`, which is due and has not gone in: the
+     * run in a batch with a payment from `fee`, an instant account's, signed
+     * now (Chain.speedUp), then alone as well. The submission that followed
+     * the run, if any, follows the batch from then on.
+     */
+    fun speedUp(e: ScheduledAction, fee: FeeSource) = attempt("speed-${scheduledActionKey(e)}") {
+        val w = workspace()
+        val user = w.user
+        val info = w.info
+        if (user == null || info == null) return@attempt null
+        val chainId = info.status.chainId
+        val call = runCall(e.coin.id, e.view.account.account, e.sequence)
+        val r = sent { chain.speedUp(info.canonical, chainId, call, fee.resolve(), Budgets.CLAIM) }
+        val summary = withFee("Run now: ${describeEffect(e.record.effect, e.coin, w.names)}", fee)
+        chain.store.followPaid(runIdOf(chainId, e), SubmittedTx(id = r.txId, at = now(), summary = summary, userId = user.id))
         r.txId
     }
 

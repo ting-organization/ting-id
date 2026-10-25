@@ -305,9 +305,32 @@ class Chain(
      * own id is kept with it, and whichever goes in settles the submission.
      */
     suspend fun submitWithFee(c: Canonical, chainId: ByteArray, call: BatchCall, payer: FeePayer?, budget: Resources = Budgets.CALL): String {
+        if (payer == null || payer.fee.signum() == 0) return node.submit(encodeCall(call.target, call.input, budget))
+        return submitPaid(c, chainId, call, payer, budget, required = false)
+    }
+
+    /**
+     * Pays a miner for `call`, which waits to get into a block unpaid: the same
+     * call in a batch that ends with the payer's bound payment, then the call
+     * alone again, in case a node lost it. The payment is signed here, with
+     * the payer's next nonce, and never ahead: a payment signed ahead would hold
+     * that nonce and block the account's other payments. The batch's id is
+     * returned and kept with the call's, like [submitWithFee]'s; whichever goes
+     * in settles the submission.
+     */
+    suspend fun speedUp(c: Canonical, chainId: ByteArray, call: BatchCall, payer: FeePayer?, budget: Resources): String {
+        if (payer == null || payer.fee.signum() == 0) throw IllegalStateException("a speed-up needs a fee")
+        return submitPaid(c, chainId, call, payer, budget, required = true)
+    }
+
+    /**
+     * Submits `call` in a batch with the payer's bound payment, then alone. A
+     * batch the node refuses leaves the call alone to go unpaid, unless the
+     * payment is `required`.
+     */
+    private suspend fun submitPaid(c: Canonical, chainId: ByteArray, call: BatchCall, payer: FeePayer, budget: Resources, required: Boolean): String {
         val node = this.node
         val alone = encodeCall(call.target, call.input, budget)
-        if (payer == null || payer.fee.signum() == 0) return node.submit(alone)
         val account = payer.signer.account
         val prefix = batchPrefix(listOf(call)).hex()
         val nonce = nextNonce(payer.coinId, account, prefix)
@@ -324,6 +347,7 @@ class Chain(
             refused = e
         }
         if (paid != null) noteNonce(payer.coinId, account, nonce, paid, prefix)
+        if (paid == null && required) throw refused!!
         var unpaid: String? = null
         try {
             unpaid = node.submit(alone)
@@ -687,8 +711,11 @@ class RunRef(val coinId: ByteArray, val account: ByteArray, val sequence: Long)
 
 fun runKey(r: RunRef): String = "${r.coinId.hex()}:${r.account.hex()}:${r.sequence}"
 
+/** The run of a scheduled action as a call, for a batch that pays for it; alone, it is [runTransaction]. */
+fun runCall(coinId: ByteArray, account: ByteArray, sequence: Long): BatchCall = BatchCall(coinId, Coin.targetInput(Coin.OP_RUN, account, sequence))
+
 fun runTransaction(coinId: ByteArray, account: ByteArray, sequence: Long): ByteArray =
-    encodeCall(coinId, Coin.targetInput(Coin.OP_RUN, account, sequence), Budgets.CLAIM)
+    runCall(coinId, account, sequence).let { encodeCall(it.target, it.input, Budgets.CLAIM) }
 
 // ---- Submissions -----------------------------------------------------------------
 

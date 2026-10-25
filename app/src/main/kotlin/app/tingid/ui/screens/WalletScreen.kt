@@ -233,7 +233,7 @@ fun WalletScreen() {
 
         if (user != null) ScheduledSection(w, scheduledOf(w.coins, views), acting = null, info = SCHEDULED_INFO)
 
-        if (user != null) PendingList(pending, onRetry = services.pending::retry, onDismiss = services.pending::dismiss)
+        if (user != null) PendingList(pending, onRetry = services.pending::retry, onDismiss = services.pending::dismiss, onSpeedUp = services.pending::speedUp)
 
         if (user != null && w.coins.isNotEmpty()) {
             SectionHeader("Activity")

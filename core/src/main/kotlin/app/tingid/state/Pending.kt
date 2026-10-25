@@ -6,11 +6,15 @@
 // nonce lets the chain apply it at most once.
 package app.tingid.state
 
+import app.tingid.chain.BatchCall
 import app.tingid.chain.ChainApi
+import app.tingid.chain.Contracts
 import app.tingid.chain.MaybeSent
 import app.tingid.chain.unhex
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -32,6 +36,8 @@ class Pending(
     private val statusWords: (String) -> String,
     private val now: () -> Long = { System.currentTimeMillis() / 1000 },
     private val pollMs: Long = POLL_MS,
+    /** Where a speed-up's payment is signed: the vault blocks while it opens a key. */
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val store: Store get() = chain.store
 
@@ -153,17 +159,22 @@ class Pending(
         // Bytes nothing follows any more are dropped after a while.
         launch {
             store.data.map { it.outbox }.distinctUntilChanged().collect { outbox ->
-                val followed = store.data.value.submitted.filter { it.state == TxState.Pending || it.state == TxState.Failed }.map { it.id }.toSet()
+                val open = store.data.value.submitted.filter { it.state == TxState.Pending || it.state == TxState.Failed }.map { it.id }
+                // A batch that pays for an operation follows the operation sent alone too.
+                val followed = (open + open.mapNotNull { outbox[it]?.twin }).toSet()
                 val old = now() - OUTBOX_AGE
                 for ((id, entry) in outbox) if (id !in followed && entry.at < old) store.forgetOutbox(id)
             }
         }
-        combine(open, watches) { (d, _, list), w ->
+        combine(open, watches) { (d, chainHex, list), w ->
+            val c = chainHex?.let { Contracts.canonical(unhex(it)) }
             list.map { tx ->
+                val watch = if (tx.state == TxState.Failed) Watch.Failed(tx.problem ?: "it failed", tx.height) else w[tx.id] ?: Watch.Checking
                 PendingItem(
                     tx = tx,
-                    watch = if (tx.state == TxState.Failed) Watch.Failed(tx.problem ?: "it failed", tx.height) else w[tx.id] ?: Watch.Checking,
+                    watch = watch,
                     canRetry = tx.id in d.outbox,
+                    canSpeedUp = canSpeedUp(tx, watch, d.outbox[tx.id], c),
                 )
             }
         }.distinctUntilChanged().collect { send(it) }
@@ -181,6 +192,30 @@ class Pending(
         store.updateSubmitted(id) { it.copy(state = TxState.Failed, problem = "the node refused it: ${refused.message}") }
         return refused.message ?: "the node refused it"
     }
+
+    /**
+     * Pays a miner for a waiting submission that pays nothing itself
+     * ([PendingItem.canSpeedUp]): its call goes again in a batch with a
+     * payment from `fee`, signed now (Chain.speedUp), and the submission
+     * follows the batch from then on. Null when it went, else why not. It
+     * finishes even when the screen goes, as the batch may be sent already.
+     */
+    suspend fun speedUp(id: String, fee: FeeSource): String? = scope.async(io) {
+        val d = store.data.value
+        val tx = d.submitted.firstOrNull { it.id == id } ?: return@async "the app no longer follows this transaction"
+        val kept = d.outbox[id] ?: return@async "the app no longer has this transaction"
+        val info = chain.info.value ?: return@async "no node answers"
+        if (tx.chain != null && tx.chain != info.chainHex) return@async "it was sent to another chain"
+        val call = unpaidCall(info.canonical, unhex(kept.raw)) ?: return@async "it pays its own fee"
+        try {
+            val r = sent { chain.speedUp(info.canonical, info.status.chainId, BatchCall(call.target, call.input), fee.resolve(), call.budget) }
+            store.followPaid(id, tx.copy(id = r.txId, at = now(), summary = withFee(tx.summary, fee)))
+            null
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            e.message ?: "it failed"
+        }
+    }.await()
 
     /** Puts a submission away: the app stops following it. */
     fun dismiss(id: String) {

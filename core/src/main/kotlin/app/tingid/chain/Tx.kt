@@ -31,6 +31,19 @@ fun encodeCall(target: ByteArray, input: ByteArray, budget: Resources): ByteArra
     return Writer().u8(1).u8(0).budget(budget).put(target).bytes(input).finish()
 }
 
+/** What a call transaction calls, with what input and budget. */
+class CallTx(val target: ByteArray, val input: ByteArray, val budget: Resources)
+
+/** The parts of a call transaction ([encodeCall]); null for a deployment or what is no transaction. */
+fun decodeCall(tx: ByteArray): CallTx? = tryDecode {
+    val r = Reader(tx)
+    if (r.u8() != 1 || r.u8() != 0) throw DecodeError("not a call")
+    val budget = Resources(r.u64(), r.u64(), r.u64(), r.u64())
+    val call = CallTx(r.array32(), r.bytes(), budget)
+    r.end()
+    call
+}
+
 fun encodeDeploy(code: ByteArray, input: ByteArray, budget: Resources): ByteArray =
     Writer().u8(1).u8(1).budget(budget).bytes(code).bytes(input).finish()
 

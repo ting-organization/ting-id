@@ -1,6 +1,7 @@
 // Scheduled actions of the user's accounts: what is waiting to run, who runs
-// it, and the buttons to run, queue or cancel it, as rows and as a whole
-// section; a cancel shows the fee it pays in its confirmation.
+// it, and the buttons to run, speed up, queue or cancel it, as rows and as a
+// whole section; a cancel or a speed-up shows the fee it pays in its
+// confirmation.
 package app.tingid.ui.money
 
 import androidx.compose.foundation.background
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
@@ -44,6 +46,7 @@ import app.tingid.state.ScheduledActions
 import app.tingid.state.WorkspaceState
 import app.tingid.state.runKey
 import app.tingid.state.runRefOf
+import app.tingid.state.runsPaidFor
 import app.tingid.state.scheduledActionKey
 import app.tingid.text.Names
 import app.tingid.text.describeEffect
@@ -91,17 +94,22 @@ private fun effectTitle(e: ScheduledEntry, names: Names): String {
 
 /**
  * Scheduled actions as rows, each with Cancel, and Run now or Run when due
- * while nothing runs it yet. `runs`: run status by [runKey] (Chain.runStatuses
- * of [runRefOf] of each); `busy`: what [ScheduledActions.busy] says is under way.
+ * while nothing runs it yet; one that is due and has not run also has Speed
+ * up, until a batch from this device pays for its run. `runs`: run status by
+ * [runKey] (Chain.runStatuses of [runRefOf] of each); `paid`: the keys of
+ * those whose run a batch pays for ([runsPaidFor]); `busy`: what
+ * [ScheduledActions.busy] says is under way.
  */
 @Composable
 fun ScheduledRows(
     entries: List<ScheduledEntry>,
     names: Names,
     runs: Map<String, RunStatus?>,
+    paid: Set<String>,
     busy: String?,
     onCancel: (ScheduledEntry) -> Unit,
     onRun: (ScheduledEntry) -> Unit,
+    onSpeedUp: (ScheduledEntry) -> Unit,
     onQueue: (ScheduledEntry) -> Unit,
 ) {
     val p = t
@@ -110,6 +118,8 @@ fun ScheduledRows(
         val key = scheduledKey(e)
         val status = runs[runKey(runRefOf(e))]
         val handled = status == RunStatus.Queued || status == RunStatus.Pending
+        // Due and not run: a fee can get its run into a block, unpaid or still waiting for room.
+        val speedable = due && status != RunStatus.Ran && key !in paid
         val who = when (val effect = e.record.effect) {
             is Coin.Effect.Transfer -> nameOf(names, effect.to)
             is Coin.Effect.Mint -> nameOf(names, effect.to)
@@ -130,15 +140,21 @@ fun ScheduledRows(
                     val tip = e.record.tip
                     ToneCaption(
                         "From ${e.view.account.label} · ${if (due) "" else "${relativeTime(e.record.executeAt)} · "}${runNote(status, due)}" +
+                            (if (key in paid) " · sped up" else "") +
                             if (tip.signum() > 0) " · run fee ${formatAmount(tip, e.coin.config.decimals)} ${e.coin.config.symbol}" else "",
                         p.warning,
                     )
                 }
                 Button("Cancel", onClick = { onCancel(e) }, kind = ButtonKind.Danger, small = true, loading = busy == "cancel-$key")
             }
-            if (due && !handled) {
-                Row(Modifier.padding(start = 50.dp)) {
-                    Button("Run now", onClick = { onRun(e) }, kind = ButtonKind.Secondary, small = true, icon = Icons.Outlined.PlayArrow, loading = busy == "run-$key")
+            if (due && (!handled || speedable)) {
+                Row(Modifier.padding(start = 50.dp), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    if (!handled) {
+                        Button("Run now", onClick = { onRun(e) }, kind = ButtonKind.Secondary, small = true, icon = Icons.Outlined.PlayArrow, loading = busy == "run-$key")
+                    }
+                    if (speedable) {
+                        Button("Speed up", onClick = { onSpeedUp(e) }, kind = ButtonKind.Secondary, small = true, icon = Icons.Outlined.Bolt, loading = busy == "speed-$key")
+                    }
                 }
             } else if (!due && !handled) {
                 Row(Modifier.padding(start = 50.dp)) {
@@ -171,10 +187,10 @@ fun rememberScheduledActions(w: WorkspaceState, fee: FeeChoice, opened: (txId: S
 private class Asking(val entries: List<ScheduledEntry>, val label: String, val options: ConfirmOptions)
 
 /**
- * The scheduled actions `entries` with Cancel, Run now and Run when due, Cancel
- * all, and the fee the cancels pay. `acting`: the coin and account of an
- * account screen; none on the wallet, which lists every account's. `info`:
- * the (i) text beside the heading.
+ * The scheduled actions `entries` with Cancel, Run now, Speed up and Run when
+ * due, Cancel all, and the fee the cancels pay. `acting`: the coin and account
+ * of an account screen; none on the wallet, which lists every account's.
+ * `info`: the (i) text beside the heading.
  */
 @Composable
 fun ScheduledSection(w: WorkspaceState, entries: List<ScheduledEntry>, acting: Acting?, info: String? = null) {
@@ -187,8 +203,11 @@ fun ScheduledSection(w: WorkspaceState, entries: List<ScheduledEntry>, acting: A
     val actions = rememberScheduledActions(w, fee) { id -> nav.navigate(TxRoute(id)) }
     val busy by actions.busy.collectAsState()
     val error by actions.error.collectAsState()
-    // The cancel being confirmed: its sheet shows the fee, which can be changed there.
+    val outbox = services.store.data.collectAsState().value.outbox
+    val paid = w.info?.status?.chainId?.let { runsPaidFor(it, entries, outbox) } ?: emptySet()
+    // The cancel or speed-up being confirmed: its sheet shows the fee, which can be changed there.
     var asking by remember { mutableStateOf<Asking?>(null) }
+    var speeding by remember { mutableStateOf<ScheduledEntry?>(null) }
     if (entries.isEmpty()) return
     val cancelOne = { e: ScheduledEntry ->
         asking = Asking(
@@ -231,7 +250,17 @@ fun ScheduledSection(w: WorkspaceState, entries: List<ScheduledEntry>, acting: A
                     )
                 }
             }
-            ScheduledRows(entries, w.names, runs, busy, onCancel = cancelOne, onRun = actions::run, onQueue = actions::queue)
+            ScheduledRows(
+                entries,
+                w.names,
+                runs,
+                paid,
+                busy,
+                onCancel = cancelOne,
+                onRun = actions::run,
+                onSpeedUp = { e -> speeding = e },
+                onQueue = actions::queue,
+            )
         }
     }
     asking?.let { a ->
@@ -246,6 +275,28 @@ fun ScheduledSection(w: WorkspaceState, entries: List<ScheduledEntry>, acting: A
             Column(Modifier.fillMaxWidth()) {
                 Hairline()
                 Box(Modifier.padding(vertical = 6.dp)) { FeeRow(fee) }
+                Hairline()
+            }
+        }
+    }
+    speeding?.let { e ->
+        // From an instant account, in a batch beside the run, which carries no fee of its own.
+        val speedFee = rememberFee(null)
+        ConfirmSheet(
+            ConfirmOptions(
+                title = "Speed up this run?",
+                body = "${describeEffect(e.record.effect, e.coin, w.names)}, from ${e.view.account.label}. A fee goes to the miner that runs it, paid only if the run gets into a block.",
+                confirm = "Speed up",
+            ),
+            onAnswer = { yes ->
+                if (yes) actions.speedUp(e, speedFee)
+                speeding = null
+            },
+            ready = speedFee.problem == null && speedFee.fee.signum() > 0,
+        ) {
+            Column(Modifier.fillMaxWidth()) {
+                Hairline()
+                Box(Modifier.padding(vertical = 6.dp)) { FeeRow(speedFee) }
                 Hairline()
             }
         }
