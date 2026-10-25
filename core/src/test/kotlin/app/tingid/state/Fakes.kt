@@ -8,6 +8,7 @@ import app.tingid.chain.BlockReceipts
 import app.tingid.chain.ChainApi
 import app.tingid.chain.ContractManifest
 import app.tingid.chain.EventPage
+import app.tingid.chain.HEADER_BYTES
 import app.tingid.chain.Http
 import app.tingid.chain.HttpRequest
 import app.tingid.chain.HttpResponse
@@ -15,7 +16,9 @@ import app.tingid.chain.NodeStatus
 import app.tingid.chain.StorageRead
 import app.tingid.chain.TransactionLookup
 import app.tingid.chain.hex
+import app.tingid.chain.taggedHash
 import app.tingid.chain.transactionId
+import app.tingid.chain.u64le
 import app.tingid.chain.unhex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +27,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -53,7 +57,8 @@ internal fun jsonResponse(body: JsonElement, status: Int = 200) = HttpResponse(s
 /**
  * A node's REST API: its status, the transactions it knows (id → lookup JSON;
  * absent, it does not know one) and submissions, which `accept` answers. Every
- * request is noted in `calls` as `METHOD path`.
+ * request is noted in `calls` as `METHOD path`. With [emptyState] it also
+ * answers proved storage reads, from a state that holds no records.
  */
 internal class FakeRestNode(val chainId: ByteArray) : Http {
     val calls: MutableList<String> = Collections.synchronizedList(ArrayList())
@@ -73,6 +78,19 @@ internal class FakeRestNode(val chainId: ByteArray) : Http {
     /** The answer to anything else the test sets, by path. */
     val other = ConcurrentHashMap<String, () -> HttpResponse>()
 
+    /** Whether proved storage reads are answered, every record absent from an empty state; else the node has no storage reads. */
+    @Volatile
+    var emptyState = false
+
+    /** The header of the block such reads come from, at height 1: its state is the empty tree, its target the easiest. */
+    private val emptyHeader = ByteArray(HEADER_BYTES).also { h ->
+        chainId.copyInto(h, 2)
+        u64le(1).copyInto(h, 34)
+        h.fill(0xff.toByte(), 82, 114)
+        taggedHash("state-empty").copyInto(h, 178)
+    }
+    private val emptyTip = taggedHash("block", emptyHeader).hex()
+
     override suspend fun exchange(request: HttpRequest): HttpResponse {
         val path = request.url.substring(request.url.indexOf("/v1"))
         calls.add("${request.method} $path")
@@ -82,7 +100,7 @@ internal class FakeRestNode(val chainId: ByteArray) : Http {
                 buildJsonObject {
                     put("chain_id", chainId.hex())
                     put("height", 1)
-                    put("tip", "00".repeat(32))
+                    put("tip", if (emptyState) emptyTip else "00".repeat(32))
                     put("work", "1")
                 },
             )
@@ -92,6 +110,23 @@ internal class FakeRestNode(val chainId: ByteArray) : Http {
                 posted.add(tx.hex() to body["not_before"]?.jsonPrimitive?.content?.toLong())
                 accept(tx)
             }
+            path == "/v1/storage" && request.method == "POST" && emptyState -> {
+                val asked = Json.parseToJsonElement(request.body!!.decodeToString()).jsonObject.getValue("reads").jsonArray.size
+                val absent = buildJsonObject {
+                    put("proof", buildJsonObject {
+                        put("end", "empty")
+                        put("siblings", JsonArray(emptyList()))
+                    })
+                }
+                jsonResponse(
+                    buildJsonObject {
+                        put("values", JsonArray(List(asked) { absent }))
+                        put("state_root", taggedHash("state-empty").hex())
+                        put("tip", emptyTip)
+                    },
+                )
+            }
+            path.startsWith("/v1/blocks/$emptyTip/raw") && emptyState -> jsonResponse(buildJsonObject { put("hex", emptyHeader.hex()) })
             path.startsWith("/v1/blocks?") -> {
                 val from = path.substringAfter("from=").substringBefore('&').toLong()
                 val limit = path.substringAfter("limit=").toInt()

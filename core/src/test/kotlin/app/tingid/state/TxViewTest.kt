@@ -90,6 +90,8 @@ class TxViewTest {
         val scheduled = listOf(TxEvent(dlr.id, Coin.Event.Scheduled(me, 3, 500, BigInteger.ZERO, Coin.Effect.Transfer(bob, big(9))), ByteArray(0)))
         assertEquals(big(9), paymentOf(scheduled, listOf(me), coins)?.amount)
         assertNull(paymentOf(txEvents(receipt(events = listOf(transfer(bob, miner, 7))), coins), listOf(me), coins))
+        // A burn shows as a transfer to the zero account: it went to no one.
+        assertNull(paymentOf(txEvents(receipt(events = listOf(transfer(me, Coin.ZERO_ACCOUNT, 7))), coins), listOf(me), coins))
     }
 
     @Test

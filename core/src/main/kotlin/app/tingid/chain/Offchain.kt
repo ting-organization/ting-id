@@ -102,7 +102,7 @@ object Offchain {
         return text
     }
 
-    private fun textOf(bytes: ByteArray, what: String, multiline: Boolean = false): String {
+    internal fun textOf(bytes: ByteArray, what: String, multiline: Boolean = false): String {
         val text = try {
             Charsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
@@ -119,7 +119,7 @@ object Offchain {
 
     private fun readText(r: Reader, what: String, multiline: Boolean = false): String = textOf(r.bytes(), what, multiline)
 
-    private fun line(text: String, what: String): String {
+    internal fun line(text: String, what: String): String {
         if (text.isEmpty() || trimWhiteSpace(text) != text) throw OffchainError("$what must be a non-empty line without surrounding spaces")
         return checkText(text, what)
     }

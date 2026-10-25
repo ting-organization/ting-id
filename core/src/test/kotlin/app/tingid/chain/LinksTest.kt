@@ -19,6 +19,7 @@ class LinksTest {
         is Link.Device -> "device ${l.net} ${l.id} ${l.scheme} ${l.key.hex()}"
         is Link.Recover -> "recover ${l.net} ${l.id} ${l.keys.hex()}"
         is Link.Sign -> "sign ${l.url}"
+        is Link.Call -> "call ${l.net} ${l.program} ${l.template.text} ${l.values.hex()} ${l.coin} ${l.burn} ${l.to} ${l.amount} ${l.from} ${l.delayed} ${l.returnTo}"
     }
 
     private fun refuses(text: String, why: String) {

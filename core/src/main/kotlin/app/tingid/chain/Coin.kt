@@ -304,6 +304,31 @@ object Coin {
     fun targetInput(op: Int, account: ByteArray, sequence: Long): ByteArray =
         Writer().u8(op).put32(account).u64(sequence).finish()
 
+    /**
+     * What a coin call pays the block's producer itself, from its input: the
+     * fee of an action or a cancel; 0 for a run or a claim, which carry none
+     * (a run pays the tip its action reserved); null for any other input.
+     */
+    fun feeOf(input: ByteArray): BigInteger? = tryDecode {
+        val r = Reader(input)
+        val op = r.u8()
+        if (op == OP_CLAIM || op == OP_RUN) return@tryDecode BigInteger.ZERO
+        if (op != OP_EXECUTE && op != OP_CANCEL) return@tryDecode null
+        when (r.u8()) {
+            AUTH_POLICY -> {
+                r.array32()
+                r.bytes()
+                if (op == OP_EXECUTE) r.u64()
+                r.bytes()
+            }
+            AUTH_CONTRACT -> {}
+            else -> throw DecodeError("unknown authorization")
+        }
+        val fee = if (op == OP_EXECUTE) readAction(r).timing.fee else readCancel(r).fee
+        r.end()
+        fee
+    }
+
     // ---- Records -------------------------------------------------------------------
 
     @Serializable

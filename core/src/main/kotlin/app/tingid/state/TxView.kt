@@ -80,14 +80,16 @@ class TxPayment(val label: String, val account: ByteArray, val amount: BigIntege
 
 /**
  * The payment of the transaction: who it went to, or for a payment to one of
- * the accounts `mine` who it came from, and how much. A fee is no payment, and
- * a scheduled payment counts as made here.
+ * the accounts `mine` who it came from, and how much. A fee is no payment, nor
+ * is a burn, which the coin shows as a transfer to the zero account, and a
+ * scheduled payment counts as made here.
  */
 fun paymentOf(events: List<TxEvent>, mine: List<ByteArray>, coins: Map<String, CoinInfo>): TxPayment? {
     fun isMine(a: ByteArray) = mine.any { equal(it, a) }
     for (i in events.indices) {
         val ev = events[i].coin ?: continue
         if (isFeeEvent(events, i)) continue
+        if (ev is Coin.Event.Transfer && equal(ev.to, Coin.ZERO_ACCOUNT)) continue
         val c = coins[events[i].contract.hex()]
         if (ev is Coin.Event.Transfer && isMine(ev.from)) return TxPayment("To", ev.to, ev.amount, c)
         if (ev is Coin.Event.Transfer && isMine(ev.to)) return TxPayment("From", ev.from, ev.amount, c)

@@ -258,7 +258,34 @@ class Store(
     fun updateSubmitted(id: String, change: (SubmittedTx) -> SubmittedTx) =
         update { d -> d.copy(submitted = d.submitted.map { if (it.id == id) change(it) else it }) }
 
-    fun keepOutbox(id: String, entry: OutboxEntry) = update { d -> d.copy(outbox = d.outbox + (id to entry.copy(twin = d.outbox[id]?.twin))) }
+    /**
+     * The batch `tx` pays for `unpaid`, an operation sent alone before: the
+     * submission that followed `unpaid` follows the batch from now on, with
+     * the batch's id, time and summary, so the operation shows once; without
+     * one still followed, `tx` is added. The batch's bytes name `unpaid` as
+     * their twin ([pairOutbox]), so whichever goes in settles it.
+     */
+    fun followPaid(unpaid: String, tx: SubmittedTx) = update { d ->
+        val old = d.submitted.firstOrNull { it.id == unpaid && it.userId == tx.userId && (it.state == TxState.Pending || it.state == TxState.Failed) }
+        val entry = old?.copy(id = tx.id, at = tx.at, summary = tx.summary, state = TxState.Pending, height = null, problem = null)
+            ?: tx.copy(chain = tx.chain ?: currentChain())
+        d.copy(submitted = (listOf(entry) + d.submitted.filter { it !== old && it.id != tx.id }).take(200))
+    }
+
+    fun keepOutbox(id: String, entry: OutboxEntry) = update { d ->
+        val old = d.outbox[id]
+        d.copy(outbox = d.outbox + (id to entry.copy(twin = old?.twin, unpaid = entry.unpaid ?: old?.unpaid)))
+    }
+
+    /** Notes whether the program call kept as `id` pays no fee itself. */
+    fun markProgramCall(id: String, unpaid: Boolean) = update { d ->
+        val e = d.outbox[id] ?: return@update d
+        d.copy(outbox = d.outbox + (id to e.copy(unpaid = unpaid)))
+    }
+
+    fun noteProgramCalled(program: String) = update { d ->
+        if (program in d.programsCalled) d else d.copy(programsCalled = (listOf(program) + d.programsCalled).take(200))
+    }
 
     /** Notes that `unpaid` is the operation of the batch `paid` sent alone. */
     fun pairOutbox(paid: String, unpaid: String) = update { d ->
