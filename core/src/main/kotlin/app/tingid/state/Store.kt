@@ -272,7 +272,20 @@ class Store(
         d.copy(submitted = (listOf(entry) + d.submitted.filter { it !== old && it.id != tx.id }).take(200))
     }
 
-    fun keepOutbox(id: String, entry: OutboxEntry) = update { d -> d.copy(outbox = d.outbox + (id to entry.copy(twin = d.outbox[id]?.twin))) }
+    fun keepOutbox(id: String, entry: OutboxEntry) = update { d ->
+        val old = d.outbox[id]
+        d.copy(outbox = d.outbox + (id to entry.copy(twin = old?.twin, unpaid = entry.unpaid ?: old?.unpaid)))
+    }
+
+    /** Notes whether the program call kept as `id` pays no fee itself. */
+    fun markProgramCall(id: String, unpaid: Boolean) = update { d ->
+        val e = d.outbox[id] ?: return@update d
+        d.copy(outbox = d.outbox + (id to e.copy(unpaid = unpaid)))
+    }
+
+    fun noteProgramCalled(program: String) = update { d ->
+        if (program in d.programsCalled) d else d.copy(programsCalled = (listOf(program) + d.programsCalled).take(200))
+    }
 
     /** Notes that `unpaid` is the operation of the batch `paid` sent alone. */
     fun pairOutbox(paid: String, unpaid: String) = update { d ->

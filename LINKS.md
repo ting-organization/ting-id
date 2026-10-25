@@ -18,7 +18,7 @@ ting:<request>?<field>=<value>&…
 | `device` | `id`, `scheme`, `key`, `net` | Add the public key `key` of `scheme` to the identity `id` |
 | `recover` | `id`, `keys`, `net` | Approve the recovery of identity `id` to the key list `keys` |
 | `sign` | `url` | A site's signing request, fetched from `url` ([TOCS-1](TOCS-1.md)) |
-| `call` | `net`, `program`, `template`, `values`? or `zvalues`?, `coin`?, `burn`?, `to`?, `amount`?, `from`?, `delayed`? | Do an operation of a program, in the program's own words ([TCR-1](TCR-1.md)) |
+| `call` | `net`, `program`, `template`, `values`? or `zvalues`?, `coin`?, `burn`?, `to`?, `amount`?, `from`?, `delayed`?, `return`? | Do an operation of a program, in the program's own words ([TCR-1](TCR-1.md)) |
 
 ## Values
 

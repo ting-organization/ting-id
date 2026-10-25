@@ -206,7 +206,10 @@ class Pending(
         val kept = d.outbox[id] ?: return@async "the app no longer has this transaction"
         val info = chain.info.value ?: return@async "no node answers"
         if (tx.chain != null && tx.chain != info.chainHex) return@async "it was sent to another chain"
-        val call = unpaidCall(info.canonical, unhex(kept.raw)) ?: return@async "it pays its own fee"
+        // As canSpeedUp asks, and again from the node: a payment signed for what is in a block already holds its nonce for nothing.
+        if (tx.state != TxState.Pending || kept.twin != null) return@async "it is in a block, or paid for, already"
+        if (chain.node.transaction(id)?.occurrences?.isNotEmpty() == true) return@async "it is in a block already"
+        val call = unpaidCall(info.canonical, unhex(kept.raw), kept.unpaid) ?: return@async "it pays its own fee"
         try {
             val r = sent { chain.speedUp(info.canonical, info.status.chainId, BatchCall(call.target, call.input), fee.resolve(), call.budget) }
             store.followPaid(id, tx.copy(id = r.txId, at = now(), summary = withFee(tx.summary, fee)))

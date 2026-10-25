@@ -95,7 +95,7 @@ object Offchain {
     }
 
     /** Text as the app shows it: nothing hidden, normalized, and a single line unless `multiline`. */
-    internal fun checkText(text: String, what: String, multiline: Boolean = false): String {
+    private fun checkText(text: String, what: String, multiline: Boolean = false): String {
         // A lone surrogate comes out of codePoints() as itself, and is refused as hidden.
         if (text.codePoints().anyMatch { hidden(it, multiline) }) throw OffchainError("$what holds a character that cannot be shown")
         if (!Normalizer.isNormalized(text, Normalizer.Form.NFC)) throw OffchainError("$what is not normalized text")

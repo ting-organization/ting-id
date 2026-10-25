@@ -17,12 +17,15 @@ import app.tingid.chain.unhex
 /**
  * The call a kept transaction makes, when a speed-up can pay for it: a call
  * that pays no fee itself. Not a batch, which may pay already, nor a
- * deployment, which no batch can make.
+ * deployment, which no batch can make. `unpaid`: for a call to a program
+ * (TCR-1.md), what the app noted when it sent it ([OutboxEntry.unpaid]): its
+ * input starts with a template hash, which says nothing of its fee.
  */
-fun unpaidCall(c: Canonical, raw: ByteArray): CallTx? {
+fun unpaidCall(c: Canonical, raw: ByteArray, unpaid: Boolean? = null): CallTx? {
     val call = decodeCall(raw) ?: return null
     if (equal(call.target, c.batch)) return null
-    // A registry operation pays nothing; anything else this app calls is a coin.
+    if (unpaid != null) return call.takeIf { unpaid }
+    // A registry operation pays nothing; anything else this app calls unmarked is a coin.
     if (equal(call.target, c.registry)) return call
     return call.takeIf { Coin.feeOf(it.input)?.signum() == 0 }
 }
@@ -34,7 +37,7 @@ fun unpaidCall(c: Canonical, raw: ByteArray): CallTx? {
  */
 fun canSpeedUp(tx: SubmittedTx, watch: Watch, kept: OutboxEntry?, c: Canonical?): Boolean =
     tx.state == TxState.Pending && watch == Watch.Waiting && kept != null && kept.twin == null && c != null &&
-        unpaidCall(c, unhex(kept.raw)) != null
+        unpaidCall(c, unhex(kept.raw), kept.unpaid) != null
 
 /** The scheduled actions among `entries` whose run a batch this device sent pays for, by [scheduledActionKey]. */
 fun runsPaidFor(chainId: ByteArray, entries: List<ScheduledAction>, outbox: Map<String, OutboxEntry>): Set<String> {

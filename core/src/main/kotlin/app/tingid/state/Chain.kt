@@ -469,6 +469,9 @@ class Chain(
         }
         noteNonce(program, account, nonce, txId)
         paid?.let { noteNonce(it.first, account, it.second, txId) }
+        // What a speed-up needs to know, which the call's bytes cannot say: whether it pays a miner itself.
+        // A batch pays already; the call sent beside it alone pays nothing.
+        if (own || payer == null) store.markProgramCall(txId, unpaid = !own) else store.data.value.outbox[txId]?.twin?.let { store.markProgramCall(it, unpaid = true) }
         return Submitted(txId, account, nonce)
     }
 

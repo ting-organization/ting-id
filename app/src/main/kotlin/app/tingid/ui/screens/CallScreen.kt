@@ -55,12 +55,12 @@ import app.tingid.chain.Link
 import app.tingid.chain.Links
 import app.tingid.chain.SlotValue
 import app.tingid.chain.contractAccount
-import app.tingid.chain.formatAmount
 import app.tingid.chain.hex
 import app.tingid.chain.nowSeconds
 import app.tingid.chain.shortId
 import app.tingid.state.Acting
 import app.tingid.state.CallRequest
+import app.tingid.state.CoinInfo
 import app.tingid.state.SubmittedTx
 import app.tingid.state.readCallRequest
 import app.tingid.state.sent
@@ -69,6 +69,7 @@ import app.tingid.text.Names
 import app.tingid.text.callLine
 import app.tingid.text.callSentence
 import app.tingid.text.listItemLine
+import app.tingid.text.showAmount
 import app.tingid.text.relativeDuration
 import app.tingid.text.strangeAccounts
 import app.tingid.ui.Banner
@@ -191,22 +192,26 @@ private fun Review(request: CallRequest) {
     var chosen by remember { mutableStateOf<Long?>(null) }
     val account = choices.firstOrNull { it.slot == chosen } ?: choices.firstOrNull { it.delay == 0L } ?: choices.firstOrNull()
     val delayed = account != null && account.delay > 0
-    // An account without a delay pays its fee inside its payment or fee payment, in the link's coin, when it pays fees in that coin.
-    val acting = (payment?.coin ?: request.feeCoin)?.takeIf { account != null && account.delay == 0L }
-    val fee = rememberFee(if (acting != null && account != null) Acting(acting, account) else null)
+    // Coins go by name only when the user follows them: a coin's own configuration names it as its deployer likes.
+    val coins = w.coinById
+    // An account without a delay pays its fee inside its payment or fee payment, in the link's coin, when it pays fees in that followed coin.
+    val feeIn = (payment?.coin ?: request.feeCoin)?.takeIf { account != null && account.delay == 0L && it.hex in coins }
+    val fee = rememberFee(if (feeIn != null && account != null) Acting(feeIn, account) else null)
     val views = rememberAccountViews(listOfNotNull(payment?.coin), listOfNotNull(account)).views
     val available = payment?.let { views[it.coin.hex]?.firstOrNull()?.record?.available }
     val ownFee = if (payment != null && fee.own) fee.fee else BigInteger.ZERO
-    val decimals = payment?.coin?.config?.decimals ?: 0
-    val symbol = payment?.coin?.config?.symbol ?: ""
 
     // The program's own account is one the app knows: it follows from the program's ID.
     val names = w.names + (contractAccount(request.program).hex() to "this program’s own account")
-    val paymentText = payment?.let { "${formatAmount(it.amount, decimals)} $symbol" }
-    val parts = callSentence(link.template, link.decoded, paymentText, names, request.coins, ::formatTime)
+    val paymentKnown = payment != null && payment.coin.hex in coins
+    val paymentText = payment?.let { showAmount(it.coin.id, it.amount, coins) }
+    val parts = callSentence(link.template, link.decoded, paymentText?.let { CallPart.Value(it, strange = !paymentKnown) }, names, coins, ::formatTime)
     val line = callLine(parts)
     val strangers = strangeAccounts(link.decoded, names)
     val recipient = payment?.to?.hex()
+    val data by services.store.data.collectAsState()
+    // Warned about the first time only (TCR-1.md): the program is still one Ting ID has no name for.
+    val firstUse = request.program.hex() !in data.programsCalled
 
     var busy by remember { mutableStateOf(false) }
     HoldWhileBusy(busy)
@@ -226,7 +231,7 @@ private fun Review(request: CallRequest) {
             val from = link.from
             add(if (from != null) "this call is for the account ${shortId(from)}, which is not one of yours" else "this user has no account that can make this call")
         }
-        if (payment != null && available != null && payment.amount + ownFee > available) add("only ${formatAmount(available, decimals)} $symbol available")
+        if (payment != null && available != null && payment.amount + ownFee > available) add("only ${showAmount(payment.coin.id, available, coins)} available")
         fee.problem?.let(::add)
     }
     val ready = problems.isEmpty() && w.info != null && account != null
@@ -255,6 +260,7 @@ private fun Review(request: CallRequest) {
                     val r = sent {
                         services.chain.submitProgramCall(info.status.chainId, request.program, link.template.hash, link.values, signer, pays, request.feeCoin?.id, fee.resolve()).txId
                     }
+                    services.store.noteProgramCalled(request.program.hex())
                     services.store.addSubmitted(
                         SubmittedTx(
                             id = r.txId,
@@ -292,12 +298,14 @@ private fun Review(request: CallRequest) {
                 Text("A program Ting ID does not know", style = manropeStyle(15f, FontWeight.Medium), color = p.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Caption("Program ${shortId(request.program, 8, 6)}")
             }
-            Pill("First use", Tone.Warning, small = true)
+            if (firstUse) Pill("First use", Tone.Warning, small = true)
         }
-        Banner(
-            "Ting ID has no name for this program, so what it says below is its own claim. Check its ID with whoever gave you the link.",
-            BannerTone.Warning,
-        )
+        if (firstUse) {
+            Banner(
+                "Ting ID has no name for this program, so what it says below is its own claim. Check its ID with whoever gave you the link.",
+                BannerTone.Warning,
+            )
+        }
 
         // What the program says it does, in its own words, with the values as Ting ID reads them.
         Column(
@@ -315,14 +323,16 @@ private fun Review(request: CallRequest) {
             }
             Text(text, style = Type.heading, color = p.text)
             link.template.fields.zip(link.decoded).forEach { (slot, value) ->
-                if (value is SlotValue.ListOf && value.items.isNotEmpty()) ListItems(slot.name, value, request, names)
+                if (value is SlotValue.ListOf && value.items.isNotEmpty()) ListItems(slot.name, value, names, coins)
             }
-            for (hex in strangers) {
+            // In full, as lists are: at most so many, so a long list cannot bury Approve.
+            for (hex in strangers.take(LIST_SHOWN)) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Caption("Not a contact")
                     Mono(hex)
                 }
             }
+            if (strangers.size > LIST_SHOWN) Caption("and ${strangers.size - LIST_SHOWN} more accounts that are not contacts")
         }
 
         // What Ting ID checked itself: who acts, what leaves the account, until when.
@@ -330,9 +340,9 @@ private fun Review(request: CallRequest) {
             Detail("From", first = true) { DetailValue(account?.label ?: "—") }
             when {
                 payment == null -> Detail("Pays") { DetailValue("Nothing but the fee") }
-                recipient == null -> Detail("Burns") { DetailValue("${formatAmount(payment.amount, decimals)} $symbol") }
+                recipient == null -> Detail("Burns") { PaymentValue(paymentText ?: "", paymentKnown) }
                 else -> {
-                    Detail("Pays") { DetailValue("${formatAmount(payment.amount, decimals)} $symbol") }
+                    Detail("Pays") { PaymentValue(paymentText ?: "", paymentKnown) }
                     Detail("To") { DetailValue(names[recipient] ?: shortId(recipient)) }
                 }
             }
@@ -381,9 +391,15 @@ private fun Review(request: CallRequest) {
     }
 }
 
+/** What leaves the account; in a coin the user does not follow, marked so. */
+@Composable
+private fun PaymentValue(text: String, known: Boolean) {
+    if (known) DetailValue(text) else Text(text, style = manropeStyle(13.5f, FontWeight.SemiBold, tabular = true), color = t.warning, textAlign = TextAlign.End)
+}
+
 /** A list's items, each field by its name, shown when opened. */
 @Composable
-private fun ListItems(name: String, value: SlotValue.ListOf, request: CallRequest, names: Names) {
+private fun ListItems(name: String, value: SlotValue.ListOf, names: Names, coins: Map<String, CoinInfo>) {
     val p = t
     var open by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -400,7 +416,7 @@ private fun ListItems(name: String, value: SlotValue.ListOf, request: CallReques
             Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, tint = p.primary, modifier = Modifier.size(18.dp))
         }
         if (open) {
-            for (item in value.items.take(LIST_SHOWN)) Caption(listItemLine(value.fields, item, names, request.coins, ::formatTime))
+            for (item in value.items.take(LIST_SHOWN)) Caption(listItemLine(value.fields, item, names, coins, ::formatTime))
             if (value.items.size > LIST_SHOWN) Caption("and ${value.items.size - LIST_SHOWN} more")
         }
     }

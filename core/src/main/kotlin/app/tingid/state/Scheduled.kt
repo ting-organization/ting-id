@@ -137,6 +137,9 @@ class ScheduledActions(
         val info = w.info
         if (user == null || info == null) return@attempt null
         val chainId = info.status.chainId
+        // Read again now: a payment signed for a run that went in, or one paid for already, holds its nonce for nothing.
+        if (chain.fetchRunStatus(chainId, e.coin.id, e.view.account.account, e.sequence) == RunStatus.Ran) throw IllegalStateException("it has run already")
+        if (runsPaidFor(chainId, listOf(e), chain.store.data.value.outbox).isNotEmpty()) throw IllegalStateException("a batch from this phone pays for its run already")
         val call = runCall(e.coin.id, e.view.account.account, e.sequence)
         val r = sent { chain.speedUp(info.canonical, chainId, call, fee.resolve(), Budgets.CLAIM) }
         val summary = withFee("Run now: ${describeEffect(e.record.effect, e.coin, w.names)}", fee)

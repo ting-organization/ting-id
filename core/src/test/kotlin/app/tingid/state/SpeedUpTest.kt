@@ -219,6 +219,47 @@ class SpeedUpTest {
     }
 
     @Test
+    fun `a program's call goes by what the app noted when it sent it, never by its first byte`() {
+        // A template hash can start with any byte, a coin's op byte included.
+        val raw = encodeCall(filled(0x5a), byteArrayOf(Coin.OP_RUN.toByte()) + ByteArray(40), Budgets.CALL)
+        assertNull(unpaidCall(c, raw, unpaid = false))
+        assertNotNull(unpaidCall(c, raw, unpaid = true))
+        val tx = SubmittedTx("cc".repeat(32), 0, "Call", user.id)
+        val kept = OutboxEntry(raw.hex(), at = 0, unpaid = false)
+        assertFalse(canSpeedUp(tx, Watch.Waiting, kept, c))
+        assertTrue(canSpeedUp(tx, Watch.Waiting, kept.copy(unpaid = true), c))
+        // The note stays when the same bytes are kept again, as on a resend.
+        app.store.keepOutbox("cc".repeat(32), kept)
+        app.store.keepOutbox("cc".repeat(32), OutboxEntry(raw.hex(), at = 1))
+        assertEquals(false, app.store.data.value.outbox.getValue("cc".repeat(32)).unpaid)
+    }
+
+    @Test
+    fun `a speed-up asks the node again, and signs nothing for what a block took or a batch pays already`() = runBlocking {
+        val alone = submittedAlone(apply, "Apply change")
+        node.lookups[alone] = includedLookup(108)
+        assertEquals("it is in a block already", pending.speedUp(alone, fee))
+        assertEquals(0, signing.signed.get())
+
+        node.lookups[alone] = pendingLookup()
+        assertNull(pending.speedUp(alone, fee))
+        val batch = app.store.data.value.submitted.single().id
+        assertEquals("it is in a block, or paid for, already", pending.speedUp(batch, fee))
+        assertEquals(1, signing.signed.get())
+    }
+
+    @Test
+    fun `a due run that went in meanwhile is not paid for`() = runBlocking {
+        node.lookups[runIdOf(chainId, due)] = includedLookup(108)
+        val actions = actions(CompletableDeferred())
+        actions.speedUp(due, fee)
+        until { actions.busy.value == null }
+        assertEquals("it has run already", actions.error.value)
+        assertEquals(0, node.posted.size)
+        assertEquals(0, signing.signed.get())
+    }
+
+    @Test
     fun `only a call that pays nothing itself can be sped up`() {
         val to = filled(0x7f)
         fun execute(paying: Long) = Coin.executeInput(
