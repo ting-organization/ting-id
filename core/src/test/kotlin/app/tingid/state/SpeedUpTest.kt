@@ -28,6 +28,7 @@ import app.tingid.chain.unhex
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.buildJsonObject
@@ -41,6 +42,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.math.BigInteger
+import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 
 /** A key that counts its signatures. */
@@ -295,10 +297,15 @@ class SpeedUpTest {
 
         val opened = CompletableDeferred<String>()
         val actions = actions(opened)
+        // What it says it is busy with, each time it changes: the speed-up runs on
+        // another thread and can be done before the next line could read it.
+        val busy = Collections.synchronizedList(ArrayList<String?>())
+        val watching = launch(Dispatchers.Unconfined) { actions.busy.collect { busy.add(it) } }
         actions.speedUp(due, fee)
-        assertEquals("speed-${scheduledActionKey(due)}", actions.busy.value)
         val batch = withTimeout(5_000) { opened.await() }
         until { actions.busy.value == null }
+        watching.cancel()
+        assertTrue(busy.toString(), "speed-${scheduledActionKey(due)}" in busy)
         assertNull(actions.error.value)
 
         // The run, then the batch of the run and the payment bound to it, then the run alone again.
