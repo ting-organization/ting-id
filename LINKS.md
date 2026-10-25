@@ -18,6 +18,7 @@ ting:<request>?<field>=<value>&…
 | `device` | `id`, `scheme`, `key`, `net` | Add the public key `key` of `scheme` to the identity `id` |
 | `recover` | `id`, `keys`, `net` | Approve the recovery of identity `id` to the key list `keys` |
 | `sign` | `url` | A site's signing request, fetched from `url` ([TOCS-1](TOCS-1.md)) |
+| `call` | `net`, `program`, `template`, `values`? or `zvalues`?, `coin`?, `burn`?, `to`?, `amount`?, `from`?, `delayed`? | Do an operation of a program, in the program's own words ([TCR-1](TCR-1.md)) |
 
 ## Values
 
@@ -47,9 +48,9 @@ the creation input, so a creation can only make the identity it describes.
 
 ## Opening from outside the app
 
-A link tapped in another app opens Ting ID only for `pay`, `create` and
-`sign`: their screens move nothing but the person's own coins, and only once
-they confirm. `device` and `recover` links work only when scanned or pasted in
+A link tapped in another app opens Ting ID only for `pay`, `create`, `sign`
+and `call`: their screens move nothing but the person's own coins, and only
+once they confirm. `device` and `recover` links work only when scanned or pasted in
 Ting ID, so a link in a message cannot lead someone into adding a stranger's
 key to their identity.
 

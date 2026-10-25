@@ -1,7 +1,7 @@
 // The screen a Ting link opens (LINKS.md). Scanned or pasted in the app,
 // every link opens its screen. Opened from outside, only those whose screen
 // asks before anything happens and moves only the person's own coins: a pay,
-// create or sign link. A device or recovery link opened from a message could
+// create, sign or call link. A device or recovery link opened from a message could
 // lead someone into adding a stranger's key, so those open from inside only.
 package app.tingid.state
 
@@ -17,6 +17,7 @@ sealed class LinkTarget(val code: String) {
     class Sponsor(code: String) : LinkTarget(code)
     class AddDevice(code: String) : LinkTarget(code)
     class HelpRecover(code: String) : LinkTarget(code)
+    class Call(code: String) : LinkTarget(code)
 }
 
 enum class LinkSource { Inside, Outside }
@@ -35,6 +36,7 @@ object LinkRoutes {
             is Link.Create -> LinkTarget.Sponsor(code)
             is Link.Device -> LinkTarget.AddDevice(code)
             is Link.Recover -> LinkTarget.HelpRecover(code)
+            is Link.Call -> LinkTarget.Call(code)
         }
     }
 

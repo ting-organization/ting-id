@@ -63,6 +63,7 @@ import app.tingid.Services
 import app.tingid.chain.PoolNotice
 import app.tingid.state.LinkTarget
 import app.tingid.text.nodeNotice
+import app.tingid.ui.screens.CallScreen
 import app.tingid.ui.screens.CoinScreen
 import app.tingid.ui.screens.CoinToolsScreen
 import app.tingid.ui.screens.CoinsScreen
@@ -156,6 +157,7 @@ private fun Main(services: Services, activity: MainActivity) {
                     composable<ProposeRoute> { ProposeScreen(it.toRoute()) }
                     composable<RecoveryRoute> { RecoveryScreen(it.toRoute()) }
                     composable<SignRoute> { SignScreen(it.toRoute()) }
+                    composable<CallRoute> { CallScreen(it.toRoute()) }
                     composable<PhraseRoute> { PhraseScreen(it.toRoute()) }
                 }
             }
@@ -178,6 +180,7 @@ private fun routeOf(target: LinkTarget, at: Long): Any = when (target) {
     is LinkTarget.Sponsor -> SponsorRoute(code = target.code, at = at)
     is LinkTarget.AddDevice -> ProposeRoute(kind = "addKey", code = target.code, at = at)
     is LinkTarget.HelpRecover -> RecoveryRoute(mode = "help", code = target.code, at = at)
+    is LinkTarget.Call -> CallRoute(code = target.code, at = at)
 }
 
 /** Opens a link scanned or pasted in the app, which opens every kind. */

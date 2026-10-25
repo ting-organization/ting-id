@@ -19,12 +19,14 @@ import app.tingid.chain.Http
 import app.tingid.chain.Id
 import app.tingid.chain.MaybeSent
 import app.tingid.chain.NodeClient
+import app.tingid.chain.NodeError
 import app.tingid.chain.NodePool
 import app.tingid.chain.NodeStatus
 import app.tingid.chain.Resources
 import app.tingid.chain.Signer
 import app.tingid.chain.SigningKey
 import app.tingid.chain.StorageRead
+import app.tingid.chain.Tcr
 import app.tingid.chain.TransactionLookup
 import app.tingid.chain.UrlConnectionHttp
 import app.tingid.chain.batchPrefix
@@ -35,6 +37,7 @@ import app.tingid.chain.equal
 import app.tingid.chain.hex
 import app.tingid.chain.policyAccount
 import app.tingid.chain.signMessage
+import app.tingid.chain.signingDigest
 import app.tingid.chain.sponsoredCall
 import app.tingid.chain.transactionId
 import app.tingid.chain.unhex
@@ -253,7 +256,8 @@ class Chain(
 
     // ---- Nonces --------------------------------------------------------------------
 
-    private fun nonceKey(coinId: ByteArray, account: ByteArray) = "${coinId.hex()}:${account.hex()}"
+    /** A coin account's, or a program's (TCR-1.md), whose nonces are its own. */
+    private fun nonceKey(contract: ByteArray, account: ByteArray) = "${contract.hex()}:${account.hex()}"
 
     /**
      * The nonce for the next action of a coin account. While this device's last
@@ -262,9 +266,16 @@ class Chain(
      * `prefix`: a fee payment for the same calls as the last one reuses its nonce,
      * so the transaction is the same.
      */
-    suspend fun nextNonce(coinId: ByteArray, account: ByteArray, prefix: String? = null): Long {
+    suspend fun nextNonce(coinId: ByteArray, account: ByteArray, prefix: String? = null): Long =
+        nextAfterNoted(nonceKey(coinId, account), prefix) { fetchAccount(it, coinId, account).nonce }
+
+    /** The nonce for the next call of `account` to `program` (TCR-1.md), queued behind this device's last as for a coin. */
+    suspend fun nextCallNonce(program: ByteArray, account: ByteArray): Long =
+        nextAfterNoted(nonceKey(program, account), null) { fetchCallNonce(it, program, account) }
+
+    private suspend fun nextAfterNoted(key: String, prefix: String?, read: suspend (ChainApi) -> Long): Long {
         val node = this.node
-        val note = store.data.value.nonces[nonceKey(coinId, account)]
+        val note = store.data.value.nonces[key]
         // The earlier transaction is looked up before the nonce is read: if a block
         // takes it in between, the nonce read already counts it. One that cannot be
         // looked up counts as waiting, so no nonce is ever signed twice.
@@ -273,14 +284,14 @@ class Chain(
         } catch (e: Exception) {
             true
         }
-        val current = fetchAccount(node, coinId, account).nonce
+        val current = read(node)
         // Past its expiry the noted transaction can never go in, so its nonce is free again.
         if (note == null || !waiting || note.nonce < current || now() - note.at > SIGNED_LIFE) return current
         return if (prefix != null && note.prefix == prefix) note.nonce else note.nonce + 1
     }
 
-    private fun noteNonce(coinId: ByteArray, account: ByteArray, nonce: Long, txId: String, prefix: String? = null) =
-        store.noteNonce(nonceKey(coinId, account), NonceNote(nonce, txId, now(), prefix))
+    private fun noteNonce(contract: ByteArray, account: ByteArray, nonce: Long, txId: String, prefix: String? = null) =
+        store.noteNonce(nonceKey(contract, account), NonceNote(nonce, txId, now(), prefix))
 
     /**
      * When what this app signs expires unless included: the end of the next day
@@ -407,6 +418,61 @@ class Chain(
     }
 
     /**
+     * Signs a program's call (TCR-1.md) for the signer's account and submits it.
+     * With a payment, the payment is the account's approval: it comes from the
+     * same account, bound to the program and to the call's digest, and the call's
+     * own witness stays empty, so one signature is checked. A payer that is the
+     * acting account in the payment's coin adds its fee to the payment. Without a
+     * payment, a payer that is the acting account in `feeCoin`, the coin the
+     * program takes fee payments in, pays with a fee payment, which is the
+     * approval as well. Otherwise the account signs the call itself and `payer`
+     * pays for it through a batch, or no one does.
+     */
+    suspend fun submitProgramCall(
+        chainId: ByteArray,
+        program: ByteArray,
+        template: ByteArray,
+        values: ByteArray,
+        signer: Signer,
+        payment: Pair<ByteArray, Coin.Effect>?,
+        feeCoin: ByteArray?,
+        payer: FeePayer?,
+    ): Submitted {
+        val account = signer.account
+        // A fee payment: nothing to the program's own account, with the fee.
+        val pays = payment ?: feeCoin?.takeIf { paysOwnFee(payer, it, account) }?.let { it to Tcr.feeEffect(program) }
+        val nonce = nextCallNonce(program, account)
+        val validUntil = now() + CALL_LIFE
+        val message = Tcr.message(chainId, program, account, nonce, validUntil, Tcr.operationHash(template, values))
+        var paid: Pair<ByteArray, Long>? = null
+        var own = false
+        val (witness, pay) = if (pays == null) {
+            signer.witness(message) to null
+        } else {
+            val (coinId, effect) = pays
+            own = paysOwnFee(payer, coinId, account)
+            val coinNonce = nextNonce(coinId, account)
+            val timing = Coin.Timing(fee = if (own) payer!!.fee else BigInteger.ZERO, validUntil = validUntil, within = Coin.Within(program, signingDigest(message)))
+            val action = Coin.Action(effect, timing)
+            val coinMessage = Coin.message(chainId, coinId, account, coinNonce, action)
+            paid = coinId to coinNonce
+            ByteArray(0) to Tcr.Payment(coinId, Coin.executeInput(Coin.PolicyAuth(signer.policy, signer.params, coinNonce, signer.witness(coinMessage)), action))
+        }
+        val input = Tcr.callInput(template, values, Tcr.Auth(signer.policy, signer.params, nonce, validUntil, witness), pay)
+        val txId = try {
+            submitWithFee(Contracts.canonical(chainId), chainId, BatchCall(program, input), if (own) null else payer, Budgets.BATCH)
+        } catch (e: MaybeSent) {
+            // Its nonces are taken all the same, so nothing is ever signed again with them.
+            noteNonce(program, account, nonce, e.txId)
+            paid?.let { noteNonce(it.first, account, it.second, e.txId) }
+            throw MaybeSent(e.txId)
+        }
+        noteNonce(program, account, nonce, txId)
+        paid?.let { noteNonce(it.first, account, it.second, txId) }
+        return Submitted(txId, account, nonce)
+    }
+
+    /**
      * Deploys a new coin with `options`. A deployment names no sender and carries
      * no fee: it waits for room in a block. Its ContractId follows from the
      * transaction, so it is known before a block includes it.
@@ -502,6 +568,9 @@ class Chain(
 
         /** The longest a signed action stays valid: [signedExpiry] is at most two days after signing. */
         const val SIGNED_LIFE = 2 * 86_400L
+
+        /** How long a program's call may wait to get in (TCR-1.md: at most an hour). */
+        const val CALL_LIFE = 3_600L
     }
 }
 
@@ -515,6 +584,10 @@ class TxLookup(val lookup: TransactionLookup?, val error: String?, val missing: 
 
 suspend fun fetchAccount(node: ChainApi, coinId: ByteArray, account: ByteArray): Coin.AccountRecord =
     Coin.decodeAccount(node.storage(coinId, account))
+
+/** An account's nonce in a program that takes calls (TCR-1.md); an absent record is 0. */
+suspend fun fetchCallNonce(node: ChainApi, program: ByteArray, account: ByteArray): Long =
+    Tcr.decodeNonce(node.storage(program, Tcr.nonceKey(account))) ?: throw NodeError("the program’s nonce record for this account is not a nonce")
 
 /** Several coin accounts in one read: each pairs a coin with an account. */
 suspend fun fetchAccounts(node: ChainApi, reads: List<Pair<ByteArray, ByteArray>>): List<Coin.AccountRecord> {

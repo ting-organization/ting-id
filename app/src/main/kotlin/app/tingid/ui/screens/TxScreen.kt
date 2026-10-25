@@ -2,6 +2,7 @@
 // payment it made, its block and result, and what happened in it.
 package app.tingid.ui.screens
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Circle
@@ -31,11 +33,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.navigation.NavHostController
 import app.tingid.chain.Id
 import app.tingid.chain.TransactionLookup
@@ -68,6 +71,7 @@ import app.tingid.ui.Card
 import app.tingid.ui.IconCircle
 import app.tingid.ui.IdChip
 import app.tingid.ui.Loading
+import app.tingid.ui.LocalActivity
 import app.tingid.ui.LocalNav
 import app.tingid.ui.LocalServices
 import app.tingid.ui.Screen
@@ -93,6 +97,7 @@ private class Head(val icon: ImageVector, val label: String, val tone: Tone)
 @Composable
 fun TxScreen(route: TxRoute) {
     val services = LocalServices.current
+    val activity = LocalActivity.current
     val nav = LocalNav.current
     val p = t
     val data by services.store.data.collectAsState()
@@ -276,6 +281,13 @@ fun TxScreen(route: TxRoute) {
                     }
                 }
             }
+        }
+        // Only offered, never opened by itself: the link has no origin, so the address is the page's claim.
+        route.back?.let { back ->
+            val host = runCatching { back.toUri().host }.getOrNull() ?: back
+            Button("Open $host", onClick = {
+                runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, "$back#ting-tx=${route.id}".toUri())) }
+            }, icon = Icons.AutoMirrored.Outlined.OpenInNew)
         }
         Button(if (route.sent) "Back to wallet" else "Done", onClick = leave, kind = ButtonKind.Secondary)
         Spacer(Modifier.fillMaxWidth().height(Spacing.lg))

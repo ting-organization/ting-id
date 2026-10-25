@@ -95,14 +95,14 @@ object Offchain {
     }
 
     /** Text as the app shows it: nothing hidden, normalized, and a single line unless `multiline`. */
-    private fun checkText(text: String, what: String, multiline: Boolean = false): String {
+    internal fun checkText(text: String, what: String, multiline: Boolean = false): String {
         // A lone surrogate comes out of codePoints() as itself, and is refused as hidden.
         if (text.codePoints().anyMatch { hidden(it, multiline) }) throw OffchainError("$what holds a character that cannot be shown")
         if (!Normalizer.isNormalized(text, Normalizer.Form.NFC)) throw OffchainError("$what is not normalized text")
         return text
     }
 
-    private fun textOf(bytes: ByteArray, what: String, multiline: Boolean = false): String {
+    internal fun textOf(bytes: ByteArray, what: String, multiline: Boolean = false): String {
         val text = try {
             Charsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
@@ -119,7 +119,7 @@ object Offchain {
 
     private fun readText(r: Reader, what: String, multiline: Boolean = false): String = textOf(r.bytes(), what, multiline)
 
-    private fun line(text: String, what: String): String {
+    internal fun line(text: String, what: String): String {
         if (text.isEmpty() || trimWhiteSpace(text) != text) throw OffchainError("$what must be a non-empty line without surrounding spaces")
         return checkText(text, what)
     }
