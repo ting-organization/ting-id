@@ -820,8 +820,9 @@ enum class Settled {
     Cancelled,
 }
 
+/** An amount of a coin an account spent: a fee, or what a program call burned or paid. */
 @Serializable
-class FeePaid(val contract: ByteArray, val amount: BigInteger)
+class Spent(val contract: ByteArray, val from: ByteArray, val amount: BigInteger)
 
 @Serializable
 data class ActivityItem(
@@ -839,13 +840,13 @@ data class ActivityItem(
     /** For a transfer: it paid a block producer, a fee or a tip, and no other event of its transaction is shown to carry it. */
     val fee: Boolean = false,
     /** The fees its transaction paid from the user's accounts, in their coins. */
-    val fees: List<FeePaid> = emptyList(),
+    val fees: List<Spent> = emptyList(),
     /** For a scheduled action that ran or was cancelled: what it was to do, when its scheduling is among the items. */
     val plan: Coin.Effect? = null,
     /** For a call: it ran an operation scheduled earlier, whose scheduling is among the items. */
     val run: Boolean = false,
     /** For a call: what its account burned or paid into the program in its transaction. */
-    val paid: List<FeePaid> = emptyList(),
+    val paid: List<Spent> = emptyList(),
     /** For payments to a miner grouped by day: how many the row stands for, its amount their sum. */
     val count: Int? = null,
 )

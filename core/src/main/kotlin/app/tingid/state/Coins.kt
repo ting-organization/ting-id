@@ -219,7 +219,10 @@ class CoinData(
     @OptIn(ExperimentalCoroutinesApi::class)
     fun discovered(scope: ScanScope?, accounts: List<UserAccount>, excluded: List<String>): Flow<List<Discovered>> =
         activities.scan(scope).map { s ->
-            (s?.activity ?: emptyList()).filter { it.coin != null }.map { it.contract.hex() }.distinct().filter { it !in excluded }.sorted()
+            (s?.activity ?: emptyList()).flatMap { item ->
+                // A transfer a call took in, or a fee, is part of another item.
+                (if (item.coin != null) listOf(item.contract) else emptyList()) + (item.paid + item.fees).map { it.contract }
+            }.map { it.hex() }.distinct().filter { it !in excluded }.sorted()
         }.distinctUntilChanged().flatMapLatest { candidates ->
             val accountsKey = accounts.joinToString(",") { it.account.hex() }
             val key = if (accounts.isNotEmpty() && candidates.isNotEmpty()) "found:$accountsKey" else null

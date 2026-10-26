@@ -377,7 +377,9 @@ private fun describeEvent(item: ActivityItem, coins: Map<String, CoinInfo>, name
  */
 private fun describeCall(item: ActivityItem, e: CallEvent, coins: Map<String, CoinInfo>, names: Names, now: Long): Described {
     val where = "from ${nameOf(names, e.account)} · program ${shortId(item.contract)}"
-    val paid = item.paid.takeIf { it.isNotEmpty() }?.joinToString(" + ") { amount(coins[it.contract.hex()], it.amount) }?.let { "−$it" }
+    val paid = item.paid.groupBy { it.contract.hex() }
+        .map { (coin, spent) -> "−" + amount(coins[coin], spent.fold(BigInteger.ZERO) { sum, s -> sum + s.amount }) }
+        .takeIf { it.isNotEmpty() }?.joinToString(", ")
     return when (e) {
         is CallEvent.Executed ->
             if (item.run) Described("Program call ran", where, Tone.Success, Icon.Program, amount = paid)

@@ -31,9 +31,10 @@ object Tcr {
 
     val RUN: ByteArray get() = taggedHash("app/call-v1/run")
     val CANCEL: ByteArray get() = taggedHash("app/call-v1/cancel")
-    val SCHEDULED_TOPIC: ByteArray get() = taggedHash("app/call-v1/event/scheduled")
-    val EXECUTED_TOPIC: ByteArray get() = taggedHash("app/call-v1/event/executed")
-    val CANCELLED_TOPIC: ByteArray get() = taggedHash("app/call-v1/event/cancelled")
+    // Hashed once, as every event the scan reads is checked against them.
+    val SCHEDULED_TOPIC: ByteArray = taggedHash("app/call-v1/event/scheduled")
+    val EXECUTED_TOPIC: ByteArray = taggedHash("app/call-v1/event/executed")
+    val CANCELLED_TOPIC: ByteArray = taggedHash("app/call-v1/event/cancelled")
 
     // ---- Records -----------------------------------------------------------------
 
