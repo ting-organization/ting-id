@@ -12,6 +12,19 @@ import org.junit.Test
 import java.math.BigInteger
 
 class CallTest {
+    @Test
+    fun `reads a program's events, and nothing else as one`() {
+        val account = filled(1)
+        val executed = Tcr.EXECUTED_TOPIC + account + u64le(4) + filled(9)
+        assertEquals(CallEvent.Executed(account, 4, filled(9)), Tcr.decodeEvent(executed))
+        assertNull(Tcr.decodeEvent(executed + byteArrayOf(0)))
+        assertNull(Tcr.decodeEvent(executed.copyOf(executed.size - 1)))
+        assertNull(Tcr.decodeEvent(Coin.EXECUTED_TOPIC + account + u64le(4)))
+        // A scheduled event's values run to its end, and may be none.
+        assertEquals(CallEvent.Scheduled(account, 1, 99, filled(7), ByteArray(0)), Tcr.decodeEvent(Tcr.SCHEDULED_TOPIC + account + u64le(1) + u64le(99) + filled(7)))
+        assertEquals(CallEvent.Cancelled(account, 2), Tcr.decodeEvent(Tcr.CANCELLED_TOPIC + account + u64le(2)))
+    }
+
     private val chain = unhex("15d6549cfacd816f835c632b4c67308d1c63e642f4cbf4049368430670705107")
     private val program = "765a9fa0c02d1ff7bbb1bf47ece78424c3d52627811999c874afa8895b4f7fd5"
     private val daler = "305378d17f6af84a563d0f8a8455084948aff7330b62b4f2f98a44b82ba113c4"

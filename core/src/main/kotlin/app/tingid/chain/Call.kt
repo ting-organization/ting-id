@@ -2,8 +2,13 @@
 // own words, a template and its values, and the call that does it for an
 // account. The template is checked by the program itself: its hash starts
 // the call, and the program accepts only its own.
+@file:UseSerializers(HexSerializer::class)
+
 package app.tingid.chain
 
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.UseSerializers
 import java.io.ByteArrayOutputStream
 import java.math.BigInteger
 import java.nio.ByteBuffer
@@ -90,6 +95,20 @@ object Tcr {
 
     /** A coin payment: the coin and its authorized action's input (operation 10), bound to the program and the digest. */
     class Payment(val coin: ByteArray, val input: ByteArray)
+
+    /** An event a TCR-1 program emits for an account's operation; null for any other payload. */
+    fun decodeEvent(payload: ByteArray): CallEvent? = tryDecode {
+        val r = Reader(payload)
+        val topic = r.array32()
+        val event = when {
+            topic.contentEquals(SCHEDULED_TOPIC) -> CallEvent.Scheduled(r.array32(), r.u64(), r.u64(), r.array32(), r.take(r.remaining))
+            topic.contentEquals(EXECUTED_TOPIC) -> CallEvent.Executed(r.array32(), r.u64(), r.array32())
+            topic.contentEquals(CANCELLED_TOPIC) -> CallEvent.Cancelled(r.array32(), r.u64())
+            else -> return@tryDecode null
+        }
+        r.end()
+        event
+    }
 
     /** A fee payment's effect: a transfer of nothing to the program's own account, which only carries the fee. */
     fun feeEffect(program: ByteArray): Coin.Effect = Coin.Effect.Transfer(contractAccount(program), BigInteger.ZERO)
@@ -421,4 +440,28 @@ private fun strictUtf8(bytes: ByteArray): String? {
         return null
     }
     return if (utf8(text).contentEquals(bytes)) text else null
+}
+
+/** An event a program emits for an account's operation (TCR-1.md: events). */
+@Serializable
+sealed class CallEvent : ByContent() {
+    abstract val account: ByteArray
+    abstract val sequence: Long
+
+    /** The operation waits until `executeAt`; `template` is its template's hash. */
+    @Serializable @SerialName("scheduled")
+    class Scheduled(override val account: ByteArray, override val sequence: Long, val executeAt: Long, val template: ByteArray, val values: ByteArray) : CallEvent()
+
+    /** The operation took effect, at once or when its run came. */
+    @Serializable @SerialName("executed")
+    class Executed(override val account: ByteArray, override val sequence: Long, val operation: ByteArray) : CallEvent()
+
+    @Serializable @SerialName("cancelled")
+    class Cancelled(override val account: ByteArray, override val sequence: Long) : CallEvent()
+
+    override fun toString(): String = when (this) {
+        is Scheduled -> "Scheduled(account=${account.hex()}, sequence=$sequence, executeAt=$executeAt, template=${template.hex()}, values=${values.hex()})"
+        is Executed -> "Executed(account=${account.hex()}, sequence=$sequence, operation=${operation.hex()})"
+        is Cancelled -> "Cancelled(account=${account.hex()}, sequence=$sequence)"
+    }
 }

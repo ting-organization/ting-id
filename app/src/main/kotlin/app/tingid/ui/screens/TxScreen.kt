@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.navigation.NavHostController
 import app.tingid.chain.Id
+import app.tingid.chain.Tcr
 import app.tingid.chain.TransactionLookup
 import app.tingid.chain.equal
 import app.tingid.chain.formatAmount
@@ -246,6 +247,7 @@ fun TxScreen(route: TxRoute) {
                     val registry = w.info?.canonical?.registry
                     events.forEachIndexed { i, e ->
                         val identity = if (e.coin == null && registry != null && equal(e.contract, registry)) Id.decodeEvent(e.payload) else null
+                        val call = if (e.coin == null && identity == null) Tcr.decodeEvent(e.payload) else null
                         val item = ActivityItem(
                             height = occurrence.height,
                             time = 0,
@@ -253,9 +255,10 @@ fun TxScreen(route: TxRoute) {
                             contract = e.contract,
                             coin = e.coin,
                             identity = identity,
+                            call = call,
                             fee = isFeeEvent(events, i),
                         )
-                        val d = if (item.coin != null || item.identity != null) describeActivity(item, w.coinById, w.names, mine, w.advanced) else null
+                        val d = if (item.coin != null || item.identity != null || item.call != null) describeActivity(item, w.coinById, w.names, mine, w.advanced) else null
                         val (bg, fg) = toneColors(d?.tone?.let(::toneOf) ?: Tone.Neutral)
                         if (i > 0) Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
                         Row(

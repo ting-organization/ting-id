@@ -6,6 +6,7 @@ package app.tingid.state
 
 import app.tingid.chain.BlockEvents
 import app.tingid.chain.ChainApi
+import app.tingid.chain.equal
 import app.tingid.chain.hex
 import app.tingid.chain.sha256
 import app.tingid.chain.utf8
@@ -265,6 +266,7 @@ class ActivityFilter(
     val coins: List<ByteArray>,
     /** Only events touching these accounts; every account of the scope when null. */
     val accounts: List<ByteArray>? = null,
+    /** Identity events, and program calls that moved no coin, belong. */
     val identity: Boolean,
 )
 
@@ -298,8 +300,15 @@ class ActivityList internal constructor(
         val coins = filter.coins.map { it.hex() }.toSet()
         val all = (s?.activity ?: emptyList()).filter { item ->
             val coin = item.coin
+            val call = item.call
             when {
                 item.identity != null -> filter.identity
+                // A program call shows in the lists of the coins it moved, its fee's too.
+                call != null -> {
+                    val moved = (item.paid + item.fees).map { it.contract.hex() }
+                    (filter.accounts == null || filter.accounts.any { equal(it, call.account) }) &&
+                        if (moved.isEmpty()) filter.identity else moved.any { it in coins }
+                }
                 coin == null || item.contract.hex() !in coins -> false
                 else -> filter.accounts == null || touches(coin, filter.accounts, emptyList())
             }

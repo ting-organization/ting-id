@@ -1,6 +1,7 @@
 // History rows name the other account, show its address beside a name, and say what a scheduled action did.
 package app.tingid.text
 
+import app.tingid.chain.CallEvent
 import app.tingid.chain.Coin
 import app.tingid.chain.Id
 import app.tingid.chain.NodeHealth
@@ -91,6 +92,24 @@ class DescribeActivityTest {
             listOf(f.me),
         )
         assertEquals("Send 5 DLR to Bob", d.detail)
+    }
+
+    @Test
+    fun `a program call reads as one, by the program's ID, with what it paid`() {
+        val program = filled(0x55)
+        fun call(event: CallEvent, paid: List<FeePaid> = emptyList(), run: Boolean = false) =
+            describeActivity(ActivityItem(1, 0, "01", program, call = event, paid = paid, run = run, fees = listOf(FeePaid(f.contract, f.big(1)))), f.coins, f.names, listOf(f.me), now = 1000)
+        val d = call(CallEvent.Executed(f.me, 0, filled(9)), listOf(FeePaid(f.contract, f.big(400_000))))
+        assertEquals("Program call", d.title)
+        assertEquals(Icon.Program, d.icon)
+        assertNull(d.party)
+        assertEquals("−40 DLR", d.amount)
+        assertEquals("from 11111111…111111 · program 555555…5555 · fee 0.0001 DLR", d.detail)
+        assertEquals("Program call ran", call(CallEvent.Executed(f.bob, 1, filled(9)), run = true).title)
+        val waiting = call(CallEvent.Scheduled(f.bob, 1, 1000 + 7 * 86_400, filled(7), ByteArray(0)))
+        assertEquals("Program call scheduled", waiting.title)
+        assertEquals("from Bob · program 555555…5555 · runs in 7 d · fee 0.0001 DLR", waiting.detail)
+        assertEquals(Icon.Program, call(CallEvent.Cancelled(f.bob, 1)).icon)
     }
 
     @Test

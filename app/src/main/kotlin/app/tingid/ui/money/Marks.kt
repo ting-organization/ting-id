@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Hardware
 import androidx.compose.material.icons.outlined.HourglassEmpty
@@ -75,6 +76,7 @@ fun iconOf(icon: Icon): ImageVector = when (icon) {
     Icon.Checkmark -> Icons.Outlined.Check
     Icon.Refresh -> Icons.Outlined.Refresh
     Icon.AlertCircle -> Icons.Outlined.ErrorOutline
+    Icon.Program -> Icons.Outlined.Extension
 }
 
 /** A line's tone as the texts give it (text.Tone), as the components take it. */
