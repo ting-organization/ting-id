@@ -3,6 +3,8 @@
 // front, links from other apps, and the lock.
 package app.tingid.ui
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -138,7 +140,13 @@ private fun Main(services: Services, activity: MainActivity) {
     CompositionLocalProvider(LocalNav provides nav, LocalNotices provides { Notices() }) {
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
-                NavHost(nav, startDestination = WalletTab) {
+                // Screens change at once: navigation's default fades each one in and out.
+                NavHost(
+                    nav,
+                    startDestination = WalletTab,
+                    enterTransition = { EnterTransition.None },
+                    exitTransition = { ExitTransition.None },
+                ) {
                     composable<WalletTab> { WalletScreen() }
                     composable<SendTab> { SendScreen(it.toRoute()) }
                     composable<CoinsTab> { CoinsScreen() }
