@@ -6,8 +6,11 @@ package app.tingid.state
 
 import app.tingid.chain.BlockEvents
 import app.tingid.chain.ByContent
+import app.tingid.chain.CallEvent
 import app.tingid.chain.Coin
 import app.tingid.chain.Id
+import app.tingid.chain.Tcr
+import app.tingid.chain.contractAccount
 import app.tingid.chain.equal
 import app.tingid.chain.hex
 import app.tingid.chain.isHex
@@ -52,8 +55,8 @@ data class SavedScan(
     val items: List<SavedItem>,
 ) {
     companion object {
-        /** The saved form this version reads; an older one, saved without times, is read again from the chain. */
-        const val VERSION = 2
+        /** The saved form this version reads; an older one, saved without times or program calls, is read again from the chain. */
+        const val VERSION = 3
     }
 }
 
@@ -84,8 +87,9 @@ fun touches(event: Id.Event, @Suppress("UNUSED_PARAMETER") accounts: List<ByteAr
 
 /**
  * The events of some blocks that touch the scope: identity events of the
- * registry, and events of any contract that read as coin events, so a coin the
- * user does not follow yet is found too. A zero transfer of an account to
+ * registry, and events of any contract that read as a program's call events
+ * (TCR-1.md) or coin events, so a program or coin the user does not follow is
+ * found too. A zero transfer of an account to
  * itself only carries a fee bound to a batch and is left out. Each keeps its
  * block's time.
  */
@@ -97,6 +101,11 @@ fun matchBlocks(blocks: List<BlockEvents>, scope: ScanScope): List<SavedItem> {
             if (equal(e.contract, scope.registry)) {
                 val ev = Id.decodeEvent(e.payload)
                 if (ev != null && touches(ev, scope.accounts, scope.ids)) out.add(item(false))
+                continue
+            }
+            val call = Tcr.decodeEvent(e.payload)
+            if (call != null) {
+                if (scope.accounts.has(call.account)) out.add(item(false))
                 continue
             }
             val ev = Coin.decodeEvent(e.payload) ?: continue
@@ -152,15 +161,16 @@ fun trimmed(scan: SavedScan, keep: Int): SavedScan {
 
 /**
  * Saved items as activity, newest first, with each scheduled action marked
- * when a later event ran or cancelled it. A fee joins the other event of its
- * transaction, the one it paid for; only a fee paid for nothing else shown
- * stays an item of its own.
+ * when a later event ran or cancelled it. A program call takes in what its
+ * account burned or paid into the program in its transaction, which shows as
+ * part of the call rather than as payments of their own. A fee joins the other
+ * event of its transaction, the one it paid for; only a fee paid for nothing
+ * else shown stays an item of its own.
  */
 fun activityOf(items: List<SavedItem>, registry: ByteArray): List<ActivityItem> {
     val out = ArrayList<ActivityItem>()
     // Items are values: a later event marks an earlier one by its place in `out`.
     val scheduled = HashMap<String, Int>()
-    fun actionKey(contract: String, account: ByteArray, sequence: Long) = "$contract:${account.hex()}:$sequence"
     val registryHex = registry.hex()
     for (saved in items) {
         val contract = unhex(saved.contract)
@@ -170,43 +180,82 @@ fun activityOf(items: List<SavedItem>, registry: ByteArray): List<ActivityItem> 
             if (identity != null) out.add(ActivityItem(saved.height, saved.time, saved.transaction, contract, identity = identity))
             continue
         }
-        val ev = Coin.decodeEvent(payload) ?: continue
-        var item = ActivityItem(saved.height, saved.time, saved.transaction, contract, coin = ev, fee = saved.fee)
-        if (ev is Coin.Event.Scheduled) scheduled[actionKey(saved.contract, ev.account, ev.sequence)] = out.size
-        val settled = when (ev) {
-            is Coin.Event.Executed -> Settled.Executed to actionKey(saved.contract, ev.account, ev.sequence)
-            is Coin.Event.Cancelled -> Settled.Cancelled to actionKey(saved.contract, ev.account, ev.sequence)
-            else -> null
-        }
-        if (settled != null) {
-            val at = scheduled[settled.second]
-            if (at != null) {
-                val origin = out[at]
-                out[at] = origin.copy(settled = settled.first)
-                (origin.coin as? Coin.Event.Scheduled)?.let { s -> item = item.copy(plan = s.effect) }
-            }
+        val call = Tcr.decodeEvent(payload)
+        val coin = if (call == null) Coin.decodeEvent(payload) ?: continue else null
+        var item = ActivityItem(saved.height, saved.time, saved.transaction, contract, coin = coin, call = call, fee = saved.fee)
+        val (key, settled) = settling(saved.contract, coin, call) ?: (null to null)
+        if (key != null && settled == null) scheduled[key] = out.size
+        val at = key?.let { scheduled[it] }
+        if (settled != null && at != null) {
+            val origin = out[at]
+            out[at] = origin.copy(settled = settled)
+            (origin.coin as? Coin.Event.Scheduled)?.let { s -> item = item.copy(plan = s.effect) }
+            if (origin.call != null) item = item.copy(run = settled == Settled.Executed)
         }
         out.add(item)
     }
+    // Each transfer joins the call of its transaction it was for: its account's, into its program, or any of its account's for a burn.
+    val calls = HashMap<String, MutableList<Int>>()
+    for ((i, item) in out.withIndex()) if (item.call != null) calls.getOrPut(item.transaction) { ArrayList() }.add(i)
+    val paid = HashMap<Int, MutableList<Spent>>()
+    val folded = HashSet<Int>()
+    for ((i, item) in out.withIndex()) {
+        val transfer = item.coin as? Coin.Event.Transfer ?: continue
+        if (item.fee) continue
+        val burn = equal(transfer.to, Coin.ZERO_ACCOUNT)
+        val at = calls[item.transaction]?.firstOrNull { c ->
+            equal(out[c].call!!.account, transfer.from) && (burn || equal(transfer.to, contractAccount(out[c].contract)))
+        } ?: continue
+        // A fee payment moves nothing: it only carries the fee, which joins the call below.
+        if (transfer.amount.signum() > 0) paid.getOrPut(at) { ArrayList() }.add(Spent(item.contract, transfer.from, transfer.amount))
+        folded.add(i)
+    }
     val paidFor = HashMap<String, Int>()
-    for ((i, item) in out.withIndex()) if (!item.fee && item.transaction !in paidFor) paidFor[item.transaction] = i
-    val fees = HashMap<Int, MutableList<FeePaid>>()
+    for ((i, item) in out.withIndex()) if (!item.fee && i !in folded && item.transaction !in paidFor) paidFor[item.transaction] = i
+    val fees = HashMap<Int, MutableList<Spent>>()
     val kept = ArrayList<Int>()
     for ((i, item) in out.withIndex()) {
+        if (i in folded) continue
         val transfer = item.coin as? Coin.Event.Transfer
         val owner = if (item.fee && transfer != null) paidFor[item.transaction] else null
         if (owner == null || transfer == null) {
             kept.add(i)
             continue
         }
-        fees.getOrPut(owner) { ArrayList() }.add(FeePaid(item.contract, transfer.amount))
+        fees.getOrPut(owner) { ArrayList() }.add(Spent(item.contract, transfer.from, transfer.amount))
     }
-    return kept.reversed().map { i -> fees[i]?.let { out[i].copy(fees = out[i].fees + it) } ?: out[i] }
+    return kept.reversed().map { i ->
+        var item = out[i]
+        paid[i]?.let { item = item.copy(paid = it) }
+        fees[i]?.let { item = item.copy(fees = item.fees + it) }
+        item
+    }
+}
+
+/**
+ * For an event that schedules an action or operation, or later runs or cancels
+ * it: the key the two share, and which of the later ones it is (null for the
+ * scheduling). Null for any other event. A program's operations are kept apart
+ * from coin actions, should one contract emit both.
+ */
+private fun settling(contract: String, coin: Coin.Event?, call: CallEvent?): Pair<String, Settled?>? {
+    fun key(account: ByteArray, sequence: Long) = "$contract:${account.hex()}:$sequence"
+    return when {
+        call != null -> "call:${key(call.account, call.sequence)}" to when (call) {
+            is CallEvent.Scheduled -> null
+            is CallEvent.Executed -> Settled.Executed
+            is CallEvent.Cancelled -> Settled.Cancelled
+        }
+        coin is Coin.Event.Scheduled -> key(coin.account, coin.sequence) to null
+        coin is Coin.Event.Executed -> key(coin.account, coin.sequence) to Settled.Executed
+        coin is Coin.Event.Cancelled -> key(coin.account, coin.sequence) to Settled.Cancelled
+        else -> null
+    }
 }
 
 // ---- Saved form ----------------------------------------------------------------
 //
-// `{"v":2,"low":…,"high":…,"tip":"…","items":[[height,transaction,contract,payload,fee,time],…]}`:
+// `{"v":3,"low":…,"high":…,"tip":"…","items":[[height,transaction,contract,payload,fee,time],…]}`:
 // items as arrays, as a scan keeps up to a thousand of them.
 
 fun encodeScan(scan: SavedScan): String = buildJsonObject {

@@ -3,10 +3,13 @@
 package app.tingid.state
 
 import app.tingid.chain.BlockEvents
+import app.tingid.chain.CallEvent
 import app.tingid.chain.Coin
 import app.tingid.chain.Id
 import app.tingid.chain.ReceiptEvent
+import app.tingid.chain.Tcr
 import app.tingid.chain.Writer
+import app.tingid.chain.contractAccount
 import app.tingid.chain.filled
 import app.tingid.chain.hex
 import kotlinx.coroutines.CancellationException
@@ -15,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -48,6 +52,10 @@ internal object ScanFixture {
     }
     fun executed(account: ByteArray, sequence: Long) = Writer().put(Coin.EXECUTED_TOPIC).put(account).u64(sequence).finish()
     fun created(id: ByteArray) = Writer().put(Id.CREATED_TOPIC).put(id).finish()
+
+    val PROGRAM = filled(0xd0)
+    fun callScheduled(account: ByteArray, sequence: Long) = Writer().put(Tcr.SCHEDULED_TOPIC).put(account).u64(sequence).u64(2000).put(filled(0x7e)).put(byteArrayOf(1, 2)).finish()
+    fun callExecuted(account: ByteArray, sequence: Long) = Writer().put(Tcr.EXECUTED_TOPIC).put(account).u64(sequence).put(filled(0x0e)).finish()
 
     /** An event of `contract`, of transaction `tx` (`t<height>` when null). */
     class E(val contract: ByteArray, val payload: ByteArray, val tx: String? = null)
@@ -184,11 +192,148 @@ class ScanTest {
     }
 
     @Test
-    fun `keeps the time of each block, and reads again a scan saved without times`() {
+    fun `keeps the program calls of the scope's accounts, from any program`() {
+        val items = matchBlocks(
+            listOf(
+                f.block(
+                    6,
+                    listOf(
+                        e(f.PROGRAM, f.callExecuted(f.ME, 0)),
+                        e(f.PROGRAM, f.callExecuted(f.STRANGER, 0)),
+                        e(filled(0xd1), f.callScheduled(f.SAVINGS, 0)),
+                    ),
+                ),
+            ),
+            f.scope,
+        )
+        assertEquals(listOf("d0", "d1"), items.map { it.contract.take(2) })
+    }
+
+    @Test
+    fun `a program call takes in what its account burned or paid into the program, and its fee`() {
+        val into = contractAccount(f.PROGRAM)
+        val items = matchBlocks(
+            listOf(
+                f.block(
+                    6,
+                    listOf(
+                        e(f.COIN, f.transfer(f.ME, Coin.ZERO_ACCOUNT, 40), "paint"),
+                        e(f.COIN, f.transfer(f.ME, filled(5), 1), "paint"),
+                        e(f.COIN, f.payment(filled(5), 1), "paint"),
+                        e(f.PROGRAM, f.callExecuted(f.ME, 0), "paint"),
+                        // A payment into the program, and one to someone else that stays a payment.
+                        e(f.COIN, f.transfer(f.ME, into, 7), "bid"),
+                        e(f.COIN, f.transfer(f.ME, f.STRANGER, 3), "bid"),
+                        e(f.PROGRAM, f.callExecuted(f.ME, 1), "bid"),
+                        // A fee payment moves nothing, and its fee joins the call.
+                        e(f.COIN, f.transfer(f.ME, into, 0), "name"),
+                        e(f.COIN, f.transfer(f.ME, filled(5), 2), "name"),
+                        e(f.COIN, f.payment(filled(5), 2), "name"),
+                        e(f.PROGRAM, f.callExecuted(f.ME, 2), "name"),
+                        // What comes back from the program is received.
+                        e(f.COIN, f.transfer(into, f.ME, 7), "refund"),
+                    ),
+                ),
+            ),
+            f.scope,
+        )
+        assertEquals(
+            listOf<List<Any>>(
+                listOf("refund", "Transfer", emptyList<BigInteger>(), emptyList<BigInteger>()),
+                listOf("name", "Executed", emptyList<BigInteger>(), listOf(f.big(2))),
+                listOf("bid", "Executed", listOf(f.big(7)), emptyList<BigInteger>()),
+                listOf("bid", "Transfer", emptyList<BigInteger>(), emptyList<BigInteger>()),
+                listOf("paint", "Executed", listOf(f.big(40)), listOf(f.big(1))),
+            ),
+            activityOf(items, f.REGISTRY).map {
+                listOf(it.transaction, (it.call ?: it.coin)!!::class.simpleName, it.paid.map { p -> p.amount }, it.fees.map { fee -> fee.amount })
+            },
+        )
+    }
+
+    @Test
+    fun `marks a program's scheduled operation that a later block ran, and the run`() {
+        val scan = addOlder(
+            emptyScan(4),
+            listOf(
+                f.block(1, listOf(e(f.PROGRAM, f.callScheduled(f.SAVINGS, 0)))),
+                f.block(2, listOf(e(f.PROGRAM, f.callScheduled(f.SAVINGS, 1)))),
+                f.block(3, listOf(e(f.PROGRAM, f.callExecuted(f.SAVINGS, 0)))),
+                // A coin's action of the same sequence is another thing.
+                f.block(4, listOf(e(f.COIN, f.executed(f.SAVINGS, 1)))),
+            ),
+            f.scope,
+        )
+        assertEquals(
+            listOf(listOf(4L, false, null), listOf(3L, true, null), listOf(2L, false, null), listOf(1L, false, Settled.Executed)),
+            activityOf(scan.items, f.REGISTRY).map { listOf(it.height, it.run, it.settled) },
+        )
+    }
+
+    @Test
+    fun `a program call shows in the lists of the coins it moved, and one that moved none in the wallet's`() = runBlocking {
+        val paint = ActivityItem(1, 0, "paint", f.PROGRAM, call = CallEvent.Executed(f.ME, 0, filled(0x0e)), paid = listOf(Spent(f.COIN, f.ME, f.big(40))))
+        val run = ActivityItem(2, 0, "run", f.PROGRAM, call = CallEvent.Executed(f.SAVINGS, 1, filled(0x0e)), run = true)
+        val states = flowOf(Scan.State(null, true, false, listOf(run, paint)))
+        suspend fun shown(filter: ActivityFilter) = ActivityList(null, states, flowOf(null), filter).page.first().items.map { it.transaction }
+        assertEquals(listOf("run", "paint"), shown(ActivityFilter(listOf(f.COIN), identity = true)))
+        assertEquals(listOf("paint"), shown(ActivityFilter(listOf(f.COIN), listOf(f.ME, f.SAVINGS), identity = false)))
+        assertEquals(emptyList<String>(), shown(ActivityFilter(listOf(f.OTHER_COIN), listOf(f.ME), identity = false)))
+        assertEquals(emptyList<String>(), shown(ActivityFilter(listOf(f.COIN), listOf(f.SAVINGS), identity = false)))
+    }
+
+    @Test
+    fun `a call another account paid the fee of shows in that account's list, with only that fee`() = runBlocking {
+        // Savings's call, its fee paid by Spending (ME) through a batch.
+        val call = ActivityItem(1, 0, "name", f.PROGRAM, call = CallEvent.Executed(f.SAVINGS, 0, filled(0x0e)), fees = listOf(Spent(f.COIN, f.ME, f.big(2))))
+        val states = flowOf(Scan.State(null, true, false, listOf(call)))
+        suspend fun shown(filter: ActivityFilter) = ActivityList(null, states, flowOf(null), filter).page.first().items
+        val spending = shown(ActivityFilter(listOf(f.COIN), listOf(f.ME), identity = false))
+        assertEquals(listOf(listOf(f.big(2))), spending.map { it.fees.map { fee -> fee.amount } })
+        // Savings moved none of the coin.
+        assertEquals(emptyList<ActivityItem>(), shown(ActivityFilter(listOf(f.COIN), listOf(f.SAVINGS), identity = false)))
+        assertEquals(listOf(listOf(f.big(2))), shown(ActivityFilter(listOf(f.COIN), identity = true)).map { it.fees.map { fee -> fee.amount } })
+        // A coin row of Savings's keeps no fee Spending paid.
+        val withdrawal = ActivityItem(2, 0, "w", f.COIN, coin = Coin.Event.Executed(f.SAVINGS, 3), fees = listOf(Spent(f.COIN, f.ME, f.big(1))))
+        val rows = ActivityList(null, flowOf(Scan.State(null, true, false, listOf(withdrawal))), flowOf(null), ActivityFilter(listOf(f.COIN), listOf(f.SAVINGS), identity = false))
+        assertEquals(listOf(emptyList<Spent>()), rows.page.first().items.map { it.fees })
+    }
+
+    @Test
+    fun `each transfer joins the call of its transaction it was for`() {
+        val other = filled(0xd1)
+        val items = matchBlocks(
+            listOf(
+                f.block(
+                    7,
+                    listOf(
+                        // Savings's run comes first in the batch; Spending's burn and payment are for Spending's calls.
+                        e(f.PROGRAM, f.callExecuted(f.SAVINGS, 4), "batch"),
+                        e(f.COIN, f.transfer(f.ME, Coin.ZERO_ACCOUNT, 40), "batch"),
+                        e(f.PROGRAM, f.callExecuted(f.ME, 0), "batch"),
+                        e(f.COIN, f.transfer(f.ME, contractAccount(other), 7), "batch"),
+                        e(other, f.callExecuted(f.ME, 0), "batch"),
+                    ),
+                ),
+            ),
+            f.scope,
+        )
+        assertEquals(
+            listOf<List<Any>>(
+                listOf("d1", listOf(f.big(7))),
+                listOf("d0", listOf(f.big(40))),
+                listOf("d0", emptyList<BigInteger>()),
+            ),
+            activityOf(items, f.REGISTRY).map { listOf(it.contract.hex().take(2), it.paid.map { p -> p.amount }) },
+        )
+    }
+
+    @Test
+    fun `keeps the time of each block, and reads again a scan saved by an older version`() {
         val items = matchBlocks(listOf(f.block(8, listOf(e(f.COIN, f.transfer(f.STRANGER, f.ME, 1)))), f.block(9, listOf(e(f.COIN, f.transfer(f.STRANGER, f.ME, 2))))), f.scope)
         assertEquals(listOf(listOf(9L, 1_792_000_540L), listOf(8L, 1_792_000_480L)), activityOf(items, f.REGISTRY).map { listOf(it.height, it.time) })
         assertNotNull(decodeScan(encodeScan(emptyScan(9))))
-        assertNull(decodeScan(encodeScan(emptyScan(9)).replace("\"v\":2", "\"v\":1")))
+        assertNull(decodeScan(encodeScan(emptyScan(9)).replace("\"v\":3", "\"v\":2")))
     }
 
     @Test

@@ -10,6 +10,7 @@ import app.tingid.chain.NodeError
 import app.tingid.chain.NodeStatus
 import app.tingid.chain.ReceiptEvent
 import app.tingid.chain.Scheme
+import app.tingid.chain.Tcr
 import app.tingid.chain.Writer
 import app.tingid.chain.filled
 import app.tingid.chain.hex
@@ -134,12 +135,23 @@ class CoinsTest {
         app.node.record(tin, Coin.STATE_KEY, state())
         app.node.record(tin, savings, account(9))
         app.node.events[4] = listOf(ReceiptEvent(tin, Writer().put(Coin.TRANSFER_TOPIC).put(filled(9)).put(savings).u128(big(9)).finish(), "t4"))
+        // So is one whose only event is a burn a program call took in.
+        val zinc = filled(0x63)
+        val program = filled(0xd0)
+        app.node.code[zinc.hex()] = Contracts.codeHash(ContractName.Coin)
+        app.node.record(zinc, Coin.CONFIG_KEY, config("Zinc", "ZN", 0))
+        app.node.record(zinc, Coin.STATE_KEY, state())
+        app.node.record(zinc, me, account(3))
+        app.node.events[4] = app.node.events[4]!! + listOf(
+            ReceiptEvent(zinc, Writer().put(Coin.TRANSFER_TOPIC).put(me).put(Coin.ZERO_ACCOUNT).u128(big(1)).finish(), "t5"),
+            ReceiptEvent(program, Writer().put(Tcr.EXECUTED_TOPIC).put(me).u64(0).put(filled(0x0e)).finish(), "t5"),
+        )
         val scope = ScanScope(unhex("aa".repeat(32)), filled(0xee), accounts.map { it.account }, emptyList())
-        val found = app.coins.discovered(scope, accounts, excluded = listOf(gold.hex())).firstThat { it.isNotEmpty() }
-        assertEquals(listOf("Tin"), found.map { it.info.config.name })
+        val found = app.coins.discovered(scope, accounts, excluded = listOf(gold.hex())).firstThat { it.size == 2 }
+        assertEquals(listOf("Tin", "Zinc"), found.map { it.info.config.name })
         assertEquals(big(9), found[0].total)
         // Once followed, it is no longer found.
-        assertEquals(emptyList<Discovered>(), app.coins.discovered(scope, accounts, excluded = listOf(gold.hex(), tin.hex())).first())
+        assertEquals(emptyList<Discovered>(), app.coins.discovered(scope, accounts, excluded = listOf(gold.hex(), tin.hex(), zinc.hex())).first())
     }
 
     @Test

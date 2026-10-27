@@ -249,6 +249,8 @@ class TcrVectorsTest {
         assertEquals(s.getValue("event").text, (Tcr.SCHEDULED_TOPIC + account + u64le(sequence) + u64le(executeAt) + t.hash + values).hex())
         assertEquals(s.getValue("run").text, Tcr.runInput(account, sequence).hex())
         assertEquals(s.getValue("executed").text, (Tcr.EXECUTED_TOPIC + account + u64le(sequence) + Tcr.operationHash(t.hash, values)).hex())
+        assertEquals(CallEvent.Scheduled(account, sequence, executeAt, t.hash, values), Tcr.decodeEvent(s.getValue("event").bytes))
+        assertEquals(CallEvent.Executed(account, sequence, Tcr.operationHash(t.hash, values)), Tcr.decodeEvent(s.getValue("executed").bytes))
 
         val c = tcr.getValue("cancel").jsonObject
         val policy = c.getValue("policy").bytes
@@ -262,6 +264,7 @@ class TcrVectorsTest {
         assertEquals(c.getValue("digest").text, signingDigest(message).hex())
         assertEquals(c.getValue("input").text, Tcr.cancelInput(policy, params, validUntil, c.getValue("witness").bytes, sequences).hex())
         assertEquals(c.getValue("cancelled").jsonArray.map { it.text }, sequences.map { (Tcr.CANCELLED_TOPIC + canceller + u64le(it)).hex() })
+        assertEquals(sequences.map { CallEvent.Cancelled(canceller, it) }, c.getValue("cancelled").jsonArray.map { Tcr.decodeEvent(it.bytes) })
     }
 
     @Test

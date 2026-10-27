@@ -6,6 +6,7 @@ package app.tingid.state
 
 import app.tingid.chain.BlockEvents
 import app.tingid.chain.ChainApi
+import app.tingid.chain.equal
 import app.tingid.chain.hex
 import app.tingid.chain.sha256
 import app.tingid.chain.utf8
@@ -265,6 +266,7 @@ class ActivityFilter(
     val coins: List<ByteArray>,
     /** Only events touching these accounts; every account of the scope when null. */
     val accounts: List<ByteArray>? = null,
+    /** Identity events, and program calls that moved no coin, belong. */
     val identity: Boolean,
 )
 
@@ -296,12 +298,26 @@ class ActivityList internal constructor(
 
     val page: Flow<ActivityPage> = combine(states, shown, heights) { s, n, height ->
         val coins = filter.coins.map { it.hex() }.toSet()
-        val all = (s?.activity ?: emptyList()).filter { item ->
+        val accounts = filter.accounts
+        fun ours(account: ByteArray) = accounts == null || accounts.any { equal(it, account) }
+        val all = (s?.activity ?: emptyList()).mapNotNull { item ->
+            // A list of some accounts shows only the fees they paid, and
+            // shows a program call of another account when they paid its fee.
+            val fees = item.fees.filter { ours(it.from) }
+            val feeHere = fees.any { it.contract.hex() in coins }
             val coin = item.coin
+            val call = item.call
             when {
-                item.identity != null -> filter.identity
-                coin == null || item.contract.hex() !in coins -> false
-                else -> filter.accounts == null || touches(coin, filter.accounts, emptyList())
+                item.identity != null -> item.takeIf { filter.identity }
+                // A program call shows in the lists of the coins it moved, its fee's too.
+                call != null -> {
+                    val paid = if (ours(call.account)) item.paid else emptyList()
+                    val moved = (paid + fees).map { it.contract.hex() }
+                    val shown = (ours(call.account) || feeHere) && if (moved.isEmpty()) filter.identity else moved.any { it in coins }
+                    item.copy(paid = paid, fees = fees).takeIf { shown }
+                }
+                coin == null || item.contract.hex() !in coins -> null
+                else -> item.copy(fees = fees).takeIf { accounts == null || touches(coin, accounts, emptyList()) }
             }
         }
         found = all.size

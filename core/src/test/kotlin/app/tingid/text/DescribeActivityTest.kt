@@ -1,6 +1,7 @@
 // History rows name the other account, show its address beside a name, and say what a scheduled action did.
 package app.tingid.text
 
+import app.tingid.chain.CallEvent
 import app.tingid.chain.Coin
 import app.tingid.chain.Id
 import app.tingid.chain.NodeHealth
@@ -12,7 +13,7 @@ import app.tingid.chain.filled
 import app.tingid.chain.hex
 import app.tingid.state.ActivityItem
 import app.tingid.state.CoinInfo
-import app.tingid.state.FeePaid
+import app.tingid.state.Spent
 import app.tingid.state.Watch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -94,9 +95,31 @@ class DescribeActivityTest {
     }
 
     @Test
+    fun `a program call reads as one, by the program's ID, with what it paid`() {
+        val program = filled(0x55)
+        fun call(event: CallEvent, paid: List<Spent> = emptyList(), run: Boolean = false) =
+            describeActivity(ActivityItem(1, 0, "01", program, call = event, paid = paid, run = run, fees = listOf(Spent(f.contract, f.me, f.big(1)))), f.coins, f.names, listOf(f.me), now = 1000)
+        val d = call(CallEvent.Executed(f.me, 0, filled(9)), listOf(Spent(f.contract, f.me, f.big(400_000))))
+        assertEquals("Program call", d.title)
+        assertEquals(Icon.Program, d.icon)
+        assertNull(d.party)
+        assertEquals("−40 DLR", d.amount)
+        assertEquals("from 11111111…111111 · program 555555…5555 · fee 0.0001 DLR", d.detail)
+        assertEquals("Program call ran", call(CallEvent.Executed(f.bob, 1, filled(9)), run = true).title)
+        val waiting = call(CallEvent.Scheduled(f.bob, 1, 1000 + 7 * 86_400, filled(7), ByteArray(0)))
+        assertEquals("Program call scheduled", waiting.title)
+        assertEquals("from Bob · program 555555…5555 · runs in 7 d · fee 0.0001 DLR", waiting.detail)
+        assertEquals(Icon.Program, call(CallEvent.Cancelled(f.bob, 1)).icon)
+        // Each coin's amount summed, each with its sign.
+        val other = filled(0x66)
+        val two = call(CallEvent.Executed(f.me, 0, filled(9)), listOf(Spent(f.contract, f.me, f.big(10_000)), Spent(other, f.me, f.big(3)), Spent(f.contract, f.me, f.big(20_000))))
+        assertEquals("−3 DLR, −3", two.amount)
+    }
+
+    @Test
     fun `a fee its transaction paid joins the detail`() {
         val d = describeActivity(
-            ActivityItem(1, 0, "01", f.contract, coin = Coin.Event.Transfer(f.me, f.bob, f.big(50_000)), fees = listOf(FeePaid(f.contract, f.big(1)))),
+            ActivityItem(1, 0, "01", f.contract, coin = Coin.Event.Transfer(f.me, f.bob, f.big(50_000)), fees = listOf(Spent(f.contract, f.me, f.big(1)))),
             f.coins,
             f.names,
             listOf(f.me),

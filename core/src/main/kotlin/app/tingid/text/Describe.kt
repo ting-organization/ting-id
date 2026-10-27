@@ -3,6 +3,7 @@
 package app.tingid.text
 
 import app.tingid.chain.CONFIRMATIONS
+import app.tingid.chain.CallEvent
 import app.tingid.chain.Coin
 import app.tingid.chain.Id
 import app.tingid.chain.NodeHealth
@@ -59,6 +60,7 @@ enum class Icon(val ionicon: String) {
     Checkmark("checkmark-outline"),
     Refresh("refresh-outline"),
     AlertCircle("alert-circle-outline"),
+    Program("extension-puzzle-outline"),
 }
 
 fun nameOf(names: Names, account: ByteArray): String = names[account.hex()] ?: shortId(account, 8, 6)
@@ -230,6 +232,7 @@ fun describeActivity(item: ActivityItem, coins: Map<String, CoinInfo>, names: Na
 
 private fun describeEvent(item: ActivityItem, coins: Map<String, CoinInfo>, names: Names, mine: List<ByteArray>, advanced: Boolean, now: Long): Described {
     fun isMine(a: ByteArray) = mine.any { equal(it, a) }
+    item.call?.let { return describeCall(item, it, coins, names, now) }
     val e = item.coin
     if (e != null) {
         val c = coins[item.contract.hex()]
@@ -364,6 +367,29 @@ private fun describeEvent(item: ActivityItem, coins: Map<String, CoinInfo>, name
             icon = Icon.Shield,
         )
         is Id.Event.Recovered -> Described("Identity recovered", "keys replaced", Tone.Accent, Icon.RefreshCircle)
+    }
+}
+
+/**
+ * A program's call for one of the user's accounts, by the program's ID: the
+ * program has no name Ting ID could trust. What the call burned or paid is its
+ * amount.
+ */
+private fun describeCall(item: ActivityItem, e: CallEvent, coins: Map<String, CoinInfo>, names: Names, now: Long): Described {
+    val where = "from ${nameOf(names, e.account)} · program ${shortId(item.contract)}"
+    val paid = item.paid.groupBy { it.contract.hex() }
+        .map { (coin, spent) -> "−" + amount(coins[coin], spent.fold(BigInteger.ZERO) { sum, s -> sum + s.amount }) }
+        .takeIf { it.isNotEmpty() }?.joinToString(", ")
+    return when (e) {
+        is CallEvent.Executed ->
+            if (item.run) Described("Program call ran", where, Tone.Success, Icon.Program, amount = paid)
+            else Described("Program call", where, Tone.Primary, Icon.Program, amount = paid)
+        is CallEvent.Scheduled -> when (item.settled) {
+            Settled.Executed -> Described("Program call scheduled", "$where · ran", Tone.Neutral, Icon.Program, amount = paid)
+            Settled.Cancelled -> Described("Program call scheduled", "$where · cancelled", Tone.Neutral, Icon.Program, amount = paid)
+            null -> Described("Program call scheduled", "$where · runs ${relativeTime(e.executeAt, now)}", Tone.Warning, Icon.Program, amount = paid)
+        }
+        is CallEvent.Cancelled -> Described("Program call cancelled", where, Tone.Neutral, Icon.Program)
     }
 }
 
