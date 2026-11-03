@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.Check
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.PanTool
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Shield
@@ -45,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -111,6 +114,7 @@ import app.tingid.ui.ProposeRoute
 import app.tingid.ui.RecoveryRoute
 import app.tingid.ui.Screen
 import app.tingid.ui.SectionHeader
+import app.tingid.ui.Sheet
 import app.tingid.ui.Spacing
 import app.tingid.ui.StatTile
 import app.tingid.ui.Sub
@@ -278,6 +282,9 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
     val pendingKey = deviceKey != null && id != null &&
         id.pending.any { pc -> pc.record.operations.any { it is Id.Operation.AddKey && equal(it.key.params, unhex(deviceKey.pub)) } }
     val propose = { route: ProposeRoute -> nav.navigate(route) }
+    // The code that links this identity as someone's guardian, once it is on chain for them to find.
+    val guardianLink = if (id != null && info != null) Links.encode(Link.Guardian(Links.netOf(info.status.chainId), id.id.hex(), Links.linkText(user.name))) else null
+    var showingCode by remember { mutableStateOf(false) }
 
     val header: @Composable () -> Unit = {
         InkHeader {
@@ -310,7 +317,10 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
                     }
                 }
             }
-            IdChip(user.identityId ?: "", label = "ID", light = true)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                IdChip(user.identityId ?: "", label = "ID", light = true)
+                if (guardianLink != null) CodeChip { showingCode = true }
+            }
             if (id != null) {
                 val keyCount = id.core.keyCount
                 val guardianCount = id.core.guardianCount
@@ -363,6 +373,32 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
             if (advanced) TimeLocksSection(id, canAct, propose)
         }
         Spacer(Modifier.height(Spacing.lg))
+    }
+    if (showingCode && guardianLink != null) GuardianCodeSheet(guardianLink) { showingCode = false }
+}
+
+/** Beside the ID in the header: opens the user's guardian code. */
+@Composable
+private fun CodeChip(onClick: () -> Unit) {
+    val p = t
+    Row(
+        Modifier.clip(RoundedCornerShape(999.dp)).background(p.headerRaised).clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(Icons.Outlined.QrCode2, null, tint = p.onHeader, modifier = Modifier.size(14.dp))
+        Text("QR code", style = Type.caption, color = p.onHeader)
+    }
+}
+
+/** The user's guardian code: scanned in Ting ID, it links this identity as the scanner's guardian. */
+@Composable
+private fun GuardianCodeSheet(link: String, onClose: () -> Unit) {
+    Sheet(onClose = onClose, title = "Be a guardian") {
+        Body("Someone who wants you as a guardian scans this with Ting ID: Scan on the wallet, or Guardians → Link on their Identity.", muted = true)
+        LinkShare(link, text = false)
+        Caption("If they ever lose their phone, your approval helps them get their identity back. It moves none of your coins.")
     }
 }
 

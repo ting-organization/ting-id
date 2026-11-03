@@ -42,7 +42,7 @@ fun FirstCoins(user: User, net: String, coin: CoinInfo?) {
     val p = t
     var open by remember { mutableStateOf(false) }
     val creation = user.creation ?: return
-    val link = remember(creation, net, user.name, coin?.hex) { Links.encode(Link.Create(net, unhex(creation), name = user.name, coin = coin?.hex)) }
+    val link = remember(creation, net, user.name, coin?.hex) { Links.encode(Link.Create(net, unhex(creation), name = Links.linkText(user.name), coin = coin?.hex)) }
     val symbol = coin?.config?.symbol ?: "coins"
     Card {
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

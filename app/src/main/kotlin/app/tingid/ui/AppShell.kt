@@ -187,6 +187,7 @@ private fun routeOf(target: LinkTarget, at: Long): Any = when (target) {
     is LinkTarget.Sign -> SignRoute(code = target.code, at = at)
     is LinkTarget.Sponsor -> SponsorRoute(code = target.code, at = at)
     is LinkTarget.AddDevice -> ProposeRoute(kind = "addKey", code = target.code, at = at)
+    is LinkTarget.AddGuardian -> ProposeRoute(kind = "addGuardian", code = target.code, at = at)
     is LinkTarget.HelpRecover -> RecoveryRoute(mode = "help", code = target.code, at = at)
     is LinkTarget.Call -> CallRoute(code = target.code, at = at)
 }

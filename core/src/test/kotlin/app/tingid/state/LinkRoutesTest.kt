@@ -1,5 +1,5 @@
-// Where a Ting link leads: every link from inside the app, only pay, create
-// and sign from outside it.
+// Where a Ting link leads: every link from inside the app, only pay, create,
+// sign and call from outside it.
 package app.tingid.state
 
 import app.tingid.chain.Link
@@ -18,6 +18,7 @@ class LinkRoutesTest {
     private val create = Links.encode(Link.Create(net, byteArrayOf(1, 2, 3)))
     private val sign = "ting:sign?url=https%3A%2F%2Fforum.example%2Fr%2F1"
     private val device = "ting:device?id=$id&scheme=secp256k1&key=0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8&net=$net"
+    private val guardian = Links.encode(Link.Guardian(net, id, "Erik"))
     private val recover = Links.encode(Link.Recover(net, id, byteArrayOf(1)))
 
     @Test
@@ -27,6 +28,7 @@ class LinkRoutesTest {
         assertTrue(LinkRoutes.routeOf(create, inside) is LinkTarget.Sponsor)
         assertTrue(LinkRoutes.routeOf(sign, inside) is LinkTarget.Sign)
         assertTrue(LinkRoutes.routeOf(device, inside) is LinkTarget.AddDevice)
+        assertTrue(LinkRoutes.routeOf(guardian, inside).let { it is LinkTarget.AddGuardian && it.code == guardian })
         assertTrue(LinkRoutes.routeOf(recover, inside) is LinkTarget.HelpRecover)
         assertEquals(pay, LinkRoutes.routeOf("  $pay \n", inside).code)
     }
@@ -43,6 +45,7 @@ class LinkRoutesTest {
         assertTrue(LinkRoutes.fromOutside(create) is LinkTarget.Sponsor)
         assertTrue(LinkRoutes.fromOutside(sign) is LinkTarget.Sign)
         assertNull(LinkRoutes.fromOutside(device))
+        assertNull(LinkRoutes.fromOutside(guardian))
         assertNull(LinkRoutes.fromOutside(recover))
         assertNull(LinkRoutes.fromOutside("https://example.com"))
     }

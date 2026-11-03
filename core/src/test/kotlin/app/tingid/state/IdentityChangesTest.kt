@@ -1,6 +1,6 @@
 // What the identity screens read from a pasted link or a typed threshold:
-// the key or keys it gives, and why one for another network or identity is
-// refused.
+// the key, keys or guardian it gives, and why one for another network or
+// identity is refused.
 package app.tingid.state
 
 import app.tingid.chain.Contracts
@@ -45,6 +45,30 @@ class IdentityChangesTest {
         // Another kind of link, or none, says so.
         assertEquals("this link is a recover link, not a device link", refused(deviceLinkKey(Links.encode(Link.Recover(net, id, byteArrayOf(1))), net, id, "Anna")))
         assertEquals("this is not a Ting link", refused(deviceLinkKey("hello", net, id, "Anna")))
+    }
+
+    @Test
+    fun `a guardian code gives the identity and its name, from a link or an ID on its own`() {
+        val other = "ab".repeat(32)
+        val found = guardianCode("  ${Links.encode(Link.Guardian(net, other, "Erik Holm"))}\n", net, id) as Checked.Ok
+        assertEquals(other, found.value.id)
+        assertEquals("Erik Holm", found.value.name)
+        val bare = guardianCode(" ${other.uppercase()} ", net, id) as Checked.Ok
+        assertEquals(other, bare.value.id)
+        assertNull(bare.value.name)
+        assertNull(guardianCode(" \n", net, id))
+        // Not known yet: neither the network nor the user's own identity is checked.
+        assertTrue(guardianCode(Links.encode(Link.Guardian("00000000", id)), null, null) is Checked.Ok)
+    }
+
+    @Test
+    fun `a guardian code for another network, for the user's own identity, or of another kind is refused`() {
+        assertEquals("this link is for another Ting network", refused(guardianCode(Links.encode(Link.Guardian("00000000", "ab".repeat(32))), net, id)))
+        val own = "this is your own identity: a guardian must be someone else"
+        assertEquals(own, refused(guardianCode(Links.encode(Link.Guardian(net, id, "Me")), net, id.uppercase())))
+        assertEquals(own, refused(guardianCode(id, net, id)))
+        assertEquals("this link is a device link, not a guardian link", refused(guardianCode(Links.encode(Link.Device(net, id, Scheme.Secp256k1, pub)), net, id)))
+        assertEquals("this is not a Ting link", refused(guardianCode("hello", net, id)))
     }
 
     @Test
