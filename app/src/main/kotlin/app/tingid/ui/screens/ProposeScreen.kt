@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -34,6 +35,7 @@ import app.tingid.chain.equal
 import app.tingid.chain.hex
 import app.tingid.chain.isHex
 import app.tingid.chain.nowSeconds
+import app.tingid.chain.shortId
 import app.tingid.chain.trimWhiteSpace
 import app.tingid.chain.unhex
 import app.tingid.state.Checked
@@ -131,33 +133,35 @@ fun ProposeScreen(route: ProposeRoute) {
     // The device link: scanned or pasted on the wallet, or typed here.
     var code by remember { mutableStateOf(route.code?.takeIf { kind == "addKey" } ?: "") }
     var newKeyName by remember { mutableStateOf("") }
-    // A guardian code scanned on the wallet fills in the guardian and its name, or says why it cannot.
-    val scanned = remember { route.code?.takeIf { kind == "addGuardian" }?.let { guardianCode(it, net, me?.id?.hex()) } }
-    var guardian by remember { mutableStateOf(route.id?.takeIf { isHex(it, 32) } ?: (scanned as? Checked.Ok)?.value?.id ?: "") }
+    // The guardian code the chosen guardian came from, scanned on the wallet or here, or pasted; null when it was picked or typed.
+    var fromCode by remember { mutableStateOf(route.code?.takeIf { kind == "addGuardian" }) }
+    // The code read again as the network and the user's identity become known, so a check skipped at first is made then.
+    val guardianCheck = fromCode?.let { guardianCode(it, net, me?.id?.hex()) }
+    // The name the code gives, which is only what its maker says they are called.
+    val codeName = (guardianCheck as? Checked.Ok)?.value?.name
+    var guardian by remember { mutableStateOf(route.id?.takeIf { isHex(it, 32) } ?: (guardianCheck as? Checked.Ok)?.value?.id ?: "") }
     // Why the last guardian code scanned or pasted here was not taken.
-    var codeProblem by remember { mutableStateOf((scanned as? Checked.Refused)?.message) }
+    var codeProblem by remember { mutableStateOf((guardianCheck as? Checked.Refused)?.message) }
     var scanning by remember { mutableStateOf(false) }
     // Whether the guardian to link is an identity on this network; an account pasted by mistake could never approve.
     var guardianFound by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     val guardianId = trimWhiteSpace(guardian).lowercase()
     val registry = info?.canonical?.registry
     // A guardian with no name here is named with the link, as a contact: as its code calls it, unless changed.
-    var guardianName by remember { mutableStateOf((scanned as? Checked.Ok)?.value?.name ?: "") }
+    var guardianName by remember { mutableStateOf(codeName ?: "") }
     val naming = kind == "addGuardian" && guardianFound == (guardianId to true) && identityName(w.names, registry, guardianId) == null
     val newName = guardianName.trim()
     val nameClash = naming && nameTaken(contacts, newName)
-    // The texts here name the guardian as its contact does, also when the contact has only its Spending account, or by the name it is about to get.
-    val guardianKnownAs = if (kind in setOf("addGuardian", "removeGuardian") && isHex(guardianId, 32)) {
-        identityName(w.names, registry, guardianId) ?: newName.takeIf { naming && it.isNotEmpty() && !nameClash }
-    } else {
-        null
-    }
+    // The texts here name the guardian as its contact does, also when the contact has only its Spending account.
+    // Until it is a contact, by its short ID: a name typed or from a code is nothing Ting ID could check.
+    val guardianKnownAs = if (kind in setOf("addGuardian", "removeGuardian") && isHex(guardianId, 32)) identityName(w.names, registry, guardianId) else null
     val withGuardian = { names: Names -> if (guardianKnownAs != null) names + (guardianId to guardianKnownAs) else names }
 
     // Another guardian chosen by hand: a name given for the one before is not theirs.
     fun chooseGuardian(id: String) {
         if (trimWhiteSpace(id).lowercase() != guardianId) guardianName = ""
         guardian = id
+        fromCode = null
         codeProblem = null
     }
 
@@ -166,6 +170,7 @@ fun ProposeScreen(route: ProposeRoute) {
         null -> "nothing to read: copy the link or ID first"
         is Checked.Refused -> c.message
         is Checked.Ok -> {
+            fromCode = text
             guardian = c.value.id
             guardianName = c.value.name ?: ""
             codeProblem = null
@@ -233,12 +238,15 @@ fun ProposeScreen(route: ProposeRoute) {
                 }
             }
             "removeKey" -> keyIdParam?.let { Checked.Ok(Id.Operation.RemoveKey(it)) } ?: no("missing key")
-            "addGuardian" -> when {
-                !isHex(guardianId, 32) -> no("choose a guardian")
-                me != null && guardianId == me.id.hex() -> no("an identity cannot be its own guardian")
-                guardianFound?.first != guardianId -> no("looking the guardian up")
-                guardianFound?.second != true -> no("no identity has that ID on this network: a guardian must be an identity, not an account")
-                else -> Checked.Ok(Id.Operation.AddGuardian(unhex(guardianId)))
+            // A guardian from a code is checked as its code, a typed one as a bare ID: by the same rules either way.
+            "addGuardian" -> when (val chosen = guardianCheck ?: if (isHex(guardianId, 32)) guardianCode(guardianId, net, me?.id?.hex()) else null) {
+                null -> no("choose a guardian")
+                is Checked.Refused -> chosen
+                is Checked.Ok -> when {
+                    guardianFound?.first != guardianId -> no("looking the guardian up")
+                    guardianFound?.second != true -> no("no identity has that ID on this network: a guardian must be an identity, not an account")
+                    else -> Checked.Ok(Id.Operation.AddGuardian(unhex(guardianId)))
+                }
             }
             "removeGuardian" -> if (isHex(guardian, 32)) Checked.Ok(Id.Operation.RemoveGuardian(unhex(guardian))) else no("missing guardian")
             "setThreshold" -> when (val n = thresholdOf(threshold, core?.guardianCount ?: 0)) {
@@ -393,7 +401,16 @@ fun ProposeScreen(route: ProposeRoute) {
                 Field(
                     guardian,
                     { v ->
-                        if (Links.isLink(v)) codeProblem = takeGuardian(v) else chooseGuardian(v)
+                        if (Links.isLink(v)) {
+                            // A link refused leaves no guardian chosen, so the field, its error and the change agree.
+                            val problem = takeGuardian(v)
+                            if (problem != null) {
+                                chooseGuardian("")
+                                codeProblem = problem
+                            }
+                        } else {
+                            chooseGuardian(v)
+                        }
                     },
                     label = "Identity ID",
                     placeholder = "64 hex digits",
@@ -406,8 +423,18 @@ fun ProposeScreen(route: ProposeRoute) {
                         { guardianName = it },
                         label = "Their name",
                         placeholder = "Bob",
-                        hint = "Optional: saved as a contact, with their Spending account.",
+                        hint = if (codeName != null && newName == codeName) {
+                            "As their code calls them, which Ting ID cannot check. Saved as a contact, with their Spending account."
+                        } else {
+                            "Optional: saved as a contact, with their Spending account."
+                        },
                         error = if (nameClash) TAKEN else null,
+                    )
+                    // As a device link's key, the ID is what can be compared: a name is only what someone typed.
+                    Banner(
+                        "ID ${shortId(guardianId, 8, 6)}: check that their Identity shows the same. Link only someone you know.",
+                        BannerTone.Info,
+                        Icons.Outlined.VerifiedUser,
                     )
                 }
             }

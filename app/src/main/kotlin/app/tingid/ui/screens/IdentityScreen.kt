@@ -286,7 +286,9 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
     // Most identities have one device, this phone: the devices show once there is another, to remove it if lost.
     val showDevices = advanced || (id != null && id.keys.size > 1)
     // The code that links this identity as someone's guardian, once it is on chain for them to find.
-    val guardianLink = if (id != null && info != null) Links.encode(Link.Guardian(Links.netOf(info.status.chainId), id.id.hex(), Links.linkText(user.name))) else null
+    val guardianLink = remember(info?.status?.chainId?.hex(), id?.id?.hex(), user.name) {
+        if (id != null && info != null) Links.encode(Link.Guardian(Links.netOf(info.status.chainId), id.id.hex(), Links.linkText(user.name))) else null
+    }
     var showingCode by remember { mutableStateOf(false) }
 
     val header: @Composable () -> Unit = {
@@ -321,7 +323,8 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                IdChip(user.identityId ?: "", label = "ID", light = true)
+                // On a narrow screen the ID gives way, shortened further, so the code stays in reach.
+                IdChip(user.identityId ?: "", label = "ID", light = true, modifier = Modifier.weight(1f, fill = false))
                 if (guardianLink != null) CodeChip { showingCode = true }
             }
             if (id != null) {
@@ -393,7 +396,7 @@ private fun CodeChip(onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Icon(Icons.Outlined.QrCode2, null, tint = p.onHeader, modifier = Modifier.size(14.dp))
-        Text("QR code", style = Type.caption, color = p.onHeader)
+        Text("QR code", style = Type.caption, color = p.onHeader, maxLines = 1, softWrap = false)
     }
 }
 
