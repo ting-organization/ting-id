@@ -521,7 +521,7 @@ suspend fun copyText(clipboard: androidx.compose.ui.platform.Clipboard, text: St
 
 /** A 32-byte identifier, shortened, copied on tap. `light`: on the dark header. */
 @Composable
-fun IdChip(value: String, label: String? = null, full: Boolean = false, light: Boolean = false) {
+fun IdChip(value: String, label: String? = null, full: Boolean = false, light: Boolean = false, modifier: Modifier = Modifier) {
     val p = t
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
@@ -535,7 +535,7 @@ fun IdChip(value: String, label: String? = null, full: Boolean = false, light: B
     val fg = if (light) p.onHeader else p.text
     val muted = if (light) p.onHeaderMuted else p.muted
     Row(
-        Modifier.clip(RoundedCornerShape(999.dp)).background(if (light) p.headerRaised else p.cardAlt)
+        modifier.clip(RoundedCornerShape(999.dp)).background(if (light) p.headerRaised else p.cardAlt)
             .clickable(role = Role.Button) {
                 scope.launch {
                     copyText(clipboard, value)

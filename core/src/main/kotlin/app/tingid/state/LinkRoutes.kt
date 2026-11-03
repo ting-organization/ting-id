@@ -1,8 +1,9 @@
 // The screen a Ting link opens (LINKS.md). Scanned or pasted in the app,
 // every link opens its screen. Opened from outside, only those whose screen
 // asks before anything happens and moves only the person's own coins: a pay,
-// create, sign or call link. A device or recovery link opened from a message could
-// lead someone into adding a stranger's key, so those open from inside only.
+// create, sign or call link. A device, guardian or recovery link opened from a
+// message could lead someone into handing a stranger a way into their
+// identity, so those open from inside only.
 package app.tingid.state
 
 import app.tingid.chain.Link
@@ -16,6 +17,7 @@ sealed class LinkTarget(val code: String) {
     class Sign(code: String) : LinkTarget(code)
     class Sponsor(code: String) : LinkTarget(code)
     class AddDevice(code: String) : LinkTarget(code)
+    class AddGuardian(code: String) : LinkTarget(code)
     class HelpRecover(code: String) : LinkTarget(code)
     class Call(code: String) : LinkTarget(code)
 }
@@ -27,7 +29,7 @@ object LinkRoutes {
     fun routeOf(text: String, from: LinkSource): LinkTarget {
         val link = Links.parse(text)
         val code = trimWhiteSpace(text)
-        if (from == LinkSource.Outside && (link is Link.Device || link is Link.Recover)) {
+        if (from == LinkSource.Outside && (link is Link.Device || link is Link.Guardian || link is Link.Recover)) {
             throw LinkError("open this link from the app: scan it or paste it there")
         }
         return when (link) {
@@ -35,6 +37,7 @@ object LinkRoutes {
             is Link.Sign -> LinkTarget.Sign(code)
             is Link.Create -> LinkTarget.Sponsor(code)
             is Link.Device -> LinkTarget.AddDevice(code)
+            is Link.Guardian -> LinkTarget.AddGuardian(code)
             is Link.Recover -> LinkTarget.HelpRecover(code)
             is Link.Call -> LinkTarget.Call(code)
         }

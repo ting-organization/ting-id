@@ -57,7 +57,7 @@ data class SponsorRoute(val code: String? = null, val at: Long = 0)
 @Serializable
 data class TxRoute(val id: String, val sent: Boolean = false, val unsure: Boolean = false, val back: String? = null)
 
-/** `kind`: what change to start with; `keyId`, `id`, `slot`, `key`: what it is about; `code`: a device link. */
+/** `kind`: what change to start with; `keyId`, `id`, `slot`, `key`: what it is about; `code`: a device or guardian link. */
 @Serializable
 data class ProposeRoute(
     val kind: String? = null,

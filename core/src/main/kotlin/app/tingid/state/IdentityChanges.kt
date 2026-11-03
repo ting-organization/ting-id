@@ -1,6 +1,7 @@
 // What the screens that change an identity read from what the person pasted,
-// scanned or typed: the key a device link asks to add, the identity and keys
-// a recovery link names, a recovery threshold, and a key's kind in words.
+// scanned or typed: the key a device link asks to add, the identity a guardian
+// code names, the identity and keys a recovery link names, a recovery
+// threshold, and a key's kind in words.
 // Each says why it refuses, in words the screen shows as they are.
 package app.tingid.state
 
@@ -10,6 +11,7 @@ import app.tingid.chain.Link
 import app.tingid.chain.Links
 import app.tingid.chain.PolicyKind
 import app.tingid.chain.Scheme
+import app.tingid.chain.isHex
 import app.tingid.chain.trimWhiteSpace
 import app.tingid.text.count
 
@@ -21,6 +23,9 @@ sealed class Checked<out T> {
 
 /** A key another device asks to add to an identity. */
 class DeviceKey(val scheme: Scheme, val pub: ByteArray)
+
+/** An identity offered as a guardian (hex), and the name it goes by when its code gave one. */
+class GuardianCode(val id: String, val name: String?)
 
 /** The identity a recovery link names, and the key list (encoded) the recovery would install. */
 class RecoverRequest(val id: String, val keys: ByteArray)
@@ -44,6 +49,30 @@ fun deviceLinkKey(text: String, net: String?, identity: String?, name: String?):
     } catch (e: Exception) {
         Checked.Refused(e.message ?: "this is not a Ting link")
     }
+}
+
+/**
+ * The identity a guardian code names: a guardian link, or an identity ID on
+ * its own; null while nothing is typed. A link for another network than
+ * `net`, or the identity `me` (hex) itself, is refused; either one null is
+ * not known yet, and not checked.
+ */
+fun guardianCode(text: String, net: String?, me: String?): Checked<GuardianCode>? {
+    val t = trimWhiteSpace(text)
+    if (t.isEmpty()) return null
+    val code = if (isHex(t, 32)) {
+        GuardianCode(t.lowercase(), null)
+    } else {
+        try {
+            val link = Links.parseOf<Link.Guardian>(t, "guardian")
+            if (net != null && link.net != net) return Checked.Refused("this link is for another Ting network")
+            GuardianCode(link.id, link.name)
+        } catch (e: Exception) {
+            return Checked.Refused(e.message ?: "this is not a Ting link")
+        }
+    }
+    if (me != null && code.id == me.lowercase()) return Checked.Refused("this is your own identity: a guardian must be someone else")
+    return Checked.Ok(code)
 }
 
 /**

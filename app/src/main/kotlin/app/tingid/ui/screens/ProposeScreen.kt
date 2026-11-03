@@ -1,8 +1,9 @@
 // Proposing a change to the active user's identity: adding a device (from
 // another phone's device link, or one of this phone's keys), removing a key,
-// linking or unlinking a guardian, the recovery threshold, the delays, and an
-// account's time lock. A change waits before it applies, and any of the
-// identity's devices can cancel it meanwhile.
+// linking a guardian (from their code, scanned or pasted) or unlinking one,
+// the recovery threshold, the delays, and an account's time lock. A change
+// waits before it applies, and any of the identity's devices can cancel it
+// meanwhile.
 package app.tingid.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,12 +35,14 @@ import app.tingid.chain.equal
 import app.tingid.chain.hex
 import app.tingid.chain.isHex
 import app.tingid.chain.nowSeconds
+import app.tingid.chain.shortId
 import app.tingid.chain.trimWhiteSpace
 import app.tingid.chain.unhex
 import app.tingid.state.Checked
 import app.tingid.state.SubmittedTx
 import app.tingid.state.deviceLinkKey
 import app.tingid.state.fetchIdentity
+import app.tingid.state.guardianCode
 import app.tingid.state.identityName
 import app.tingid.state.keyNameFor
 import app.tingid.state.linkedDeviceKeys
@@ -68,6 +73,7 @@ import app.tingid.ui.LocalNav
 import app.tingid.ui.LocalServices
 import app.tingid.ui.Pill
 import app.tingid.ui.ProposeRoute
+import app.tingid.ui.QrScanner
 import app.tingid.ui.Screen
 import app.tingid.ui.Spacing
 import app.tingid.ui.Sub
@@ -122,22 +128,55 @@ fun ProposeScreen(route: ProposeRoute) {
     val presetKey = route.key?.takeIf { k -> w.keys.any { it.id == k } }
     val addingPhrase = presetKey != null && user?.phraseKeyId == presetKey
     var source by remember { mutableStateOf(presetKey ?: FROM_LINK) }
+    val me = user?.let(::userIdentity)
+    val net = info?.let { Links.netOf(it.status.chainId) }
     // The device link: scanned or pasted on the wallet, or typed here.
-    var code by remember { mutableStateOf(route.code ?: "") }
+    var code by remember { mutableStateOf(route.code?.takeIf { kind == "addKey" } ?: "") }
     var newKeyName by remember { mutableStateOf("") }
-    var guardian by remember { mutableStateOf(route.id?.takeIf { isHex(it, 32) } ?: "") }
+    // The guardian code the chosen guardian came from, scanned on the wallet or here, or pasted; null when it was picked or typed.
+    var fromCode by remember { mutableStateOf(route.code?.takeIf { kind == "addGuardian" }) }
+    // The code read again as the network and the user's identity become known, so a check skipped at first is made then.
+    val guardianCheck = fromCode?.let { guardianCode(it, net, me?.id?.hex()) }
+    // The name the code gives, which is only what its maker says they are called.
+    val codeName = (guardianCheck as? Checked.Ok)?.value?.name
+    var guardian by remember { mutableStateOf(route.id?.takeIf { isHex(it, 32) } ?: (guardianCheck as? Checked.Ok)?.value?.id ?: "") }
+    // Why the last guardian code scanned or pasted here was not taken.
+    var codeProblem by remember { mutableStateOf((guardianCheck as? Checked.Refused)?.message) }
+    var scanning by remember { mutableStateOf(false) }
     // Whether the guardian to link is an identity on this network; an account pasted by mistake could never approve.
     var guardianFound by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     val guardianId = trimWhiteSpace(guardian).lowercase()
     val registry = info?.canonical?.registry
-    // A guardian with no name here is named with the link, as a contact.
-    var guardianName by remember { mutableStateOf("") }
+    // A guardian with no name here is named with the link, as a contact: as its code calls it, unless changed.
+    var guardianName by remember { mutableStateOf(codeName ?: "") }
     val naming = kind == "addGuardian" && guardianFound == (guardianId to true) && identityName(w.names, registry, guardianId) == null
-    // The texts here name the guardian as its contact does, also when the contact has only its Spending account.
-    val guardianKnownAs = if (kind in setOf("addGuardian", "removeGuardian") && isHex(guardianId, 32)) identityName(w.names, registry, guardianId) else null
-    val withGuardian = { names: Names -> if (guardianKnownAs != null) names + (guardianId to guardianKnownAs) else names }
     val newName = guardianName.trim()
     val nameClash = naming && nameTaken(contacts, newName)
+    // The texts here name the guardian as its contact does, also when the contact has only its Spending account.
+    // Until it is a contact, by its short ID: a name typed or from a code is nothing Ting ID could check.
+    val guardianKnownAs = if (kind in setOf("addGuardian", "removeGuardian") && isHex(guardianId, 32)) identityName(w.names, registry, guardianId) else null
+    val withGuardian = { names: Names -> if (guardianKnownAs != null) names + (guardianId to guardianKnownAs) else names }
+
+    // Another guardian chosen by hand: a name given for the one before is not theirs.
+    fun chooseGuardian(id: String) {
+        if (trimWhiteSpace(id).lowercase() != guardianId) guardianName = ""
+        guardian = id
+        fromCode = null
+        codeProblem = null
+    }
+
+    // A guardian code scanned or pasted here: its identity and name fill the fields; else why it cannot.
+    fun takeGuardian(text: String): String? = when (val c = guardianCode(text, net, me?.id?.hex())) {
+        null -> "nothing to read: copy the link or ID first"
+        is Checked.Refused -> c.message
+        is Checked.Ok -> {
+            fromCode = text
+            guardian = c.value.id
+            guardianName = c.value.name ?: ""
+            codeProblem = null
+            null
+        }
+    }
     LaunchedEffect(guardianId, registry?.hex(), w.node) {
         if (kind != "addGuardian" || registry == null || !isHex(guardianId, 32)) return@LaunchedEffect
         try {
@@ -165,7 +204,6 @@ fun ProposeScreen(route: ProposeRoute) {
         return
     }
 
-    val me = user?.let(::userIdentity)
     val linked = if (identity != null && info != null) linkedDeviceKeys(info.canonical, identity, w.keys) else emptyList()
     // Whether the key to remove is one this device signs with.
     val removingThisDevice = keyIdParam != null && linked.any { it.keyId == keyIdParam }
@@ -179,7 +217,7 @@ fun ProposeScreen(route: ProposeRoute) {
     val availableKeys = w.keys.filter { !isLinked(unhex(it.pub)) }
     val otherIdentities = if (me == null) emptyList() else users.mapNotNull { u -> userIdentity(u)?.takeIf { !equal(it.id, me.id) }?.let { u to it.id.hex() } }
     // The device link's key, when it is a link for this identity on this network.
-    val device = deviceLinkKey(code, info?.let { Links.netOf(it.status.chainId) }, me?.id?.hex(), user?.name)
+    val device = deviceLinkKey(code, net, me?.id?.hex(), user?.name)
     val parsedCode = (device as? Checked.Ok)?.value
 
     // The change as the inputs say now, or what is missing.
@@ -200,11 +238,15 @@ fun ProposeScreen(route: ProposeRoute) {
                 }
             }
             "removeKey" -> keyIdParam?.let { Checked.Ok(Id.Operation.RemoveKey(it)) } ?: no("missing key")
-            "addGuardian" -> when {
-                !isHex(guardianId, 32) -> no("choose a guardian")
-                guardianFound?.first != guardianId -> no("looking the guardian up")
-                guardianFound?.second != true -> no("no identity has that ID on this network: a guardian must be an identity, not an account")
-                else -> Checked.Ok(Id.Operation.AddGuardian(unhex(guardianId)))
+            // A guardian from a code is checked as its code, a typed one as a bare ID: by the same rules either way.
+            "addGuardian" -> when (val chosen = guardianCheck ?: if (isHex(guardianId, 32)) guardianCode(guardianId, net, me?.id?.hex()) else null) {
+                null -> no("choose a guardian")
+                is Checked.Refused -> chosen
+                is Checked.Ok -> when {
+                    guardianFound?.first != guardianId -> no("looking the guardian up")
+                    guardianFound?.second != true -> no("no identity has that ID on this network: a guardian must be an identity, not an account")
+                    else -> Checked.Ok(Id.Operation.AddGuardian(unhex(guardianId)))
+                }
             }
             "removeGuardian" -> if (isHex(guardian, 32)) Checked.Ok(Id.Operation.RemoveGuardian(unhex(guardian))) else no("missing guardian")
             "setThreshold" -> when (val n = thresholdOf(threshold, core?.guardianCount ?: 0)) {
@@ -346,19 +388,53 @@ fun ProposeScreen(route: ProposeRoute) {
                 Body("$what Make sure another one stays usable.")
             }
             if (kind == "addGuardian") {
-                Caption("Pick an identity on this device or paste an ID.")
+                Caption("Scan the QR code on their Identity, pick an identity on this device, or paste an ID.")
+                Button("Scan their code", onClick = { scanning = true }, kind = ButtonKind.Secondary, small = true, icon = Icons.Outlined.QrCodeScanner)
                 for ((u, idHex) in otherIdentities) {
-                    ListItem(u.name, left = { Avatar(u.name, u.color, 32.dp) }, selected = guardian == idHex, onClick = { guardian = idHex })
+                    ListItem(
+                        u.name,
+                        left = { Avatar(u.name, u.color, 32.dp) },
+                        selected = guardian == idHex,
+                        onClick = { chooseGuardian(idHex) },
+                    )
                 }
-                Field(guardian, { guardian = it }, label = "Identity ID", placeholder = "64 hex digits", keyboardType = KeyboardType.Ascii)
+                Field(
+                    guardian,
+                    { v ->
+                        if (Links.isLink(v)) {
+                            // A link refused leaves no guardian chosen, so the field, its error and the change agree.
+                            val problem = takeGuardian(v)
+                            if (problem != null) {
+                                chooseGuardian("")
+                                codeProblem = problem
+                            }
+                        } else {
+                            chooseGuardian(v)
+                        }
+                    },
+                    label = "Identity ID",
+                    placeholder = "64 hex digits",
+                    keyboardType = KeyboardType.Ascii,
+                    error = codeProblem,
+                )
                 if (naming) {
                     Field(
                         guardianName,
                         { guardianName = it },
                         label = "Their name",
                         placeholder = "Bob",
-                        hint = "Optional: saved as a contact, with their Spending account.",
+                        hint = if (codeName != null && newName == codeName) {
+                            "As their code calls them, which Ting ID cannot check. Saved as a contact, with their Spending account."
+                        } else {
+                            "Optional: saved as a contact, with their Spending account."
+                        },
                         error = if (nameClash) TAKEN else null,
+                    )
+                    // As a device link's key, the ID is what can be compared: a name is only what someone typed.
+                    Banner(
+                        "ID ${shortId(guardianId, 8, 6)}: check that their Identity shows the same. Link only someone you know.",
+                        BannerTone.Info,
+                        Icons.Outlined.VerifiedUser,
                     )
                 }
             }
@@ -405,6 +481,17 @@ fun ProposeScreen(route: ProposeRoute) {
         FeeRow(fee, boxed = true)
         Button("Propose", onClick = ::submit, loading = sending.busy != null, enabled = canSubmit && fee.problem == null)
         Spacer(Modifier.height(Spacing.lg))
+    }
+    if (scanning) {
+        QrScanner(
+            onClose = { scanning = false },
+            title = "Scan their code",
+            onScan = { text ->
+                val problem = takeGuardian(text)
+                if (problem == null) scanning = false
+                problem?.let(::sentence)
+            },
+        )
     }
 }
 

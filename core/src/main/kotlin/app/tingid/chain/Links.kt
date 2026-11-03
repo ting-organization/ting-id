@@ -6,6 +6,7 @@
 //   pay      net, to, coin?, amount?, note?     pay an account
 //   create   net, input, name?, coin?, amount?  create an identity, and send it coins
 //   device   net, id, scheme, key               add a device to an identity
+//   guardian net, id, name?                     link an identity as a guardian
 //   recover  net, id, keys                      approve a recovery to new keys
 //   sign     url                                a site's signing request (TOCS-1.md)
 //   call     net, program, template, values?,   an operation of a program (TCR-1.md)
@@ -27,6 +28,7 @@ sealed class Link(val request: String) {
     class Pay(val net: String, val to: String, val coin: String? = null, val amount: String? = null, val note: String? = null) : Link("pay")
     class Create(val net: String, val input: ByteArray, val name: String? = null, val coin: String? = null, val amount: String? = null) : Link("create")
     class Device(val net: String, val id: String, val scheme: Scheme, val key: ByteArray) : Link("device")
+    class Guardian(val net: String, val id: String, val name: String? = null) : Link("guardian")
     class Recover(val net: String, val id: String, val keys: ByteArray) : Link("recover")
     class Sign(val url: String) : Link("sign")
 
@@ -60,7 +62,7 @@ class LinkError(message: String) : Exception(message)
 
 object Links {
     const val SCHEME = "ting:"
-    private val REQUESTS = listOf("pay", "create", "device", "recover", "sign", "call")
+    private val REQUESTS = listOf("pay", "create", "device", "guardian", "recover", "sign", "call")
 
     /** The longest name or note a link carries. */
     const val TEXT_MAX = 80
@@ -75,6 +77,9 @@ object Links {
     /** The network tag of a chain: the first 8 hex digits of its ID. */
     fun netOf(chainId: ByteArray): String = chainId.hex().take(8)
 
+    /** `text` as a link's name or note when a link can carry it: trimmed, not too long, with nothing that hides; else null. */
+    fun linkText(text: String): String? = trimWhiteSpace(text).takeIf { it.isNotEmpty() && it.length <= TEXT_MAX && !HIDING.containsMatchIn(it) }
+
     /** Whether `text` is written as a Ting link at all. */
     fun isLink(text: String): Boolean = trimWhiteSpace(text).lowercase().startsWith(SCHEME)
 
@@ -83,6 +88,7 @@ object Links {
             is Link.Pay -> listOf("to" to link.to, "coin" to link.coin, "amount" to link.amount, "note" to link.note, "net" to link.net)
             is Link.Create -> listOf("input" to base64url(link.input), "name" to link.name, "coin" to link.coin, "amount" to link.amount, "net" to link.net)
             is Link.Device -> listOf("id" to link.id, "scheme" to link.scheme.id, "key" to link.key.hex(), "net" to link.net)
+            is Link.Guardian -> listOf("id" to link.id, "name" to link.name, "net" to link.net)
             is Link.Recover -> listOf("id" to link.id, "keys" to base64url(link.keys), "net" to link.net)
             is Link.Sign -> listOf("url" to link.url)
             is Link.Call -> listOf(
@@ -167,6 +173,7 @@ object Links {
                 if (!isHex(key, 65) || !isPublicKey(scheme, unhex(key.lowercase()))) throw LinkError("the link’s key is not a public key")
                 Link.Device(net = net, id = id32("identity ID", need("id")), scheme = scheme, key = unhex(key.lowercase()))
             }
+            "guardian" -> Link.Guardian(net = net, id = id32("identity ID", need("id")), name = optional("name", textField("name")))
             else -> Link.Recover(net = net, id = id32("identity ID", need("id")), keys = bytes("keys"))
         }
     }

@@ -1,7 +1,8 @@
 # Ting links
 
 A Ting link is what one person asks of another: pay me, set up my identity,
-add this device, approve my recovery, or sign in on a site. The same text works
+add this device, take me as a guardian, approve my recovery, or sign in on a
+site. The same text works
 three ways: as a QR code to scan, as a link to copy into a message and paste in
 Ting ID, and tapped on the phone, which opens Ting ID for the `ting:` scheme.
 
@@ -16,6 +17,7 @@ ting:<request>?<field>=<value>&…
 | `pay` | `to`, `coin`?, `amount`?, `note`?, `net` | Pay the account `to`, in `coin`, `amount` if given |
 | `create` | `input`, `name`?, `coin`?, `amount`?, `net` | Create the identity whose creation input is `input`, and send it coins to start with |
 | `device` | `id`, `scheme`, `key`, `net` | Add the public key `key` of `scheme` to the identity `id` |
+| `guardian` | `id`, `name`?, `net` | Link the identity `id`, which goes by `name`, as a guardian of one's own |
 | `recover` | `id`, `keys`, `net` | Approve the recovery of identity `id` to the key list `keys` |
 | `sign` | `url` | A site's signing request, fetched from `url` ([TOCS-1](TOCS-1.md)) |
 | `call` | `net`, `program`, `template`, `values`? or `zvalues`?, `coin`?, `burn`?, `to`?, `amount`?, `from`?, `delayed`?, `return`? | Do an operation of a program, in the program's own words ([TCR-1](TCR-1.md)) |
@@ -50,9 +52,19 @@ the creation input, so a creation can only make the identity it describes.
 
 A link tapped in another app opens Ting ID only for `pay`, `create`, `sign`
 and `call`: their screens move nothing but the person's own coins, and only
-once they confirm. `device` and `recover` links work only when scanned or pasted in
-Ting ID, so a link in a message cannot lead someone into adding a stranger's
-key to their identity.
+once they confirm. `device`, `guardian` and `recover` links work only when
+scanned or pasted in Ting ID, so a link in a message cannot lead someone into
+adding a stranger's key to their identity, or a stranger as their guardian.
+
+## Linking a guardian
+
+The Identity tab shows the user's `guardian` link as a QR code. Someone who
+wants them as a guardian scans it from the wallet, or in Link a guardian,
+where an identity ID on its own also works. The screen fills in the
+identity, checks that it exists on this network and is not the person's own,
+and offers `name` as the name to save it under, which they can change.
+Nothing happens until they propose the change, which, like every change to
+an identity, waits before it applies.
 
 ## Setting up someone else's identity
 

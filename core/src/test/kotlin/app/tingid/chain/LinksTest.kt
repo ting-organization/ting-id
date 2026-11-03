@@ -17,6 +17,7 @@ class LinksTest {
         is Link.Pay -> "pay ${l.net} ${l.to} ${l.coin} ${l.amount} ${l.note}"
         is Link.Create -> "create ${l.net} ${l.input.hex()} ${l.name} ${l.coin} ${l.amount}"
         is Link.Device -> "device ${l.net} ${l.id} ${l.scheme} ${l.key.hex()}"
+        is Link.Guardian -> "guardian ${l.net} ${l.id} ${l.name}"
         is Link.Recover -> "recover ${l.net} ${l.id} ${l.keys.hex()}"
         is Link.Sign -> "sign ${l.url}"
         is Link.Call -> "call ${l.net} ${l.program} ${l.template.text} ${l.values.hex()} ${l.coin} ${l.burn} ${l.to} ${l.amount} ${l.from} ${l.delayed} ${l.returnTo}"
@@ -43,6 +44,8 @@ class LinksTest {
             Link.Pay(net, account),
             Link.Create(net, byteArrayOf(1, 2, 3, 250.toByte()), "Anna Ö", daler, "50"),
             Link.Device(net, account, Scheme.Secp256k1, pub),
+            Link.Guardian(net, account, "Erik Holm"),
+            Link.Guardian(net, account),
             Link.Recover(net, account, byteArrayOf(9, 8, 7)),
             Link.Sign("https://forum.example/request/1?x=1&y=2"),
         )
@@ -52,6 +55,7 @@ class LinksTest {
             assertEquals(show(link), show(Links.parse(text)))
         }
         assertEquals("ting:pay?to=$account&amount=5&net=$net", Links.encode(Link.Pay(net, account, amount = "5")))
+        assertEquals("ting:guardian?id=$account&name=Erik%20Holm&net=$net", Links.encode(Link.Guardian(net, account, "Erik Holm")))
     }
 
     @Test
@@ -74,6 +78,9 @@ class LinksTest {
         refuses("ting:pay?to=$account&note=%E0%A4%A&net=$net", "not written right")
         refuses("ting:create?input=a=b&net=$net", "input")
         refuses("ting:device?id=$account&scheme=rsa&key=${pub.hex()}&net=$net", "scheme")
+        refuses("ting:guardian?net=$net", "no id")
+        refuses("ting:guardian?id=12&net=$net", "64 hex digits")
+        refuses("ting:guardian?id=$account&name=Mo%E2%80%8Bm&net=$net", "hide or reorder")
         // 65 bytes, but not a point on the curve.
         refuses("ting:device?id=$account&scheme=secp256k1&key=04${"00".repeat(64)}&net=$net", "public key")
     }
@@ -102,6 +109,13 @@ class LinksTest {
         fun named(name: String) = "ting:create?input=AQID&name=${Links.encodeComponent(name)}&net=$net"
         assertEquals("Anna", (Links.parse(named("  Anna  ")) as Link.Create).name)
         for (bad in listOf("Mom\nDad", "Mo​m", "‮Mom", "Mom⁦", "a\u0000b")) refuses(named(bad), "hide or reorder")
+    }
+
+    @Test
+    fun `carry a name only when a link can`() {
+        assertEquals("Anna", Links.linkText("  Anna "))
+        assertEquals("x".repeat(80), Links.linkText("x".repeat(80)))
+        for (bad in listOf("", "  ", "x".repeat(81), "Mo​m")) assertNull(Links.linkText(bad))
     }
 
     @Test
