@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The splash screen's mark: the icon's foreground layer, as an animated vector
+     that does not move. Android draws a still splash icon into a 108dp picture
+     and stretches it to the splash's 192dp, which softens every edge, and
+     HONOR's MagicOS 9 draws it smaller and blurred much more; an animated one
+     both draw at full size, sharp. -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_launcher_foreground" />
