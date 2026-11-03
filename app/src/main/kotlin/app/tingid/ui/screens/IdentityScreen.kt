@@ -1,7 +1,8 @@
-// The Identity tab: the active user's identity with its devices (or keys, in
-// the advanced settings), guardians and accounts, the changes waiting to
-// apply, and the ways into a recovery. A simple account is offered an
-// identity; a phone without a user, the welcome.
+// The Identity tab: the active user's identity with its guardians and
+// accounts, its devices once it has more than one (its keys, and adding them,
+// in the advanced settings), the changes waiting to apply, and the ways into
+// a recovery. A simple account is offered an identity; a phone without a
+// user, the welcome.
 package app.tingid.ui.screens
 
 import androidx.compose.foundation.background
@@ -282,6 +283,8 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
     val pendingKey = deviceKey != null && id != null &&
         id.pending.any { pc -> pc.record.operations.any { it is Id.Operation.AddKey && equal(it.key.params, unhex(deviceKey.pub)) } }
     val propose = { route: ProposeRoute -> nav.navigate(route) }
+    // Most identities have one device, this phone: the devices show once there is another, to remove it if lost.
+    val showDevices = advanced || (id != null && id.keys.size > 1)
     // The code that links this identity as someone's guardian, once it is on chain for them to find.
     val guardianLink = if (id != null && info != null) Links.encode(Link.Guardian(Links.netOf(info.status.chainId), id.id.hex(), Links.linkText(user.name))) else null
     var showingCode by remember { mutableStateOf(false) }
@@ -325,13 +328,15 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
                 val keyCount = id.core.keyCount
                 val guardianCount = id.core.guardianCount
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    StatTile(
-                        label = if (advanced) (if (keyCount == 1L) "Key" else "Keys") else if (keyCount == 1L) "Device" else "Devices",
-                        value = keyCount.toString(),
-                        icon = if (advanced) Icons.Outlined.Key else Icons.Outlined.PhoneAndroid,
-                        hint = if (linked.isNotEmpty()) "including this device" else "not this device yet",
-                        onHeader = true,
-                    )
+                    if (showDevices) {
+                        StatTile(
+                            label = if (advanced) (if (keyCount == 1L) "Key" else "Keys") else if (keyCount == 1L) "Device" else "Devices",
+                            value = keyCount.toString(),
+                            icon = if (advanced) Icons.Outlined.Key else Icons.Outlined.PhoneAndroid,
+                            hint = if (linked.isNotEmpty()) "including this device" else "not this device yet",
+                            onHeader = true,
+                        )
+                    }
                     StatTile(
                         label = if (guardianCount == 1L) "Guardian" else "Guardians",
                         value = guardianCount.toString(),
@@ -351,7 +356,7 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
         if (id != null && linked.isEmpty()) NotThisPhone(w, user, id, deviceKey, pendingKey, sending)
 
         if (id != null) {
-            KeysSection(w, user, id, canAct, propose)
+            if (showDevices) KeysSection(w, user, id, canAct, propose)
             GuardiansSection(w, id, guardians, canAct, propose)
             AccountsSection(id)
             if (id.pending.isNotEmpty()) {
@@ -438,7 +443,7 @@ private fun NotThisPhone(w: WorkspaceState, user: User, id: IdentityInfo, device
             }
         }
         if (deviceKey != null && info != null) {
-            Caption("On a device that has access, scan this or paste the link there: Scan on the wallet, or Devices → Add device.")
+            Caption("On a device that has access, open Scan on the wallet and scan this, or paste the link there.")
             LinkShare(Links.encode(Link.Device(Links.netOf(info.status.chainId), id.id.hex(), deviceKey.scheme, unhex(deviceKey.pub))))
             Caption("This phone’s key is ${deviceFingerprint(unhex(deviceKey.pub))}: the other phone shows the same before it adds this one.")
         } else {
@@ -470,7 +475,7 @@ private fun KeysSection(w: WorkspaceState, user: User, id: IdentityInfo, canAct:
     val advanced = w.advanced
     SectionHeader(
         if (advanced) "Keys" else "Devices",
-        action = if (canAct) (if (advanced) "Add key" else "Add device") else null,
+        action = if (canAct && advanced) "Add key" else null,
         onAction = { propose(ProposeRoute(kind = "addKey")) },
     )
     // The first key is the one the identity was made with: in Ting ID, its recovery phrase's.
