@@ -112,4 +112,20 @@ class ProofTest {
         }
     }
 
+    @Test
+    fun `headers of another protocol version are refused`() {
+        // With the easiest target any id has the work: only the version decides.
+        fun withVersion(version: Int) = header.copyOf().also {
+            it.fill(0xff.toByte(), 82, 114)
+            it[0] = version.toByte()
+            it[1] = (version shr 8).toByte()
+        }
+        val one = withVersion(1)
+        assertNotNull(checkHeader(taggedHash("block", one).hex(), one))
+        for (version in listOf(0, 2, 0x0101)) {
+            val other = withVersion(version)
+            assertNull(checkHeader(taggedHash("block", other).hex(), other))
+        }
+    }
+
 }

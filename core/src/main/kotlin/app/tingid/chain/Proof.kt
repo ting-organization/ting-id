@@ -59,13 +59,15 @@ class Header(
 )
 
 /**
- * The header `bytes` if they are the header of block `id` (hex) and carry its
- * proof of work: the id, read as a 256-bit number, at most the target, the
- * target not zero and, with `powLimit` (hex, the chain's), at most that
- * (wiki: consensus). Else null.
+ * The header `bytes` if they are the header of block `id` (hex), of protocol
+ * version 1, and carry its proof of work: the id, read as a 256-bit number,
+ * at most the target, the target not zero and, with `powLimit` (hex, the
+ * chain's), at most that (wiki: consensus). Else null.
  */
 fun checkHeader(id: String, bytes: ByteArray, powLimit: String? = null): Header? {
     if (bytes.size != HEADER_BYTES) return null
+    // protocol_version is a u16, always 1 (wiki: data/blocks).
+    if (bytes[0].toInt() != 1 || bytes[1].toInt() != 0) return null
     val blockId = taggedHash("block", bytes).hex()
     if (blockId != id.lowercase()) return null
     // protocol_version u16, chain_id, height u64, parent, timestamp u64, target, transactions_root, receipts_root, state_root, …

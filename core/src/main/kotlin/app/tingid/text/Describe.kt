@@ -499,7 +499,7 @@ const val OTHER_CHAIN_USER =
 
 /** The (i) text of Settings → Nodes. */
 const val NODES_INFO =
-    "Ting ID reads from the node furthest ahead and moves on to the next when one stops answering; transactions go to every node. It checks every balance and record against the block it comes from, and with two or more nodes, that the others have that block too and agree on each coin’s settings. Plain http is only for a node on this device or your home network."
+    "Ting ID reads from the node furthest ahead and moves on to the next when one stops answering; transactions go to every node. It checks every balance and record against the block it comes from and, with two or more nodes, uses it only once another node has that block too; their coin settings must agree. Plain http is only for a node on this device or your home network."
 
 enum class NodeTone { Success, Muted, Warning, Danger }
 
