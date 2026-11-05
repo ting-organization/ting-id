@@ -188,30 +188,14 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
     val activity = LocalActivity.current
     val nav = LocalNav.current
     val p = t
-    val users = services.store.data.collectAsState().value.users
-    val contacts = services.store.data.collectAsState().value.contacts
     val sending = rememberSending()
     HoldWhileBusy(sending.busy != null)
-    val me = userIdentity(user)
     val id = w.identity
     val info = w.info
     // Recoveries of this identity that guardians approve: its devices cannot stop one, only the guardians can.
     val recoveries = rememberOpenRecoveries(w)
 
-    // Who may be a guardian, as this device knows: the ones named at creation or linked from here, the contacts
-    // that are identities, and the other identities here. A restored identity finds its guardians among the contacts.
-    val known = LinkedHashMap<String, ByteArray>()
-    guardiansOf(user).forEach { known[it] = unhex(it) }
-    for (c in contacts) c.identity?.takeIf { isHex(it, 32) }?.let { known[it.lowercase()] = unhex(it) }
-    for (u in users) {
-        val other = userIdentity(u) ?: continue
-        if (me != null && !equal(other.id, me.id)) known[other.id.hex()] = other.id
-    }
-    val asked = if (me != null && id != null) me else null
-    val candidates = known.values.toList()
-    val guardians by remember(asked?.id?.hex(), asked?.registry?.hex(), known.keys.sorted()) {
-        services.registry.linkedGuardians(asked, candidates)
-    }.collectAsState(initial = emptyList())
+    val guardians = rememberLinkedGuardians(w, user)
     // One fee for cancelling and applying pending changes; registry operations pay nothing themselves.
     val fee = rememberFee(null)
 
@@ -428,6 +412,33 @@ private fun ConfirmFee(fee: FeeChoice) {
         Box(Modifier.padding(vertical = 6.dp)) { FeeRow(fee) }
         Rule()
     }
+}
+
+/**
+ * The guardians of the user's identity that this device knows, read again
+ * with each block. Who may be a guardian, as this device knows: the ones named
+ * at creation or linked from here, the contacts that are identities, and the
+ * other identities here. A restored identity finds its guardians among the
+ * contacts.
+ */
+@Composable
+internal fun rememberLinkedGuardians(w: WorkspaceState, user: User?): List<ByteArray> {
+    val services = LocalServices.current
+    val data by services.store.data.collectAsState()
+    val me = user?.let(::userIdentity)
+    val known = LinkedHashMap<String, ByteArray>()
+    user?.let(::guardiansOf)?.forEach { known[it] = unhex(it) }
+    for (c in data.contacts) c.identity?.takeIf { isHex(it, 32) }?.let { known[it.lowercase()] = unhex(it) }
+    for (u in data.users) {
+        val other = userIdentity(u) ?: continue
+        if (me != null && !equal(other.id, me.id)) known[other.id.hex()] = other.id
+    }
+    val asked = if (me != null && w.identity != null) me else null
+    val candidates = known.values.toList()
+    val guardians by remember(asked?.id?.hex(), asked?.registry?.hex(), known.keys.sorted()) {
+        services.registry.linkedGuardians(asked, candidates)
+    }.collectAsState(initial = emptyList())
+    return guardians
 }
 
 /**

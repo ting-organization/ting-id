@@ -25,15 +25,37 @@ class IdentityChangesTest {
 
     private fun refused(check: Checked<*>?): String = (check as Checked.Refused).message
 
+    private fun core(guardians: Long, threshold: Long) = Id.Core(0, 0, 0, 0, 1, 1, guardians, 2, threshold, 604_800, 172_800, 0)
+    private val other = ByteArray(32) { 7 }
+
     @Test
     fun `a first guardian, or any with a threshold of 1, could recover alone`() {
-        fun core(guardians: Long, threshold: Long) = Id.Core(0, 0, 0, 0, 1, 1, guardians, 2, threshold, 604_800, 172_800, 0)
-        assertTrue(guardianAloneRecovers(core(0, 0)))
-        assertTrue(guardianAloneRecovers(core(3, 1)))
+        fun adding(guardians: Long, threshold: Long) = guardianAloneRecovers(coreAfter(core(guardians, threshold), Id.Operation.AddGuardian(other)))
+        assertTrue(adding(0, 0))
+        assertTrue(adding(3, 1))
         // More than half of two or three is two; a threshold of 2 is two.
-        assertFalse(guardianAloneRecovers(core(1, 0)))
-        assertFalse(guardianAloneRecovers(core(2, 0)))
-        assertFalse(guardianAloneRecovers(core(1, 2)))
+        assertFalse(adding(1, 0))
+        assertFalse(adding(2, 0))
+        assertFalse(adding(1, 2))
+    }
+
+    @Test
+    fun `unlinking down to one guardian, or a threshold of 1, leaves one approval enough`() {
+        fun unlinking(guardians: Long, threshold: Long) = guardianAloneRecovers(coreAfter(core(guardians, threshold), Id.Operation.RemoveGuardian(other)))
+        assertTrue(unlinking(2, 0))
+        assertTrue(unlinking(3, 1))
+        assertFalse(unlinking(3, 0))
+        assertFalse(unlinking(3, 2))
+        // The last guardian unlinked leaves no one who could recover the identity at all.
+        assertFalse(unlinking(1, 0))
+        fun threshold(guardians: Long, to: Long) = guardianAloneRecovers(coreAfter(core(guardians, 0), Id.Operation.SetThreshold(to)))
+        assertTrue(threshold(3, 1))
+        assertTrue(threshold(1, 0))
+        assertFalse(threshold(3, 2))
+        assertFalse(threshold(3, 0))
+        assertFalse(threshold(0, 0))
+        // Other changes leave the guardians and the threshold as they are.
+        assertFalse(guardianAloneRecovers(coreAfter(core(2, 0), Id.Operation.SetDelays(604_800, 172_800))))
     }
 
     @Test

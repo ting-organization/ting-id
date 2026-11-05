@@ -1,8 +1,8 @@
 // What the screens that change an identity read from what the person pasted,
 // scanned or typed: the key a device link asks to add, the identity a guardian
 // code names, the identity and keys a recovery link names, a recovery
-// threshold, whether a new guardian could recover alone, and a key's kind in
-// words.
+// threshold, whether a change leaves one guardian able to recover alone, and
+// a key's kind in words.
 // Each says why it refuses, in words the screen shows as they are.
 package app.tingid.state
 
@@ -108,11 +108,23 @@ fun thresholdOf(text: String, guardians: Long): Checked<Long> {
 }
 
 /**
- * Whether one more guardian linked to an identity with `core` could recover
- * it alone: once it applies, one approval is all a recovery needs. So it is
- * with a first guardian, or a threshold of 1.
+ * The core of an identity as `op` would leave it, in what decides a recovery:
+ * its guardian count and its threshold. Other operations leave both alone.
  */
-fun guardianAloneRecovers(core: Id.Core): Boolean = core.copy(guardianCount = core.guardianCount + 1).required == 1L
+fun coreAfter(core: Id.Core, op: Id.Operation): Id.Core = when (op) {
+    is Id.Operation.AddGuardian -> core.copy(guardianCount = core.guardianCount + 1)
+    is Id.Operation.RemoveGuardian -> core.copy(guardianCount = maxOf(0, core.guardianCount - 1))
+    is Id.Operation.SetThreshold -> core.copy(threshold = op.threshold)
+    else -> core
+}
+
+/**
+ * Whether any one guardian of an identity whose core is `after` (a change,
+ * as [coreAfter] has it) could recover it alone: it has a guardian, and one
+ * approval is all a recovery needs. So it is with a single guardian, or a
+ * threshold of 1.
+ */
+fun guardianAloneRecovers(after: Id.Core): Boolean = after.guardianCount > 0 && after.required == 1L
 
 /** What kind of key a policy makes, in words: its scheme, "multisig", "another identity", or "custom policy" for one the app does not know (or while `c` is not known). */
 fun policyLabel(c: Canonical?, policy: ByteArray): String = when (c?.kindOf(policy)) {

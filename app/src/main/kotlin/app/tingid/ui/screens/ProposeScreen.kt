@@ -40,6 +40,7 @@ import app.tingid.chain.trimWhiteSpace
 import app.tingid.chain.unhex
 import app.tingid.state.Checked
 import app.tingid.state.SubmittedTx
+import app.tingid.state.coreAfter
 import app.tingid.state.deviceLinkKey
 import app.tingid.state.fetchIdentity
 import app.tingid.state.guardianAloneRecovers
@@ -124,6 +125,8 @@ fun ProposeScreen(route: ProposeRoute) {
     val info = w.info
     val core = identity?.core
     val advanced = w.advanced
+    // The guardians this device knows to be linked, to name the one a change would leave alone.
+    val guardians = rememberLinkedGuardians(w, user)
 
     // A key of this device to add, such as the one of a new recovery phrase.
     val presetKey = route.key?.takeIf { k -> w.keys.any { it.id == k } }
@@ -438,13 +441,6 @@ fun ProposeScreen(route: ProposeRoute) {
                         Icons.Outlined.VerifiedUser,
                     )
                 }
-                // A first guardian, or any with a threshold of 1, could recover the identity alone: its devices cannot stop a recovery.
-                if (preview is Checked.Ok && guardianAloneRecovers(core)) {
-                    Banner(
-                        "With this change, one approval recovers your identity: ${nameOf(withGuardian(w.names), unhex(guardianId))} alone could hand it to new keys, and your devices could not stop it.",
-                        BannerTone.Warning,
-                    )
-                }
             }
             if (kind == "removeGuardian" && isHex(guardian, 32)) Body("Unlink guardian ${nameOf(withGuardian(w.names), unhex(guardianId))}.")
             if (kind == "setThreshold") {
@@ -466,6 +462,22 @@ fun ProposeScreen(route: ProposeRoute) {
                     },
                 )
                 DelayPresets(slotDelay, { slotDelay = it })
+            }
+            // A change that leaves one approval enough lets one guardian recover the identity alone: its devices cannot stop a recovery.
+            val op = if (preview is Checked.Ok) preview.value else null
+            val after = op?.let { coreAfter(core, it) }
+            if (op != null && after != null && guardianAloneRecovers(after)) {
+                // The one being linked, when that is the change; else the one guardian left, when this device knows it.
+                val left = guardians.filter { g -> !(op is Id.Operation.RemoveGuardian && equal(g, op.id)) }.singleOrNull()
+                val who = when {
+                    op is Id.Operation.AddGuardian -> nameOf(withGuardian(w.names), op.id)
+                    after.guardianCount == 1L -> left?.let { nameOf(w.names, it) } ?: "your one guardian"
+                    else -> "any one guardian"
+                }
+                Banner(
+                    "With this change, one approval recovers your identity: $who alone could hand it to new keys, and your devices could not stop it.",
+                    BannerTone.Warning,
+                )
             }
         }
         Card(tone = CardTone.Alt) {
