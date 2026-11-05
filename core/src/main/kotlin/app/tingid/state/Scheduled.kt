@@ -36,6 +36,10 @@ fun scheduledOf(coins: List<CoinInfo>, views: Map<String, List<AccountView>>): L
     return out.sortedBy { it.record.executeAt }
 }
 
+/** The accounts, as "Savings (DLR)", across the given coins, some of whose scheduled actions holding locked coins could not be read. */
+fun hiddenScheduledOf(coins: List<CoinInfo>, views: Map<String, List<AccountView>>): List<String> =
+    coins.flatMap { c -> (views[c.hex] ?: emptyList()).filter { it.hidden }.map { "${it.account.label} (${c.config.symbol})" } }
+
 /** Which run of the chain a scheduled action's is (Chain.runStatuses). */
 fun runRefOf(e: ScheduledAction): RunRef = RunRef(e.coin.id, e.view.account.account, e.sequence)
 

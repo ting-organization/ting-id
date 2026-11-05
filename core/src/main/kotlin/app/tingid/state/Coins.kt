@@ -95,11 +95,17 @@ class Coins(
 
 class CoinInfos(val infos: Map<String, CoinInfo>, val loading: Boolean)
 
-class AccountView(val account: UserAccount, val record: Coin.AccountRecord, val scheduled: List<ScheduledItem>)
+class AccountView(
+    val account: UserAccount,
+    val record: Coin.AccountRecord,
+    val scheduled: List<ScheduledItem>,
+    /** Some actions holding its locked coins are not in [scheduled]: there were more than the read reaches (fetchScheduledMany). */
+    val hidden: Boolean = false,
+)
 
 /** What the chain holds of one account in one coin. */
 @Serializable
-internal class AccountState(val record: Coin.AccountRecord, val scheduled: List<ScheduledItem>)
+internal class AccountState(val record: Coin.AccountRecord, val scheduled: List<ScheduledItem>, val hidden: Boolean)
 
 /** Each coin's accounts (by coin hex), and whether some are not known yet. */
 class AccountViews(val views: Map<String, List<AccountView>>, val loading: Boolean)
@@ -201,11 +207,11 @@ class CoinData(
                     ScheduledQuery(p.c.id, p.account.account, records[i].nonce, records[i].locked, everything = equal(p.c.state.minter, p.account.account))
                 },
             )
-            want.indices.map { i -> AccountState(records[i], scheduled[i]) }
+            want.indices.map { i -> AccountState(records[i], scheduled[i].items, scheduled[i].hidden) }
         }.map { v ->
             val out = LinkedHashMap<String, MutableList<AccountView>>()
             for (c in coins) out[c.hex] = ArrayList()
-            for (p in pairs) v.values[p.key]?.let { out.getValue(p.c.hex).add(AccountView(p.account, it.record, it.scheduled)) }
+            for (p in pairs) v.values[p.key]?.let { out.getValue(p.c.hex).add(AccountView(p.account, it.record, it.scheduled, it.hidden)) }
             AccountViews(out, v.missing)
         }
     }

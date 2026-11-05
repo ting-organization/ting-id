@@ -484,6 +484,11 @@ fun describeWatch(watch: Watch, sentAt: Long, now: Long = nowSeconds(), time: (L
 fun offlineMessage(height: Long?): String =
     if (height != null) "Can't reach the node. Showing what it last reported, at block $height." else "Can't reach the node. Check its address in Settings."
 
+/** What a list of scheduled actions says when some of `accounts` ([hiddenScheduledOf]) could not be read; null when none. */
+fun hiddenScheduledWarning(accounts: List<String>): String? =
+    if (accounts.isEmpty()) null
+    else "This list is incomplete: ${accounts.joinToString(", ")} ${if (accounts.size == 1) "has" else "have"} more scheduled actions than Ting ID can read, and some locked coins are in actions not shown."
+
 /** The general message about the nodes, if any: none answers, or their answers did not check out. `now` is in seconds. */
 fun nodeNotice(height: Long?, error: String?, notice: PoolNotice?, now: Long = nowSeconds()): String? = when {
     !error.isNullOrEmpty() -> offlineMessage(height)

@@ -67,6 +67,7 @@ import app.tingid.state.LinkSource
 import app.tingid.state.OnTheWay
 import app.tingid.state.UserKind
 import app.tingid.state.coinGroups
+import app.tingid.state.hiddenScheduledOf
 import app.tingid.state.onTheWay
 import app.tingid.state.scheduledOf
 import app.tingid.text.OTHER_CHAIN_USER
@@ -231,7 +232,7 @@ fun WalletScreen() {
             }
         }
 
-        if (user != null) ScheduledSection(w, scheduledOf(w.coins, views), acting = null, info = SCHEDULED_INFO)
+        if (user != null) ScheduledSection(w, scheduledOf(w.coins, views), hiddenScheduledOf(w.coins, views), acting = null, info = SCHEDULED_INFO)
 
         if (user != null) PendingList(pending, onRetry = services.pending::retry, onDismiss = services.pending::dismiss, onSpeedUp = services.pending::speedUp)
 

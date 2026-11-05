@@ -35,6 +35,7 @@ import app.tingid.chain.formatAmount
 import app.tingid.chain.hex
 import app.tingid.state.Acting
 import app.tingid.state.ActivityFilter
+import app.tingid.state.hiddenScheduledOf
 import app.tingid.state.onTheWay
 import app.tingid.state.scheduledOf
 import app.tingid.text.capped
@@ -160,7 +161,7 @@ fun CoinScreen(route: CoinRoute) {
             }
         }
     }) {
-        ScheduledSection(w, scheduled, Acting(c, account))
+        ScheduledSection(w, scheduled, hiddenScheduledOf(coins, accountViews.views), Acting(c, account))
 
         if (w.user != null) PendingList(waiting, onRetry = services.pending::retry, onDismiss = services.pending::dismiss, onSpeedUp = services.pending::speedUp)
 
