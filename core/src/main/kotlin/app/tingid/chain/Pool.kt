@@ -24,6 +24,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -557,25 +558,36 @@ class NodePool(
         }
     }
 
-    /** Sent to every node; the answer of the best one that answers decides, the others only pass it on. */
+    /**
+     * Sent to every node. It is sent once any node takes it, whatever the
+     * others say: nodes of different makes may refuse differently, and one
+     * that has it passes it on. It is refused only when no node took it and
+     * every one answered: then by the first refusal in the user's order. A
+     * node that gave no answer may have it, so the outcome is unknown then
+     * ([MaybeSent]).
+     */
     override suspend fun submit(tx: ByteArray, notBefore: Long?): String = withContext(confined) {
         val targets = order()
         if (targets.isEmpty()) throw NodeError("no node answers")
-        val sent = targets.map { node -> scope.async { node.submit(tx, notBefore) } }
-        var failure: Throwable? = null
-        var maybe: MaybeSent? = null
-        for ((i, s) in sent.withIndex()) {
-            try {
-                return@withContext s.await()
-            } catch (e: Exception) {
-                if (e is MaybeSent) maybe = maybe ?: e
-                else if (!nodeFailed(e)) throw e
-                fail(targets[i], e)
-                failure = failure ?: e
+        val answers = Channel<Pair<Int, Result<String>>>(targets.size)
+        for ((i, node) in targets.withIndex()) scope.launch { answers.send(i to runCatching { node.submit(tx, notBefore) }) }
+        val maybe = arrayOfNulls<MaybeSent>(targets.size)
+        val refused = arrayOfNulls<Throwable>(targets.size)
+        val failed = arrayOfNulls<Throwable>(targets.size)
+        repeat(targets.size) {
+            val (i, answer) = answers.receive()
+            answer.onSuccess { return@withContext it }
+            val e = answer.exceptionOrNull()!!
+            if (e !is Exception) throw e
+            when {
+                e is MaybeSent -> maybe[i] = e
+                !nodeFailed(e) -> refused[i] = e
+                else -> failed[i] = e
             }
+            if (e is MaybeSent || nodeFailed(e)) fail(targets[i], e)
         }
-        // A node that may have it counts for more than one that was not reached.
-        throw maybe ?: failure!!
+        // A node that may have it counts for more than one that refused it, and a refusal for more than a failure.
+        throw maybe.filterNotNull().firstOrNull() ?: refused.filterNotNull().firstOrNull() ?: failed.filterNotNull().first()
     }
 
     override suspend fun transaction(id: String): TransactionLookup? = first { it.transaction(id) }

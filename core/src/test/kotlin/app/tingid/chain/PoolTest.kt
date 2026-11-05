@@ -555,21 +555,45 @@ class PoolTest {
     // ---- Transactions -----------------------------------------------------------------------
 
     @Test
-    fun `transactions go to every node - the best one that answers decides`() = runBlocking {
+    fun `transactions go to every node, and one any node takes is sent`() = runBlocking {
         val p = pool("b" to Fake(submit = { unreachable() }), "a" to Fake())
         p.status()
         val tx = byteArrayOf(1)
         assertEquals(transactionId(unhex(DEV), tx).hex(), p.submit(tx))
         assertEquals(listOf("a", "b"), submitted.sorted())
-        assertEquals(NodeState.Down, states(p)["b"])
     }
 
     @Test
-    fun `transactions are refused when the best node refuses them, whatever the others say`() = runBlocking {
-        val p = pool("b" to Fake(submit = { error("nonce too low", 400) }), "a" to Fake())
+    fun `a transaction one node refuses and another takes is sent, though the refusal comes first`() = runBlocking {
+        val p = pool(
+            "b" to Fake(submit = { error("nonce too low", 400) }),
+            "a" to Fake(
+                submit = { tx ->
+                    Thread.sleep(100)
+                    json(buildJsonObject { put("id", transactionId(unhex(DEV), tx).hex()) })
+                },
+            ),
+        )
         p.status()
-        val e = failure<NodeError> { p.submit(byteArrayOf(1)) }
-        assertEquals("nonce too low", e.message)
+        val tx = byteArrayOf(1)
+        assertEquals(transactionId(unhex(DEV), tx).hex(), p.submit(tx))
+        assertEquals(mapOf("b" to NodeState.Ok, "a" to NodeState.Ok), states(p))
+    }
+
+    @Test
+    fun `a transaction is refused when every node answered and refused it, by the first one's reason`() = runBlocking {
+        val p = pool("b" to Fake(submit = { error("nonce too low", 400) }), "a" to Fake(submit = { error("fee too low", 400) }))
+        p.status()
+        assertEquals("nonce too low", failure<NodeError> { p.submit(byteArrayOf(1)) }.message)
+    }
+
+    @Test
+    fun `a transaction one node refuses while another gives no answer may have gone in`() = runBlocking {
+        val p = pool("b" to Fake(submit = { error("nonce too low", 400) }), "a" to Fake(submit = { unreachable() }))
+        p.status()
+        val tx = byteArrayOf(1)
+        assertEquals(transactionId(unhex(DEV), tx).hex(), failure<MaybeSent> { p.submit(tx) }.txId)
+        assertEquals(mapOf("b" to NodeState.Ok, "a" to NodeState.Down), states(p))
     }
 
     @Test
