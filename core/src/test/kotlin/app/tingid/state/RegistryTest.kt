@@ -274,3 +274,68 @@ class ProposalStatusTest {
         assertEquals(2, chain.asked.size)
     }
 }
+
+class OpenRecoveriesTest {
+    private val me = filled(0x3a)
+    private val mom = filled(0x47)
+    private val bob = filled(0x48)
+    private val policy = filled(0x50)
+    private val thief = Id.Key(policy, filled(4, 65))
+    private val phone = Id.Key(policy, filled(5, 65))
+
+    /** Recovery epoch 2, two guardians: a recovery needs both. */
+    private val core = Id.Core(0, 0, 2, 0, 1, 1, 2, 2, 0, 604_800, 172_800, 0)
+
+    private fun proposal(keys: List<Id.Key>, epoch: Long = 2) = Id.proposalHash(me, epoch, Id.encodeKeyList(keys))
+    private fun item(height: Long, e: Id.Event) = ActivityItem(height, height * 60, "t$height", filled(0x1d), identity = e)
+    private fun approved(height: Long, guardian: ByteArray, approvals: Long, reachedAt: Long = 0, keys: List<Id.Key> = listOf(thief), epoch: Long = 2, of: ByteArray = me) =
+        item(height, Id.Event.RecoveryApproved(of, Id.proposalHash(of, epoch, Id.encodeKeyList(keys)), guardian, approvals, reachedAt, keys))
+    private fun withdrawn(height: Long, guardian: ByteArray, approvals: Long, keys: List<Id.Key> = listOf(thief)) =
+        item(height, Id.Event.RecoveryWithdrawn(me, proposal(keys), guardian, approvals, 0))
+
+    /** Newest first, as a scan gives them. */
+    private fun open(vararg items: ActivityItem, here: List<Id.Key> = listOf(phone)) = openRecoveries(items.reversed(), me, core, here)
+
+    @Test
+    fun `an approval of this recovery epoch is open, with who approves and where it stands`() {
+        val one = open(approved(10, mom, 1)).single()
+        assertArrayEquals(proposal(listOf(thief)), one.proposal)
+        assertEquals(listOf(thief), one.keys)
+        assertEquals(1L, one.approvals)
+        assertEquals(0L, one.reachedAt)
+        assertEquals(listOf(mom.hex()), one.guardians.map { it.hex() })
+        // The second approval reaches the threshold.
+        val both = open(approved(10, mom, 1), approved(11, bob, 2, reachedAt = 660)).single()
+        assertEquals(2L, both.approvals)
+        assertEquals(660L, both.reachedAt)
+        assertEquals(listOf(mom.hex(), bob.hex()), both.guardians.map { it.hex() })
+    }
+
+    @Test
+    fun `a withdrawal takes its guardian out, and one that leaves no approval closes it`() {
+        val left = open(approved(10, mom, 1), approved(11, bob, 2, reachedAt = 660), withdrawn(12, bob, 1)).single()
+        assertEquals(1L, left.approvals)
+        assertEquals(0L, left.reachedAt)
+        assertEquals(listOf(mom.hex()), left.guardians.map { it.hex() })
+        assertEquals(0, open(approved(10, mom, 1), withdrawn(12, mom, 0)).size)
+    }
+
+    @Test
+    fun `a recovery that ran, one of an earlier epoch, and another identity's are not open`() {
+        assertEquals(0, open(approved(10, mom, 2, reachedAt = 600), item(20, Id.Event.Recovered(me, 1))).size)
+        assertEquals(0, open(approved(10, mom, 1, epoch = 1)).size)
+        // The user as a guardian of someone else.
+        assertEquals(0, open(approved(10, me, 1, of = filled(0x66))).size)
+    }
+
+    @Test
+    fun `a recovery to this phone's keys alone is the user's own, one with any other key is not`() {
+        assertEquals(0, open(approved(10, mom, 1, keys = listOf(phone))).size)
+        assertEquals(1, open(approved(10, mom, 1, keys = listOf(phone, thief))).size)
+        // The same public key under another policy is another key.
+        assertEquals(1, open(approved(10, mom, 1, keys = listOf(Id.Key(filled(0x51), phone.params)))).size)
+        // Several at once, the newest first.
+        val two = open(approved(10, mom, 1), approved(11, bob, 1, keys = listOf(phone, thief)))
+        assertEquals(listOf(proposal(listOf(phone, thief)).hex(), proposal(listOf(thief)).hex()), two.map { it.proposal.hex() })
+    }
+}

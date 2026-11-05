@@ -80,6 +80,7 @@ import app.tingid.ui.Card
 import app.tingid.ui.CoinRoute
 import app.tingid.ui.CoinsTab
 import app.tingid.ui.IconCircle
+import app.tingid.ui.IdentityTab
 import app.tingid.ui.InkHeader
 import app.tingid.ui.ListItem
 import app.tingid.ui.LocalNav
@@ -136,6 +137,8 @@ fun WalletScreen() {
     val excluded = coinIds + data.settings.dismissed + listOfNotNull(w.info?.canonical?.registry?.hex())
     val accountsKey = w.accounts.map { it.account.hex() }
     val found by remember(w.scope, accountsKey, excluded) { services.coins.discovered(w.scope, w.accounts, excluded) }.collectAsState(initial = emptyList())
+    // A recovery of the identity that guardians approve shows here too: its devices cannot stop it.
+    val recovery = rememberOpenRecoveries(w).firstOrNull()
 
     val user = w.user
     val info = w.info
@@ -188,6 +191,17 @@ fun WalletScreen() {
                 }
             }
             WarningBanner(text)
+        }
+        val identity = w.identity
+        if (recovery != null && identity != null) {
+            WarningBanner(
+                buildAnnotatedString {
+                    append("${recoveryHeadline(recovery, identity.core)}: only your guardians can stop it. ")
+                    withLink(LinkAnnotation.Clickable("identity", TextLinkStyles(SpanStyle(textDecoration = TextDecoration.Underline))) { nav.openTab(IdentityTab) }) {
+                        append("See Identity")
+                    }
+                },
+            )
         }
         if (user != null && user.kind == UserKind.Identity && info != null && !w.otherChain && w.identity == null && !w.identityLoading) {
             Banner("Waiting for the next block to create this identity.", BannerTone.Warning)

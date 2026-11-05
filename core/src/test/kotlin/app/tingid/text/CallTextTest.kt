@@ -45,9 +45,19 @@ class CallTextTest {
     }
 
     @Test
-    fun `the payment slot shows the payment as given`() {
+    fun `the payment slot shows the payment leaving the account`() {
         val t = Template.parse("buy(item:u64): Buy item {item} for {payment}")
         val parts = callSentence(t, listOf(SlotValue.Integer(BigInteger.valueOf(7))), CallPart.Value("25 DLR"), emptyMap(), followed, time)
-        assertEquals("Buy item 7 for 25 DLR", callLine(parts))
+        assertEquals("Buy item 7 for −25 DLR", callLine(parts))
+        // A sentence cannot make it read as received.
+        val claim = callSentence(Template.parse("claim(): Claim your {payment} reward"), emptyList(), CallPart.Value("500 DLR", strange = true), emptyMap(), followed, time)
+        assertEquals("Claim your −500 DLR reward", callLine(claim))
+        assertTrue((claim[1] as CallPart.Value).strange)
+    }
+
+    @Test
+    fun `a payment in the app's own words names what leaves and where it goes`() {
+        assertEquals("Pay 500 DLR to 5e3f01…a1b2", paymentLine("500 DLR", "5e3f01…a1b2"))
+        assertEquals("Burn 500 DLR", paymentLine("500 DLR", null))
     }
 }

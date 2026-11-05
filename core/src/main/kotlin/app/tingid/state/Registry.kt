@@ -265,6 +265,51 @@ suspend fun proposalStatus(node: ChainApi, registry: ByteArray, target: ByteArra
     )
 }
 
+/**
+ * A recovery of an identity that guardians approve, as its events tell: the
+ * keys it installs, the guardians the events show approving it, and its
+ * approvals and `reached_at` after the latest of them.
+ */
+class OpenRecovery(val proposal: ByteArray, val keys: List<Id.Key>, val approvals: Long, val reachedAt: Long, val guardians: List<ByteArray>)
+
+/**
+ * The recoveries of `id` that guardians approve in its current recovery epoch
+ * (`core`), found in its activity (newest first, as a scan has it), the newest
+ * first. A proposal counts when its key list makes it one of this epoch: a
+ * recovery that ran, or a change that applied since, moved the epoch on. Each
+ * stands as its latest approval or withdrawal left it, and one without
+ * approvals is not open. One that installs only keys in `here`, this phone's,
+ * is the user's own, asked for on this phone, and is left out.
+ */
+fun openRecoveries(activity: List<ActivityItem>, id: ByteArray, core: Id.Core, here: List<Id.Key>): List<OpenRecovery> {
+    class Open(val keys: List<Id.Key>, var approvals: Long, var reachedAt: Long, val guardians: MutableList<ByteArray>)
+    val open = LinkedHashMap<String, Open>()
+    for (item in activity.asReversed()) {
+        when (val e = item.identity) {
+            is Id.Event.RecoveryApproved -> {
+                if (!equal(e.id, id) || !equal(Id.proposalHash(id, core.recoveryEpoch, Id.encodeKeyList(e.keys)), e.proposal)) continue
+                val o = open.getOrPut(e.proposal.hex()) { Open(e.keys, 0, 0, ArrayList()) }
+                o.approvals = e.approvals
+                o.reachedAt = e.reachedAt
+                if (o.guardians.none { equal(it, e.guardian) }) o.guardians.add(e.guardian)
+            }
+            is Id.Event.RecoveryWithdrawn -> {
+                val o = (if (equal(e.id, id)) open[e.proposal.hex()] else null) ?: continue
+                o.approvals = e.approvals
+                o.reachedAt = e.reachedAt
+                o.guardians.removeAll { equal(it, e.guardian) }
+            }
+            // Whatever the core read last says, a recovery that ran leaves nothing open.
+            is Id.Event.Recovered -> if (equal(e.id, id)) open.clear()
+            else -> {}
+        }
+    }
+    fun ours(k: Id.Key) = here.any { equal(it.policy, k.policy) && equal(it.params, k.params) }
+    return open.entries.reversed()
+        .filter { (_, o) -> o.approvals > 0 && !o.keys.all(::ours) }
+        .map { (p, o) -> OpenRecovery(unhex(p), o.keys, o.approvals, o.reachedAt, o.guardians.toList()) }
+}
+
 /** Which of `candidates` guard `id` right now. */
 suspend fun linkedGuardians(node: ChainApi, registry: ByteArray, id: ByteArray, candidates: List<ByteArray>): List<ByteArray> {
     if (candidates.isEmpty()) return emptyList()

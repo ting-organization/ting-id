@@ -3,7 +3,10 @@
 // included, so the words alone cannot give it: the app asks a node for the
 // registry's Created events, one per identity, then reads each identity's
 // current keys. Events come from any node; the keys are read with proofs, so
-// a node can hide an identity but never invent one.
+// a node can hide an identity but never invent one. Anyone can list a public
+// key in an identity of their own, so each found one comes with the block it
+// was created in, the earliest first: a key is public only once an identity
+// lists it, so the one created first is normally the phrase's own.
 package app.tingid.state
 
 import app.tingid.chain.BlockEvents
@@ -60,22 +63,29 @@ suspend fun identitiesWithKey(node: ChainApi, registry: ByteArray, key: Id.Key, 
     return ids.filterIndexed { i, _ -> i in hits }
 }
 
-/** The identities on the chain that list `key`; `progress` hears the height read up to and the chain's height. */
+/** An identity found to list a key, and the block of its Created event: its height and time (seconds). */
+class FoundIdentity(val id: ByteArray, val height: Long, val time: Long)
+
+/**
+ * The identities on the chain that list `key`, the earliest created first;
+ * `progress` hears the height read up to and the chain's height.
+ */
 suspend fun findIdentitiesWithKey(
     node: ChainApi,
     registry: ByteArray,
     key: Id.Key,
     progress: ((height: Long, tip: Long) -> Unit)? = null,
-): List<ByteArray> {
-    val ids = LinkedHashMap<String, ByteArray>()
+): List<FoundIdentity> {
+    val ids = LinkedHashMap<String, FoundIdentity>()
     var from = 1L
     while (true) {
         val page = node.contractEvents(registry, Id.CREATED_TOPIC, from, EVENTS_PAGE)
-        for (id in createdIds(page.blocks, registry)) ids[id.hex()] = id
+        for (b in page.blocks) for (id in createdIds(listOf(b), registry)) ids.getOrPut(id.hex()) { FoundIdentity(id, b.height, b.time) }
         progress?.invoke(minOf(page.next - 1, page.height), page.height)
         if (page.next > page.height) break
         if (page.next <= from) throw NodeError("the node gave an events page that does not move on")
         from = page.next
     }
-    return identitiesWithKey(node, registry, key, ids.values.toList())
+    val listing = identitiesWithKey(node, registry, key, ids.values.map { it.id }).map { it.hex() }.toSet()
+    return ids.values.filter { it.id.hex() in listing }.sortedBy { it.height }
 }

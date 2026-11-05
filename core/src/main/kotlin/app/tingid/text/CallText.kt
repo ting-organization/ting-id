@@ -22,18 +22,22 @@ sealed class CallPart {
 
 /**
  * The sentence with its values in, as the parts a screen styles. `payment`:
- * the call's payment as the app shows it, for `{payment}`. `coins`: the coins
- * the user follows, by hex, the only ones that go by name. `time` formats Unix
- * seconds.
+ * the call's payment as the app shows it, for `{payment}`, which shows it
+ * leaving the account, as `−25 DLR`: whatever the sentence around it says, it
+ * is never something the user receives. `coins`: the coins the user follows,
+ * by hex, the only ones that go by name. `time` formats Unix seconds.
  */
 fun callSentence(template: Template, values: List<SlotValue>, payment: CallPart.Value?, names: Names, coins: Map<String, CoinInfo>, time: (Long) -> String): List<CallPart> =
     template.parts.map { part ->
         when (part) {
             is Template.Part.Words -> CallPart.Words(part.text)
             is Template.Part.Field -> values[part.index].let { CallPart.Value(showValue(it, names, coins, time), strange(it, names, coins)) }
-            Template.Part.Payment -> payment ?: CallPart.Value("no payment", strange = true)
+            Template.Part.Payment -> payment?.let { CallPart.Value("−${it.text}", it.strange) } ?: CallPart.Value("no payment", strange = true)
         }
     }
+
+/** What a call's payment does, in the app's own words: `Pay 25 DLR to Anna`, or `Burn 25 DLR` without a recipient. */
+fun paymentLine(amount: String, to: String?): String = if (to == null) "Burn $amount" else "Pay $amount to $to"
 
 /** An amount of `coin`: in its units when the user follows it, else its smallest units and the coin's ID. */
 fun showAmount(coin: ByteArray, amount: BigInteger, coins: Map<String, CoinInfo>): String =

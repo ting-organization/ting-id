@@ -1,8 +1,8 @@
 // The Identity tab: the active user's identity with its guardians and
 // accounts, its devices once it has more than one (its keys, and adding them,
-// in the advanced settings), the changes waiting to apply, and the ways into
-// a recovery. A simple account is offered an identity; a phone without a
-// user, the welcome.
+// in the advanced settings), the changes waiting to apply, a recovery its
+// guardians approve, and the ways into a recovery. A simple account is
+// offered an identity; a phone without a user, the welcome.
 package app.tingid.ui.screens
 
 import androidx.compose.foundation.background
@@ -69,6 +69,7 @@ import app.tingid.state.CANCEL_CHUNK
 import app.tingid.state.IdentityInfo
 import app.tingid.state.KeyMeta
 import app.tingid.state.LinkedKey
+import app.tingid.state.OpenRecovery
 import app.tingid.state.SubmittedTx
 import app.tingid.state.User
 import app.tingid.state.UserKind
@@ -76,10 +77,12 @@ import app.tingid.state.WorkspaceState
 import app.tingid.state.deviceKeyOf
 import app.tingid.state.guardiansOf
 import app.tingid.state.linkedDeviceKeys
+import app.tingid.state.openRecoveries
 import app.tingid.state.policyLabel
 import app.tingid.state.sent
 import app.tingid.state.slotLabel
 import app.tingid.state.userIdentity
+import app.tingid.text.Names
 import app.tingid.text.OTHER_CHAIN_USER
 import app.tingid.text.count
 import app.tingid.text.describeOperation
@@ -185,28 +188,14 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
     val activity = LocalActivity.current
     val nav = LocalNav.current
     val p = t
-    val users = services.store.data.collectAsState().value.users
-    val contacts = services.store.data.collectAsState().value.contacts
     val sending = rememberSending()
     HoldWhileBusy(sending.busy != null)
-    val me = userIdentity(user)
     val id = w.identity
     val info = w.info
+    // Recoveries of this identity that guardians approve: its devices cannot stop one, only the guardians can.
+    val recoveries = rememberOpenRecoveries(w)
 
-    // Who may be a guardian, as this device knows: the ones named at creation or linked from here, the contacts
-    // that are identities, and the other identities here. A restored identity finds its guardians among the contacts.
-    val known = LinkedHashMap<String, ByteArray>()
-    guardiansOf(user).forEach { known[it] = unhex(it) }
-    for (c in contacts) c.identity?.takeIf { isHex(it, 32) }?.let { known[it.lowercase()] = unhex(it) }
-    for (u in users) {
-        val other = userIdentity(u) ?: continue
-        if (me != null && !equal(other.id, me.id)) known[other.id.hex()] = other.id
-    }
-    val asked = if (me != null && id != null) me else null
-    val candidates = known.values.toList()
-    val guardians by remember(asked?.id?.hex(), asked?.registry?.hex(), known.keys.sorted()) {
-        services.registry.linkedGuardians(asked, candidates)
-    }.collectAsState(initial = emptyList())
+    val guardians = rememberLinkedGuardians(w, user)
     // One fee for cancelling and applying pending changes; registry operations pay nothing themselves.
     val fee = rememberFee(null)
 
@@ -355,6 +344,7 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
     Screen(header = header) {
         if (w.otherChain) Banner(OTHER_CHAIN_USER, BannerTone.Warning)
         sending.error?.let { Banner(sentence(it), BannerTone.Danger) }
+        if (id != null) for (r in recoveries) RecoveryNotice(r, id, w.names)
 
         if (id != null && linked.isEmpty()) NotThisPhone(w, user, id, deviceKey, pendingKey, sending)
 
@@ -421,6 +411,84 @@ private fun ConfirmFee(fee: FeeChoice) {
         Rule()
         Box(Modifier.padding(vertical = 6.dp)) { FeeRow(fee) }
         Rule()
+    }
+}
+
+/**
+ * The guardians of the user's identity that this device knows, read again
+ * with each block. Who may be a guardian, as this device knows: the ones named
+ * at creation or linked from here, the contacts that are identities, and the
+ * other identities here. A restored identity finds its guardians among the
+ * contacts.
+ */
+@Composable
+internal fun rememberLinkedGuardians(w: WorkspaceState, user: User?): List<ByteArray> {
+    val services = LocalServices.current
+    val data by services.store.data.collectAsState()
+    val me = user?.let(::userIdentity)
+    val known = LinkedHashMap<String, ByteArray>()
+    user?.let(::guardiansOf)?.forEach { known[it] = unhex(it) }
+    for (c in data.contacts) c.identity?.takeIf { isHex(it, 32) }?.let { known[it.lowercase()] = unhex(it) }
+    for (u in data.users) {
+        val other = userIdentity(u) ?: continue
+        if (me != null && !equal(other.id, me.id)) known[other.id.hex()] = other.id
+    }
+    val asked = if (me != null && w.identity != null) me else null
+    val candidates = known.values.toList()
+    val guardians by remember(asked?.id?.hex(), asked?.registry?.hex(), known.keys.sorted()) {
+        services.registry.linkedGuardians(asked, candidates)
+    }.collectAsState(initial = emptyList())
+    return guardians
+}
+
+/**
+ * The recoveries of the active user's identity that guardians approve now,
+ * found in its activity with no reads of their own; one to keys of this phone
+ * alone, which the user asked for here, is not among them.
+ */
+@Composable
+internal fun rememberOpenRecoveries(w: WorkspaceState): List<OpenRecovery> {
+    val services = LocalServices.current
+    val scan by remember(w.scope) { services.activities.scan(w.scope) }.collectAsState(initial = null)
+    val id = w.identity
+    val c = w.info?.canonical
+    if (id == null || c == null) return emptyList()
+    val here = w.keys.map { Id.Key(c.policyFor(it.scheme), unhex(it.pub)) }
+    return openRecoveries(scan?.activity ?: emptyList(), id.id, id.core, here)
+}
+
+/** A recovery's headline: begun, or under way once enough guardians approve. */
+internal fun recoveryHeadline(r: OpenRecovery, core: Id.Core): String =
+    if (r.reachedAt > 0 && r.approvals >= core.required) "Your identity is being recovered" else "A recovery of your identity has begun"
+
+/** A recovery of the user's identity that guardians approve: who, when it can finish, and that only guardians can stop it. */
+@Composable
+private fun RecoveryNotice(r: OpenRecovery, id: IdentityInfo, names: Names) {
+    val p = t
+    val core = id.core
+    val at = if (r.reachedAt > 0 && r.approvals >= core.required) r.reachedAt + core.recoveryDelay else null
+    // By name when the events show each approval; one given before they were read is counted only.
+    val who = if (r.guardians.size.toLong() == r.approvals) r.guardians.joinToString(", ") { nameOf(names, it) } else count(r.approvals, "guardian")
+    val stands = when {
+        at == null -> ", ${r.approvals} of ${core.required} needed"
+        at <= nowSeconds() -> "; anyone can finish it now"
+        else -> "; it can finish ${relativeTime(at)}"
+    }
+    Card(tone = CardTone.Warning) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            IconCircle(Icons.Outlined.Shield, p.warning, p.warningSoft)
+            Column(Modifier.weight(1f)) {
+                Sub(recoveryHeadline(r, core))
+                Caption("$who approved$stands. Not you? Ask your guardians to withdraw.")
+            }
+            Info(
+                "Recovery",
+                "Guardians can hand your identity to new keys, ${relativeDuration(core.recoveryDelay)} after ${core.required} of them approve. " +
+                    "Your devices cannot stop it: only guardians can, each by withdrawing their approval before it finishes. " +
+                    "Once it finishes, the new keys act for your identity and its accounts, and this phone no longer can. " +
+                    "If you asked for it on another phone, there is nothing to do.",
+            )
+        }
     }
 }
 
@@ -530,7 +598,8 @@ private fun GuardiansSection(w: WorkspaceState, id: IdentityInfo, guardians: Lis
         "Guardians",
         action = if (canAct) "Link" else null,
         onAction = { propose(ProposeRoute(kind = "addGuardian")) },
-        info = "People you trust. $required of them can hand the identity to new keys if yours are lost, after ${relativeDuration(id.core.recoveryDelay)} that you can use to stop it. " +
+        info = "People you trust. If yours are lost, $required of them can hand the identity to new keys, ${relativeDuration(id.core.recoveryDelay)} after they approve. " +
+            "Your devices cannot stop a recovery: only guardians can, by withdrawing their approvals while it waits. " +
             "They cannot move funds themselves, but the keys they hand it to can${if (required == 1L) ": with one approval needed, a single guardian could" else ""}.",
     )
     Card(padded = false) {
