@@ -36,9 +36,8 @@ fun FeeSettings(w: WorkspaceState) {
     if (feeCoin == null) return
     val symbol = feeCoin.config.symbol
     val known = rates
-    val rate = known?.let { FeeMarket.medianRate(it, feeCoin.hex) }
     val paying = if (known != null) minOf(FeeMarket.SAMPLE, known.count { it.coin == feeCoin.hex }) else 0
-    fun amount(share: FeeMarket.Share) = "${formatAmount(FeeMarket.feeFor(rate, share.value), feeCoin.config.decimals)} $symbol"
+    fun amount(share: FeeMarket.Share) = "${formatAmount(FeeMarket.fee(known ?: emptyList(), feeCoin.hex, share), feeCoin.config.decimals)} $symbol"
     SectionHeader("Fees", info = FEE_SETTINGS_INFO)
     Card(padded = false) {
         ListItem(

@@ -94,6 +94,14 @@ class FeeChoice internal constructor(
     /** What is wrong with the fee, as a message to show; null when nothing is. */
     val problem: String? get() = quote.problem
 
+    /** Whether the automatic fee waits for the person's word ([problem] says why): [confirmAutomatic] gives it. */
+    val review: Boolean get() = quote.review
+
+    /** Pays the automatic fee as it is now, as if typed. */
+    fun confirmAutomatic() {
+        typed.value = quote.amount
+    }
+
     /** Why the fee is not in the fee coin, when it fell back. */
     val notice: String? get() = quote.notice
 
