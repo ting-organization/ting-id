@@ -51,6 +51,7 @@ import app.tingid.chain.trimWhiteSpace
 import app.tingid.chain.unhex
 import app.tingid.chain.wipe
 import app.tingid.state.ChainInfo
+import app.tingid.state.FoundIdentity
 import app.tingid.state.KeyMeta
 import app.tingid.state.PhraseEntry
 import app.tingid.state.SubmittedTx
@@ -91,6 +92,7 @@ import app.tingid.ui.Spacing
 import app.tingid.ui.Sub
 import app.tingid.ui.TAKEN
 import app.tingid.ui.Tone
+import app.tingid.ui.formatTime
 import app.tingid.ui.identity.PhraseInput
 import app.tingid.ui.nameTaken
 import app.tingid.ui.openTab
@@ -126,8 +128,8 @@ private val RESTORE_BY = listOf(
 private sealed class Restore {
     class Reading(val height: Long, val tip: Long) : Restore()
 
-    /** `words`: the words read for, which the identity is then restored with. */
-    class Found(val ids: List<String>, val words: List<String>) : Restore()
+    /** `found`: the identities that list the key, the earliest created first; `words`: the words read for, which the identity is then restored with. */
+    class Found(val found: List<FoundIdentity>, val words: List<String>) : Restore()
 
     data object None : Restore()
 }
@@ -348,7 +350,7 @@ fun NewUserScreen(route: NewUserRoute) {
                     if (scan == mine) restore = Restore.Reading(height, tip)
                 }
                 if (scan != mine) return@launch
-                restore = if (ids.isNotEmpty()) Restore.Found(ids.map { it.hex() }, typed) else Restore.None
+                restore = if (ids.isNotEmpty()) Restore.Found(ids, typed) else Restore.None
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (scan != mine) return@launch
@@ -620,9 +622,21 @@ private fun RestoreResult(restore: Restore?, onFinish: (String) -> Unit, onById:
     when (restore) {
         is Restore.Reading -> Caption("Looking for the identity · block ${restore.height} of ${restore.tip}")
         is Restore.Found -> Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-            Caption(if (restore.ids.size == 1) "This phrase belongs to an identity:" else "This phrase belongs to more than one identity. Choose one:")
-            for (id in restore.ids) {
-                ListItem("Identity ${id.take(8)}…${id.takeLast(6)}", subtitle = "its keys list this phrase’s key", chevron = true, onClick = { onFinish(id) })
+            if (restore.found.size == 1) {
+                Caption("An identity lists this phrase’s key:")
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Caption("More than one identity lists this phrase’s key, the earliest first. Choose one:", Modifier.weight(1f))
+                    Info(
+                        "Several identities",
+                        "Anyone can list a public key in a new identity of their own, so more than one can list yours. " +
+                            "A key becomes public only when an identity lists it, so the one created first is normally yours.",
+                    )
+                }
+            }
+            for (f in restore.found) {
+                val id = f.id.hex()
+                ListItem("Identity ${id.take(8)}…${id.takeLast(6)}", subtitle = "created ${formatTime(f.time)}", chevron = true, onClick = { onFinish(id) })
             }
         }
         Restore.None -> Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
