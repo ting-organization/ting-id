@@ -86,3 +86,6 @@ that identity.
   cancelled, and key changes wait the change delay. A guardian recovery, which
   waits less, installs the key of new words and voids the thief's pending
   changes; the old words then stop working.
+- **A recovery you did not ask for:** the Identity tab and the wallet show it
+  while it waits. The identity's devices cannot stop a recovery; only its
+  guardians can, by withdrawing their approvals.

@@ -475,7 +475,7 @@ fun NewUserScreen(route: NewUserRoute) {
                     Sub("Guardians")
                     Info(
                         "Guardians",
-                        "People you trust to restore your access. A majority of them must agree, and you can stop a recovery while it waits. With a single guardian, that one alone can hand your identity to new keys.",
+                        "People you trust to restore your access. A majority of them must agree, and only they can stop a recovery, by withdrawing their approvals while it waits. With a single guardian, that one alone can hand your identity to new keys.",
                     )
                 }
                 Caption("Optional: you can add them later.")
@@ -563,7 +563,7 @@ fun NewUserScreen(route: NewUserRoute) {
                     } else {
                         Caption(
                             "Savings withdrawals wait ${relativeDuration(savingsDelay)}; changes to the identity wait ${relativeDuration(changeDelay)}; guardians can " +
-                                "hand it over after ${relativeDuration(recoveryDelay)}. Everything stays cancellable while it waits.",
+                                "hand it over after ${relativeDuration(recoveryDelay)}. Withdrawals and changes stay cancellable while they wait.",
                         )
                     }
                 }

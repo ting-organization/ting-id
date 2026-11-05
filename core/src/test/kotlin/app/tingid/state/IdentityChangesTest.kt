@@ -12,6 +12,7 @@ import app.tingid.chain.filled
 import app.tingid.chain.publicKey
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -23,6 +24,17 @@ class IdentityChangesTest {
     private val c = Contracts.canonical(filled(0x26))
 
     private fun refused(check: Checked<*>?): String = (check as Checked.Refused).message
+
+    @Test
+    fun `a first guardian, or any with a threshold of 1, could recover alone`() {
+        fun core(guardians: Long, threshold: Long) = Id.Core(0, 0, 0, 0, 1, 1, guardians, 2, threshold, 604_800, 172_800, 0)
+        assertTrue(guardianAloneRecovers(core(0, 0)))
+        assertTrue(guardianAloneRecovers(core(3, 1)))
+        // More than half of two or three is two; a threshold of 2 is two.
+        assertFalse(guardianAloneRecovers(core(1, 0)))
+        assertFalse(guardianAloneRecovers(core(2, 0)))
+        assertFalse(guardianAloneRecovers(core(1, 2)))
+    }
 
     @Test
     fun `a device link for this identity gives its key`() {

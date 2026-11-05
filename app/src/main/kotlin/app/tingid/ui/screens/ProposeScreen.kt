@@ -42,6 +42,7 @@ import app.tingid.state.Checked
 import app.tingid.state.SubmittedTx
 import app.tingid.state.deviceLinkKey
 import app.tingid.state.fetchIdentity
+import app.tingid.state.guardianAloneRecovers
 import app.tingid.state.guardianCode
 import app.tingid.state.identityName
 import app.tingid.state.keyNameFor
@@ -435,6 +436,13 @@ fun ProposeScreen(route: ProposeRoute) {
                         "ID ${shortId(guardianId, 8, 6)}: check that their Identity shows the same. Link only someone you know.",
                         BannerTone.Info,
                         Icons.Outlined.VerifiedUser,
+                    )
+                }
+                // A first guardian, or any with a threshold of 1, could recover the identity alone: its devices cannot stop a recovery.
+                if (preview is Checked.Ok && guardianAloneRecovers(core)) {
+                    Banner(
+                        "With this change, one approval recovers your identity: ${nameOf(withGuardian(w.names), unhex(guardianId))} alone could hand it to new keys, and your devices could not stop it.",
+                        BannerTone.Warning,
                     )
                 }
             }
