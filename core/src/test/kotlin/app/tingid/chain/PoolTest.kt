@@ -44,17 +44,20 @@ private val values: List<String?> = fixtureValues.map { (it["value_hex"] as? Jso
  * height. The fixture's proofs hold on it: they do not depend on the chain.
  */
 private val DEV = "d1".repeat(32)
-private val OTHER_BLOCK = "ab".repeat(32)
 
 /** Headers fake nodes give, by block id. */
 private val fakeHeaders = ConcurrentHashMap<String, ByteArray>()
 
-/** The id of a block at `height` on `chainHex` with the fixture's state root, whose header fake nodes give. */
-private fun tipAt(height: Long, chainHex: String = DEV): String {
+/**
+ * The id of a block at `height` on `chainHex` with the fixture's state root,
+ * whose header fake nodes give; another `variant` is another block there.
+ */
+private fun tipAt(height: Long, chainHex: String = DEV, variant: Int = 0): String {
     val bytes = fixtureHeader.copyOf()
     unhex(chainHex).copyInto(bytes, 2)
     u64le(height).copyInto(bytes, 34)
     bytes.fill(0xff.toByte(), 82, 114)
+    bytes[278] = variant.toByte()
     val id = taggedHash("block", bytes).hex()
     fakeHeaders[id] = bytes
     return id
@@ -168,6 +171,19 @@ class PoolTest {
         }
     }
 
+    /** A status as a node at `height` with newest block `tip` gives it. */
+    private fun status(url: String, height: Long, tip: String) = json(
+        buildJsonObject {
+            put("chain_id", DEV)
+            put("height", height)
+            put("limits", JsonArray(emptyList()))
+            put("tip", tip)
+            put("work", "20")
+            put("mempool_count", 0)
+            put("name", url)
+        },
+    )
+
     private fun pool(vararg fakes: Pair<String, Fake>): NodePool {
         val byUrl = fakes.toMap()
         return NodePool(fakes.map { it.first }, make = { url -> NodeClient(url, http(url, byUrl.getValue(url))) }, now = { clock })
@@ -194,15 +210,15 @@ class PoolTest {
     // ---- Failover ------------------------------------------------------------------
 
     @Test
-    fun `reads from the node with the most work, and from the next when it does not answer`() = runBlocking {
-        var bDown = false
-        val p = pool("a" to Fake(), "b" to Fake(work = 25, storage = { asked -> if (bDown) unreachable() else answer(asked) }))
-        assertEquals("b", p.status().name)
+    fun `reads from the first node, whatever work another claims, and from the next when it does not answer`() = runBlocking {
+        var aDown = false
+        val p = pool("a" to Fake(storage = { asked -> if (aDown) unreachable() else answer(asked) }), "b" to Fake(work = 25))
+        assertEquals("a", p.status().name)
         assertEquals(values, p.read())
-        bDown = true
+        aDown = true
         assertEquals(values, p.read())
-        assertEquals(listOf("b", "b", "a"), served)
-        assertEquals(mapOf("a" to NodeState.Ok, "b" to NodeState.Down), states(p))
+        assertEquals(listOf("a", "a", "b"), served)
+        assertEquals(mapOf("a" to NodeState.Down, "b" to NodeState.Ok), states(p))
     }
 
     @Test
@@ -328,6 +344,15 @@ class PoolTest {
     }
 
     @Test
+    fun `stop using a node whose newest block is of another chain than it says`() = runBlocking {
+        val p = pool("a" to Fake(tip = tipAt(H, "ee".repeat(32))), "b" to Fake())
+        assertEquals("b", p.status().name)
+        val a = p.healthFlow.value[0]
+        assertEquals(NodeState.Distrusted, a.state)
+        assertEquals("its newest block is of another chain", a.problem)
+    }
+
+    @Test
     fun `stop using a node whose newest block is not at the height it says`() = runBlocking {
         val p = pool("a" to Fake(height = H + 5), "b" to Fake())
         p.status()
@@ -380,54 +405,147 @@ class PoolTest {
 
     @Test
     fun `let the other nodes confirm the block the answers come from`() = runBlocking {
-        val p = pool("a" to Fake(work = 30), "b" to Fake())
-        p.status()
-        p.read()
-        waitFor("b asked for the block") { "b" in blocksAsked }
+        // b is a block ahead, which a does not have yet; a's newest block b has.
+        val p = pool("a" to Fake(), "b" to Fake(height = H + 1, tip = tipAt(H + 1)))
+        assertEquals("a", p.status().name)
+        assertEquals(values, p.read())
+        assertEquals(listOf("a"), served)
+        assertTrue("b" in blocksAsked)
         // Confirmed once, the block is not asked about again.
+        val asked = blocksAsked.count { it == "b" }
         p.read()
         delay(100)
-        assertEquals(listOf("b"), blocksAsked)
+        assertEquals(asked, blocksAsked.count { it == "b" })
+        assertNull(p.notice.value)
+    }
+
+    @Test
+    fun `a node a block ahead does not answer until the other has its block - the one behind does`() = runBlocking {
+        val next = tipAt(H + 1)
+        // b answers from its newest block, which a does not have yet.
+        val p = pool("b" to Fake(height = H + 1, tip = next, storage = { answer(it, next) }), "a" to Fake())
+        assertEquals("a", p.status().name)
+        assertEquals(values, p.read())
+        assertEquals(listOf("a"), served)
+        assertEquals(mapOf("b" to NodeState.Ok, "a" to NodeState.Ok), states(p))
+        assertNull(p.notice.value)
+    }
+
+    @Test
+    fun `an answer from a block no other node has is not taken, and the node is not marked down for it`() = runBlocking {
+        val other = tipAt(H, variant = 2)
+        val p = pool("a" to Fake(storage = { answer(it, other) }), "b" to Fake())
+        p.status()
+        assertEquals(values, p.read())
+        assertEquals(listOf("a", "b"), served)
+        assertEquals(mapOf("a" to NodeState.Ok, "b" to NodeState.Ok), states(p))
+    }
+
+    @Test
+    fun `one node far ahead of a second, with blocks it does not have, is not believed, and the user is told`() = runBlocking {
+        val ahead = tipAt(H + 50)
+        val p = pool("a" to Fake(height = H + 50, tip = ahead, work = 99, storage = { answer(it, ahead) }), "b" to Fake())
+        assertEquals("b", p.status().name)
+        assertEquals(values, p.read())
+        assertEquals(listOf("b"), served)
+        assertEquals(PoolNotice.Split, p.notice.value)
+        // Two nodes cannot outvote each other: neither is put aside, however long it lasts.
+        clock += AHEAD_SECONDS + 1
+        p.status()
+        assertEquals(mapOf("a" to NodeState.Ok, "b" to NodeState.Ok), states(p))
+        assertEquals(PoolNotice.Split, p.notice.value)
+    }
+
+    @Test
+    fun `a second node far behind is told of too - its answers may hide what happened since`() = runBlocking {
+        // a, far ahead, has b's newest block; b has none of a's.
+        val p = pool("a" to Fake(height = H + 50, tip = tipAt(H + 50)), "b" to Fake())
+        assertEquals("b", p.status().name)
+        assertEquals(PoolNotice.Split, p.notice.value)
+    }
+
+    @Test
+    fun `a node that stays ahead with blocks no other node has is outvoted, even with a new one each time`() = runBlocking {
+        var step = 0L
+        val p = pool(
+            "a" to Fake(status = { status("a", H + 5 + step, tipAt(H + 5 + step)) }),
+            "b" to Fake(),
+            "c" to Fake(),
+        )
+        assertEquals("b", p.status().name)
+        // Five blocks ahead: within what honest nodes may be apart, so nothing is said yet.
+        assertNull(p.notice.value)
+        repeat(4) {
+            step++
+            clock += AHEAD_SECONDS / 3
+            p.status()
+        }
+        assertEquals(NodeState.Distrusted, states(p)["a"])
+        assertEquals("its newest blocks are not on your other nodes’ chain", p.healthFlow.value[0].problem)
+        assertEquals(NodeState.Ok, states(p)["b"])
+        assertEquals(NodeState.Ok, states(p)["c"])
+    }
+
+    @Test
+    fun `a node a block ahead time after time, as the others catch up, is not outvoted`() = runBlocking {
+        var step = 0L
+        val p = pool(
+            "a" to Fake(status = { status("a", H + 1 + step, tipAt(H + 1 + step)) }),
+            "b" to Fake(status = { status("b", H + step, tipAt(H + step)) }),
+            "c" to Fake(status = { status("c", H + step, tipAt(H + step)) }),
+        )
+        repeat(10) {
+            p.status()
+            // The others reach the block that was a's newest a moment ago.
+            step++
+            clock += AHEAD_SECONDS / 3
+        }
+        p.status()
+        assertEquals(mapOf("a" to NodeState.Ok, "b" to NodeState.Ok, "c" to NodeState.Ok), states(p))
         assertNull(p.notice.value)
     }
 
     @Test
     fun `outvote a node that follows another chain`() = runBlocking {
         val past = tipAt(H + CONFIRMATIONS)
+        // a has another block at the fixture's height than b and c, and answers from it.
+        val fork = tipAt(H, variant = 1)
         val p = pool(
-            "a" to Fake(height = H + CONFIRMATIONS, tip = past, work = 30),
-            "b" to Fake(height = H + CONFIRMATIONS, tip = past, blockAtH = OTHER_BLOCK),
-            "c" to Fake(height = H + CONFIRMATIONS, tip = past, blockAtH = OTHER_BLOCK),
+            "a" to Fake(height = H + CONFIRMATIONS, tip = past, storage = { answer(it, fork) }, blockAtH = fork),
+            "b" to Fake(height = H + CONFIRMATIONS, tip = past),
+            "c" to Fake(height = H + CONFIRMATIONS, tip = past),
         )
         p.status()
-        p.read()
+        assertEquals(values, p.read())
         waitFor("a distrusted") { states(p)["a"] == NodeState.Distrusted }
         assertEquals(PoolNotice.Distrusted, p.notice.value)
     }
 
     @Test
-    fun `say two nodes split, when neither has a majority`() = runBlocking {
+    fun `say two nodes split, when neither has a majority, and read from neither`() = runBlocking {
         val past = tipAt(H + CONFIRMATIONS)
+        val fork = tipAt(H, variant = 1)
         val p = pool(
-            "a" to Fake(height = H + CONFIRMATIONS, tip = past, work = 30),
-            "b" to Fake(height = H + CONFIRMATIONS, tip = past, blockAtH = OTHER_BLOCK),
+            "a" to Fake(height = H + CONFIRMATIONS, tip = past),
+            "b" to Fake(height = H + CONFIRMATIONS, tip = past, storage = { answer(it, fork) }, blockAtH = fork),
         )
         p.status()
-        p.read()
+        failure<NodeError> { p.read() }
         waitFor("the split noticed") { p.notice.value == PoolNotice.Split }
         assertEquals(mapOf("a" to NodeState.Ok, "b" to NodeState.Ok), states(p))
     }
 
     @Test
     fun `wait while the other node has not moved past the block`() = runBlocking {
-        // Both are a block short of deciding; a, with more work, answers, and b has another block at its height.
+        // Both are a block short of deciding, and each has another block at the fixture's height.
         val near = tipAt(H + CONFIRMATIONS - 1)
+        val fork = tipAt(H, variant = 1)
         val p = pool(
-            "a" to Fake(height = H + CONFIRMATIONS - 1, tip = near, work = 30),
-            "b" to Fake(height = H + CONFIRMATIONS - 1, tip = near, blockAtH = OTHER_BLOCK),
+            "a" to Fake(height = H + CONFIRMATIONS - 1, tip = near),
+            "b" to Fake(height = H + CONFIRMATIONS - 1, tip = near, storage = { answer(it, fork) }, blockAtH = fork),
         )
         p.status()
-        p.read()
+        failure<NodeError> { p.read() }
         waitFor("b asked for the block") { "b" in blocksAsked }
         delay(50)
         assertNull(p.notice.value)
@@ -437,21 +555,45 @@ class PoolTest {
     // ---- Transactions -----------------------------------------------------------------------
 
     @Test
-    fun `transactions go to every node - the best one that answers decides`() = runBlocking {
-        val p = pool("a" to Fake(), "b" to Fake(work = 30, submit = { unreachable() }))
+    fun `transactions go to every node, and one any node takes is sent`() = runBlocking {
+        val p = pool("b" to Fake(submit = { unreachable() }), "a" to Fake())
         p.status()
         val tx = byteArrayOf(1)
         assertEquals(transactionId(unhex(DEV), tx).hex(), p.submit(tx))
         assertEquals(listOf("a", "b"), submitted.sorted())
-        assertEquals(NodeState.Down, states(p)["b"])
     }
 
     @Test
-    fun `transactions are refused when the best node refuses them, whatever the others say`() = runBlocking {
-        val p = pool("a" to Fake(), "b" to Fake(work = 30, submit = { error("nonce too low", 400) }))
+    fun `a transaction one node refuses and another takes is sent, though the refusal comes first`() = runBlocking {
+        val p = pool(
+            "b" to Fake(submit = { error("nonce too low", 400) }),
+            "a" to Fake(
+                submit = { tx ->
+                    Thread.sleep(100)
+                    json(buildJsonObject { put("id", transactionId(unhex(DEV), tx).hex()) })
+                },
+            ),
+        )
         p.status()
-        val e = failure<NodeError> { p.submit(byteArrayOf(1)) }
-        assertEquals("nonce too low", e.message)
+        val tx = byteArrayOf(1)
+        assertEquals(transactionId(unhex(DEV), tx).hex(), p.submit(tx))
+        assertEquals(mapOf("b" to NodeState.Ok, "a" to NodeState.Ok), states(p))
+    }
+
+    @Test
+    fun `a transaction is refused when every node answered and refused it, by the first one's reason`() = runBlocking {
+        val p = pool("b" to Fake(submit = { error("nonce too low", 400) }), "a" to Fake(submit = { error("fee too low", 400) }))
+        p.status()
+        assertEquals("nonce too low", failure<NodeError> { p.submit(byteArrayOf(1)) }.message)
+    }
+
+    @Test
+    fun `a transaction one node refuses while another gives no answer may have gone in`() = runBlocking {
+        val p = pool("b" to Fake(submit = { error("nonce too low", 400) }), "a" to Fake(submit = { unreachable() }))
+        p.status()
+        val tx = byteArrayOf(1)
+        assertEquals(transactionId(unhex(DEV), tx).hex(), failure<MaybeSent> { p.submit(tx) }.txId)
+        assertEquals(mapOf("b" to NodeState.Ok, "a" to NodeState.Down), states(p))
     }
 
     @Test

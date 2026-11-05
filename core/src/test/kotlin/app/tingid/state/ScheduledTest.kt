@@ -14,7 +14,10 @@ import app.tingid.chain.TransactionLookup
 import app.tingid.chain.Writer
 import app.tingid.chain.hex
 import kotlinx.coroutines.runBlocking
+import app.tingid.text.hiddenScheduledWarning
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigInteger
@@ -62,15 +65,48 @@ class ScheduledTest {
         val records = HashMap<Long, ByteArray>()
         records[10] = transfer(1_000)
         for (seq in 50L until 91L) records[seq] = transfer(1)
-        val (found) = fetchScheduledMany(Node(records, account), listOf(query(100, 1_041)))
+        val found = fetchScheduledMany(Node(records, account), listOf(query(100, 1_041)))[0].items
         assertTrue(found.map { it.sequence }.contains(10L))
         assertEquals(42, found.size)
     }
 
     @Test
+    fun `say when more were scheduled than the read reaches, and what they lock is not all found`() = runBlocking {
+        // A thief's withdrawal of everything at 5, then more actions than the read goes back over.
+        val node = Node(mapOf(5L to transfer(1_000_000)), account)
+        val cut = fetchScheduledMany(node, listOf(query(70_000, 1_000_000)))[0]
+        assertTrue(cut.hidden)
+        assertEquals(emptyList<ScheduledItem>(), cut.items)
+        // Within reach, it is found and nothing is missing.
+        val whole = fetchScheduledMany(Node(mapOf(5L to transfer(1_000_000)), account), listOf(query(6_000, 1_000_000)))[0]
+        assertEquals(listOf(5L), whole.items.map { it.sequence })
+        assertFalse(whole.hidden)
+        // A read back to the first sequence misses nothing it could have found.
+        assertFalse(fetchScheduledMany(Node(emptyMap(), account), listOf(query(100, 1_000)))[0].hidden)
+    }
+
+    @Test
+    fun `the list of scheduled actions names the accounts some of whose actions are not shown`() {
+        val c = CoinInfo(
+            id = coinId,
+            hex = coinId.hex(),
+            config = Coin.Config("daler", "DLR", 8, Coin.UNCAPPED, BigInteger.ZERO, 0, BigInteger.ZERO, 0),
+            state = Coin.State(BigInteger.ZERO, BigInteger.ZERO, 0, Coin.ZERO_ACCOUNT),
+        )
+        val savings = UserAccount(1, "Savings", account, 604_800)
+        val views = mapOf(c.hex to listOf(AccountView(savings, Coin.AccountRecord(BigInteger.ONE, BigInteger.ONE, 70_000), emptyList(), hidden = true)))
+        assertEquals(listOf("Savings (DLR)"), hiddenScheduledOf(listOf(c), views))
+        assertEquals(
+            "This list is incomplete: Savings (DLR) has more scheduled actions than Ting ID can read, and some locked coins are in actions not shown.",
+            hiddenScheduledWarning(hiddenScheduledOf(listOf(c), views)),
+        )
+        assertNull(hiddenScheduledWarning(emptyList()))
+    }
+
+    @Test
     fun `cost nothing to read for an account with nothing locked`() = runBlocking {
         val node = Node(emptyMap(), account)
-        val (found) = fetchScheduledMany(node, listOf(query(5_000, 0)))
+        val found = fetchScheduledMany(node, listOf(query(5_000, 0)))[0].items
         assertEquals(emptyList<ScheduledItem>(), found)
         assertEquals(0, node.requests)
     }
@@ -78,14 +114,14 @@ class ScheduledTest {
     @Test
     fun `stop once what they reserve adds up to the locked amount`() = runBlocking {
         val node = Node(mapOf(3_998L to transfer(5)), account)
-        val (found) = fetchScheduledMany(node, listOf(query(4_000, 5)))
+        val found = fetchScheduledMany(node, listOf(query(4_000, 5)))[0].items
         assertEquals(listOf(3_998L), found.map { it.sequence })
         assertEquals(40, node.reads)
     }
 
     @Test
     fun `are read back to the first for a minter, whose minter changes may reserve nothing`() = runBlocking {
-        val (found) = fetchScheduledMany(Node(mapOf(2L to minterChange()), account), listOf(query(3_000, 0, everything = true)))
+        val found = fetchScheduledMany(Node(mapOf(2L to minterChange()), account), listOf(query(3_000, 0, everything = true)))[0].items
         assertEquals(listOf(2L), found.map { it.sequence })
     }
 }

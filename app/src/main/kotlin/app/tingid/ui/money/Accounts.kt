@@ -50,6 +50,7 @@ import app.tingid.state.runsPaidFor
 import app.tingid.state.scheduledActionKey
 import app.tingid.text.Names
 import app.tingid.text.describeEffect
+import app.tingid.text.hiddenScheduledWarning
 import app.tingid.text.nameOf
 import app.tingid.ui.Banner
 import app.tingid.ui.BannerTone
@@ -188,12 +189,13 @@ private class Asking(val entries: List<ScheduledEntry>, val label: String, val o
 
 /**
  * The scheduled actions `entries` with Cancel, Run now, Speed up and Run when
- * due, Cancel all, and the fee the cancels pay. `acting`: the coin and account
- * of an account screen; none on the wallet, which lists every account's.
- * `info`: the (i) text beside the heading.
+ * due, Cancel all, and the fee the cancels pay. `hidden`: accounts some of
+ * whose actions could not be read (hiddenScheduledOf), which a warning names.
+ * `acting`: the coin and account of an account screen; none on the wallet,
+ * which lists every account's. `info`: the (i) text beside the heading.
  */
 @Composable
-fun ScheduledSection(w: WorkspaceState, entries: List<ScheduledEntry>, acting: Acting?, info: String? = null) {
+fun ScheduledSection(w: WorkspaceState, entries: List<ScheduledEntry>, hidden: List<String>, acting: Acting?, info: String? = null) {
     val p = t
     val services = LocalServices.current
     val nav = LocalNav.current
@@ -208,7 +210,11 @@ fun ScheduledSection(w: WorkspaceState, entries: List<ScheduledEntry>, acting: A
     // The cancel or speed-up being confirmed: its sheet shows the fee, which can be changed there.
     var asking by remember { mutableStateOf<Asking?>(null) }
     var speeding by remember { mutableStateOf<ScheduledEntry?>(null) }
-    if (entries.isEmpty()) return
+    val incomplete = hiddenScheduledWarning(hidden)
+    if (entries.isEmpty()) {
+        incomplete?.let { Banner(it, BannerTone.Danger) }
+        return
+    }
     val cancelOne = { e: ScheduledEntry ->
         asking = Asking(
             listOf(e),
@@ -230,6 +236,7 @@ fun ScheduledSection(w: WorkspaceState, entries: List<ScheduledEntry>, acting: A
         )
     }
     error?.let { Banner(sentence(it), BannerTone.Danger) }
+    incomplete?.let { Banner(it, BannerTone.Danger) }
     Card(tone = CardTone.Warning, padded = false) {
         Column {
             Row(

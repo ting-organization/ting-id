@@ -1,7 +1,9 @@
 // The fee an operation pays and which of the user's instant accounts pays it.
 // The amount is automatic: the median that recent transactions paid per share
 // of a block, times the share this operation takes (chain/FeeMarket), unless
-// the user types one. Fees go in the fee coin (Settings), which miners accept,
+// the user types one. Recent transactions are what miners and nodes make of
+// them, so an automatic fee far above what many of them paid, or a large part
+// of what the payer holds, waits for the person's word. Fees go in the fee coin (Settings), which miners accept,
 // whatever coin the operation moves: the account acting pays when it is
 // instant and holds enough, else Spending. An action of the paying account in
 // the fee coin carries the fee itself; anything else goes in a batch with a
@@ -94,10 +96,11 @@ fun canSignFor(user: User?, info: ChainInfo?, keys: List<KeyMeta>, identity: Ide
     return identity != null && linkedDeviceKeys(info.canonical, identity, keys).isNotEmpty()
 }
 
-private fun rateOf(rates: List<FeeMarket.Rate>?, c: CoinInfo): Double? = FeeMarket.medianRate(rates ?: emptyList(), c.hex)
-
 /** What the run of a scheduled action in coin `c` pays the miner that runs it, at `rates`. */
-fun runTipOf(rates: List<FeeMarket.Rate>?, c: CoinInfo): BigInteger = FeeMarket.feeFor(rateOf(rates, c), FeeMarket.Share.Run.value)
+fun runTipOf(rates: List<FeeMarket.Rate>?, c: CoinInfo): BigInteger = FeeMarket.fee(rates ?: emptyList(), c.hex, FeeMarket.Share.Run)
+
+/** The most of what the paying account holds an automatic fee takes without the person's word: a hundredth. */
+private const val SHARE_OF_BALANCE = 100L
 
 /** The fee of an operation as it stands: what it pays, from which account, and what is wrong with it. */
 class FeeQuote(
@@ -119,6 +122,8 @@ class FeeQuote(
     /** The fee goes in a batch with the operation: a second signature, about 60% more room in a block. */
     val bundled: Boolean,
     val problem: String?,
+    /** Whether the automatic fee waits for the person's word, [problem] saying why: typing it, or any other, settles it. */
+    val review: Boolean,
     /** Why the fee is not in the fee coin, when it fell back. */
     val notice: String?,
     /** E.g. "Fee 0.0001 DLR from Spending", when there is a fee. */
@@ -158,8 +163,8 @@ fun quoteFee(
 
     val options = instant.flatMap { a -> coins.map { c -> PayerOption(a, c, availableOf(a, c)) } }
     // What the payer needs at most: an operation with its fee in a batch beside it.
-    val usual = if (feeCoin != null) FeeMarket.feeFor(rateOf(rates, feeCoin), FeeMarket.Share.Own.value) else BigInteger.ZERO
-    val most = if (feeCoin != null) FeeMarket.feeFor(rateOf(rates, feeCoin), FeeMarket.Share.Bundled.value) else BigInteger.ZERO
+    val usual = if (feeCoin != null) FeeMarket.fee(rates ?: emptyList(), feeCoin.hex, FeeMarket.Share.Own) else BigInteger.ZERO
+    val most = if (feeCoin != null) FeeMarket.fee(rates ?: emptyList(), feeCoin.hex, FeeMarket.Share.Bundled) else BigInteger.ZERO
     val spending = instant.firstOrNull { it.slot == 0L } ?: instant.firstOrNull()
     val picked = defaultPayer(
         options.map { PayerCandidate(it.account.slot, it.coin.hex, it.available) },
@@ -190,7 +195,7 @@ fun quoteFee(
     // phone that signs for no account pays none: an operation anyone may submit, such as finishing
     // a recovery, then goes unpaid.
     val automatic = if (canPay && inUsualCoin && (!short || choice != null)) {
-        FeeMarket.feeFor(rateOf(rates, payer.coin), if (own) FeeMarket.Share.Own.value else FeeMarket.Share.Bundled.value)
+        FeeMarket.fee(rates ?: emptyList(), payer.coin.hex, if (own) FeeMarket.Share.Own else FeeMarket.Share.Bundled)
     } else {
         BigInteger.ZERO
     }
@@ -198,12 +203,19 @@ fun quoteFee(
     val parsed = if (payer != null) feeAmount(amount, payer.coin) else BigInteger.ZERO
     val fee = parsed ?: BigInteger.ZERO
     val available = payer?.available
+    // Rates a miner paying itself, or a node, pushed up are not paid unseen; the smallest unit always is.
+    val unusual = when {
+        typed != null || payer == null || automatic <= BigInteger.ONE -> null
+        FeeMarket.lopsided(rates ?: emptyList(), payer.coin.hex) -> "the fee is far above what many recent transactions paid"
+        available != null && automatic * BigInteger.valueOf(SHARE_OF_BALANCE) > available -> "the fee is more than 1% of what ${payer.account.label} holds"
+        else -> null
+    }
     val problem = when {
         parsed == null -> "enter a fee with at most $decimals decimals"
         fee.signum() > 0 && !canPay -> "no account here can pay a fee"
         fee.signum() > 0 && payer != null && available != null && fee > available ->
             "the fee needs ${formatAmount(fee, decimals)} $symbol; ${payer.account.label} has ${formatAmount(available, decimals)}"
-        else -> null
+        else -> unusual
     }
     val summary = if (fee.signum() > 0 && payer != null) "Fee ${formatAmount(fee, decimals)} $symbol from ${payer.account.label}" else null
 
@@ -219,6 +231,7 @@ fun quoteFee(
         own = own,
         bundled = fee.signum() > 0 && !own,
         problem = problem,
+        review = problem != null && problem == unusual,
         notice = notice,
         summary = summary,
         canPay = canPay,

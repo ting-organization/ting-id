@@ -484,6 +484,11 @@ fun describeWatch(watch: Watch, sentAt: Long, now: Long = nowSeconds(), time: (L
 fun offlineMessage(height: Long?): String =
     if (height != null) "Can't reach the node. Showing what it last reported, at block $height." else "Can't reach the node. Check its address in Settings."
 
+/** What a list of scheduled actions says when some of `accounts` ([hiddenScheduledOf]) could not be read; null when none. */
+fun hiddenScheduledWarning(accounts: List<String>): String? =
+    if (accounts.isEmpty()) null
+    else "This list is incomplete: ${accounts.joinToString(", ")} ${if (accounts.size == 1) "has" else "have"} more scheduled actions than Ting ID can read, and some locked coins are in actions not shown."
+
 /** The general message about the nodes, if any: none answers, or their answers did not check out. `now` is in seconds. */
 fun nodeNotice(height: Long?, error: String?, notice: PoolNotice?, now: Long = nowSeconds()): String? = when {
     !error.isNullOrEmpty() -> offlineMessage(height)
@@ -499,7 +504,7 @@ const val OTHER_CHAIN_USER =
 
 /** The (i) text of Settings → Nodes. */
 const val NODES_INFO =
-    "Ting ID reads from the node furthest ahead and moves on to the next when one stops answering; transactions go to every node. It checks every balance and record against the block it comes from, and with two or more nodes, that the others have that block too and agree on each coin’s settings. Plain http is only for a node on this device or your home network."
+    "Ting ID reads from the node furthest ahead and moves on to the next when one stops answering; transactions go to every node. It checks every balance and record against the block it comes from and, with two or more nodes, uses it only once another node has that block too; their coin settings must agree. Plain http is only for a node on this device or your home network."
 
 enum class NodeTone { Success, Muted, Warning, Danger }
 

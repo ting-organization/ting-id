@@ -619,6 +619,14 @@ class ScheduledQuery(
     val everything: Boolean = false,
 )
 
+/**
+ * An account's pending scheduled actions as read, soonest first. `hidden`:
+ * the read stopped at its bound while what they reserve is less than the
+ * account's locked amount, so some actions holding its coins are not among
+ * them.
+ */
+class ScheduledRead(val items: List<ScheduledItem>, val hidden: Boolean)
+
 /** Sequences or changes read in the first look back; later looks read a full batch. */
 private const val FIRST_LOOK = 40L
 private const val LOOK = 1024L
@@ -631,16 +639,18 @@ private const val MAX_LOOKS = 64
  * Each account's are read back from its nonce until the amounts they reserve
  * add up to its locked amount, which is exactly what its pending actions hold
  * (wiki: programs/coin), so none hides behind later ones; an account with
- * nothing locked has none to read.
+ * nothing locked has none to read. A read that stops at its bound before
+ * then says so.
  */
-suspend fun fetchScheduledMany(node: ChainApi, of: List<ScheduledQuery>): List<List<ScheduledItem>> {
+suspend fun fetchScheduledMany(node: ChainApi, of: List<ScheduledQuery>): List<ScheduledRead> {
     val found = of.map { ArrayList<ScheduledItem>() }
     val held = Array(of.size) { BigInteger.ZERO }
     val below = LongArray(of.size) { of[it].nonce }
     fun open(i: Int) = below[i] > 0 && (of[i].everything || held[i] < of[i].locked)
     var span = FIRST_LOOK
     // Bounded, whatever an account's nonce: past this many looks back, what is
-    // older is not shown (an account with that many actions is not a person's).
+    // older is not shown (an account with that many actions is not a person's),
+    // and the read says that some are missing.
     for (look in 0 until MAX_LOOKS) {
         val reads = ArrayList<Pair<Int, Long>>()
         for (i in of.indices) {
@@ -659,7 +669,7 @@ suspend fun fetchScheduledMany(node: ChainApi, of: List<ScheduledQuery>): List<L
         }
         span = LOOK
     }
-    return found.map { list -> list.sortedBy { it.record.executeAt } }
+    return found.mapIndexed { i, list -> ScheduledRead(list.sortedBy { it.record.executeAt }, below[i] > 0 && held[i] < of[i].locked) }
 }
 
 // ---- Identities ----------------------------------------------------------------

@@ -2,12 +2,18 @@
 // automatic amount and what is wrong with a typed one (state/Fees).
 package app.tingid.state
 
+import app.tingid.chain.BlockReceipt
+import app.tingid.chain.BlockReceipts
 import app.tingid.chain.Coin
 import app.tingid.chain.FeeMarket
 import app.tingid.chain.MemoryKey
+import app.tingid.chain.ReceiptEvent
 import app.tingid.chain.Signer
+import app.tingid.chain.Writer
+import app.tingid.chain.concat
 import app.tingid.chain.filled
 import app.tingid.chain.hex
+import app.tingid.chain.utf8
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -38,8 +44,21 @@ class FeesTest {
     private fun views(vararg held: Triple<UserAccount, CoinInfo, Long>): Map<String, List<AccountView>> =
         held.groupBy { it.second.hex }.mapValues { (_, list) -> list.map { (a, _, v) -> AccountView(a, Coin.AccountRecord(big(v), BigInteger.ZERO, 0), emptyList()) } }
 
-    /** Recent transactions paying `perBlock` in `c`. */
-    private fun rates(c: CoinInfo, perBlock: Double) = (1L..5L).map { FeeMarket.Rate(it, c.hex, perBlock) }
+    /** Recent transactions paying `perBlock` in `c`, in blocks of 150M C and 1,024 S. */
+    private fun rates(c: CoinInfo, perBlock: Double) = (1L..5L).map { FeeMarket.Rate(it, c.hex, perBlock, listOf(150_000_000L, 1024, 262_144, 131_072)) }
+
+    /** The production network's capacity, C / S / D / G, as its status gives it. */
+    private val production = listOf(450_000_000L, 2048, 262_144, 131_072)
+    private val miner = filled(0x4d)
+
+    /** A block whose one transaction, a payment from an identity account carrying its own fee, paid `fee` in `c` to the block's miner. */
+    private fun paidBlock(height: Long, c: CoinInfo, fee: BigInteger) = BlockReceipts(
+        "",
+        height,
+        concat(utf8("OCP1"), Writer().u32(1).u32(32).put(miner).finish()),
+        production,
+        listOf(BlockReceipt(0, ByteArray(0), listOf(15_603_858L, 17, 565, 0), listOf(ReceiptEvent(c.id, Writer().put(Coin.PRODUCER_PAYMENT_TOPIC).put(miner).u128(fee).finish())))),
+    )
 
     private fun quote(
         acting: Acting? = null,
@@ -89,7 +108,56 @@ class FeesTest {
         val bundled = quote(acting = null, rates = r)
         assertEquals(big(170_000), bundled.fee)
         assertEquals(big(100_000), bundled.usual)
-        assertEquals(big(9_900), bundled.runTip(dlr))
+        // A run's share is its storage: 16 of the block's 1,024.
+        assertEquals(big(16_000), bundled.runTip(dlr))
+    }
+
+    @Test
+    fun `transactions paying the automatic fee leave it where it was`() {
+        val payment = Acting(dlr, spending)
+        val rich = views(Triple(spending, dlr, Long.MAX_VALUE))
+        val blocks = arrayListOf(paidBlock(1, dlr, big(1_000)))
+        repeat(12) {
+            val fee = quote(acting = payment, views = rich, rates = FeeMarket.ratesOf(blocks)).fee
+            assertEquals(big(1_000), fee)
+            // The whole sample turns over, each paying the automatic fee.
+            repeat(FeeMarket.SAMPLE) { blocks.add(paidBlock(blocks.size + 1L, dlr, fee)) }
+        }
+    }
+
+    @Test
+    fun `an automatic fee far above what many recent transactions paid waits for the person's word`() {
+        // 26 of the last 50 paying transactions are a miner's own, paying itself: it costs it nothing.
+        val blocks = (1L..24L).map { paidBlock(it, dlr, big(1_000)) } + (25L..50L).map { paidBlock(it, dlr, BigInteger.TEN.pow(12)) }
+        val payment = Acting(dlr, spending)
+        val rich = views(Triple(spending, dlr, Long.MAX_VALUE))
+        val q = quote(acting = payment, views = rich, rates = FeeMarket.ratesOf(blocks))
+        assertEquals(BigInteger.TEN.pow(12), q.fee)
+        assertEquals("the fee is far above what many recent transactions paid", q.problem)
+        assertTrue(q.review)
+        try {
+            payerOf(q) { error("not signed") }
+            fail("an automatic fee waiting for the person's word is not paid")
+        } catch (e: IllegalStateException) {
+            assertEquals(q.problem, e.message)
+        }
+        // Confirmed as it is, or typed, it is paid.
+        val confirmed = quote(acting = payment, views = rich, rates = FeeMarket.ratesOf(blocks), typed = q.amount)
+        assertEquals(q.fee, confirmed.fee)
+        assertNull(confirmed.problem)
+        assertFalse(confirmed.review)
+        assertNull(quote(acting = payment, views = rich, rates = FeeMarket.ratesOf(blocks), typed = "0.00001").problem)
+    }
+
+    @Test
+    fun `an automatic fee of more than a hundredth of what the payer holds waits for the person's word`() {
+        val r = rates(dlr, 1_000_000.0)
+        val payment = Acting(dlr, spending)
+        // The fee is 100,000.
+        assertEquals("the fee is more than 1% of what Spending holds", quote(acting = payment, views = views(Triple(spending, dlr, 9_999_999)), rates = r).problem)
+        assertNull(quote(acting = payment, views = views(Triple(spending, dlr, 10_000_000)), rates = r).problem)
+        // The smallest unit is always paid as it is.
+        assertNull(quote(views = views(Triple(spending, dlr, 1))).problem)
     }
 
     @Test

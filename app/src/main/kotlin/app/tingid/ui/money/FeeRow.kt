@@ -1,5 +1,6 @@
 // The fee of an operation as one line: what it pays and from which account,
-// with a sheet to change the amount or the paying account.
+// with a sheet to change the amount or the paying account. An automatic fee
+// that waits for the person's word is confirmed in a sheet that names it.
 package app.tingid.ui.money
 
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +30,7 @@ import app.tingid.ui.Button
 import app.tingid.ui.ButtonKind
 import app.tingid.ui.Caption
 import app.tingid.ui.Card
+import app.tingid.ui.Confirm
 import app.tingid.ui.Field
 import app.tingid.ui.Info
 import app.tingid.ui.ListItem
@@ -63,6 +65,7 @@ private fun balance(o: PayerOption): String = o.available?.let { "${formatAmount
 fun FeeRow(fee: FeeChoice, boxed: Boolean = false, label: String = "Fee", run: FeeRun? = null) {
     val p = t
     var open by remember { mutableStateOf(false) }
+    var reviewing by remember { mutableStateOf(false) }
     val box: @Composable (@Composable ColumnScope.() -> Unit) -> Unit = { content ->
         if (boxed) Card(content = content) else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs), content = content)
     }
@@ -88,6 +91,21 @@ fun FeeRow(fee: FeeChoice, boxed: Boolean = false, label: String = "Fee", run: F
         }
         fee.notice?.let { ToneCaption(it, p.warning) }
         fee.problem?.let { ToneCaption(sentence(it), p.danger) }
+        if (fee.review) {
+            Row { Button("Review fee", onClick = { reviewing = true }, kind = ButtonKind.Secondary, small = true) }
+        }
+    }
+    if (reviewing && fee.review) {
+        val named = feeText(fee.fee, payer.coin, run)
+        Confirm(
+            title = "Pay a fee of $named?",
+            body = "${sentence(fee.problem ?: "")} Fees follow what recent transactions paid, and a miner can raise them by paying itself.",
+            confirm = "Pay $named",
+            danger = true,
+        ) { yes ->
+            if (yes) fee.confirmAutomatic()
+            reviewing = false
+        }
     }
     if (open) {
         Sheet(onClose = { open = false }, title = "Fee") {

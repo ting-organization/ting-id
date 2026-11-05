@@ -7,6 +7,13 @@
 // change, such as a coin's configuration, are read from every node, which must
 // agree. A node that fails a check is not used again until the user refreshes.
 //
+// A header's proof of work proves little while the network's hashpower is low:
+// one node can make up blocks of its own, with any state, above the others'.
+// So with two or more nodes, an answer is taken only from a block another node
+// has too, and a node's newest block ranks it, or makes other answers look old,
+// only once another node has that block. When nodes are a block or two apart,
+// the one behind answers, and the one ahead confirms its block.
+//
 // The pool's own state is only touched on one thread at a time (a dispatcher
 // of parallelism 1); the nodes are asked on the IO threads meanwhile.
 package app.tingid.chain
@@ -17,12 +24,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.math.BigInteger
 
 /** Blocks another node must be past a block's height, on another branch, before the nodes count as following different chains. */
 const val CONFIRMATIONS = 3
@@ -32,6 +39,18 @@ const val STALE_BLOCKS = 6
 
 /** A newest block older than this (seconds) is worth a word: the nodes may be behind, or mining stopped. */
 const val OLD_TIP = 3 * 3600L
+
+/** Seconds between blocks the network aims at (its genesis). */
+private const val BLOCK_SECONDS = 60L
+
+/**
+ * How long a node's newest block may stay above every other node's, none of
+ * them having it, before they outvote it (seconds): twice the time the
+ * network takes to mine [CONFIRMATIONS] blocks. An honest node's block
+ * reaches the others in seconds, and a node a block or two ahead is caught
+ * up with in a minute or two.
+ */
+const val AHEAD_SECONDS = 2 * CONFIRMATIONS * BLOCK_SECONDS
 
 /** Checked blocks remembered. */
 private const val REMEMBER = 64
@@ -104,6 +123,9 @@ sealed class PoolNotice {
 /** A node failed a check: the pool stops using it. */
 class NodeDistrusted(message: String) : NodeError(message)
 
+/** An answer from a block no other node has: another node is asked instead, and this one is not held to have failed. */
+private class Unconfirmed(message: String) : NodeError(message)
+
 private class KnownHeader(val root: String, val height: Long, val timestamp: Long)
 
 private class PendingBlock(val height: Long, val servedBy: String)
@@ -131,13 +153,19 @@ class NodePool(
     /** Headers checked: block id → its state root (hex), height and time. */
     private val headers = remembering<String, KnownHeader>()
 
-    /** The highest block an answer came from: no later answer may come from far below it. */
+    /** The highest block two nodes have: no later answer may come from far below it. */
     private var seen = 0L
+
+    /** Since when each node's newest block has been above every other node's, none of them having it, by node. */
+    private val aheadSince = HashMap<String, Long>()
+
+    /** Whether the pool says the nodes split because one is ahead with blocks no other node has. */
+    private var apart = false
 
     /** Header reads on their way, by node and block, so reads at one block fetch it once. */
     private val headerReads = HashMap<String, Async<ByteArray?>>()
 
-    /** Blocks answers came from that no other node has confirmed yet, and which node gave them. */
+    /** Blocks answers came from, and nodes' newest blocks, that no other node has confirmed yet, and which node gave them. */
     private val pending = remembering<String, PendingBlock>()
     private val confirmed = remembering<String, Unit>()
 
@@ -180,6 +208,8 @@ class NodePool(
         for ((u, h) in health) if (h.state == NodeState.Distrusted || h.state == NodeState.Outdated) health[u] = h.copy(state = NodeState.Unknown, problem = null)
         headers.clear()
         seen = 0
+        aheadSince.clear()
+        apart = false
         pending.clear()
         confirmed.clear()
         fixed.clear()
@@ -213,7 +243,7 @@ class NodePool(
     /**
      * Every node's status. The pool follows the chain most nodes are on (on a
      * tie, the one of the node listed first) and reports the status of its node
-     * with the most work.
+     * ranked first ([usable]).
      */
     override suspend fun status(): NodeStatus = withContext(confined) {
         val up = coroutineScope {
@@ -260,6 +290,10 @@ class NodePool(
                 else -> set(node) { it.copy(state = NodeState.Ok, status = s, problem = null) }
             }
         }
+        // Each node's newest block counts once another node has it too.
+        val ok = nodes.filter { h(it).state == NodeState.Ok }
+        if (ok.size > 1) coroutineScope { ok.map { n -> async { h(n).status?.let { s -> confirm(n, s.tip, s.height) } } }.awaitAll() }
+        judgeAhead()
         val usable = usable()
         if (usable.isEmpty()) throw NodeError(up.firstNotNullOfOrNull { h(it.first).problem } ?: "no node can be used")
         for (node in nodes) health[node.url] = h(node).copy(best = node == usable[0])
@@ -275,19 +309,86 @@ class NodePool(
             val bytes = node.header(status.tip) ?: throw NodeError("the node does not give its newest block")
             val header = checkHeader(status.tip, bytes, Networks.powLimitOf(chain))
                 ?: throw distrust(node, "its newest block header is not the block’s, or lacks the work the chain needs")
+            if (header.chainId.hex() != chain) throw distrust(node, "its newest block is of another chain")
             known = KnownHeader(header.stateRoot.hex(), header.height, header.timestamp)
             headers[status.tip] = known
         }
         if (known.height != status.height) throw distrust(node, "it names another height than its newest block has")
     }
 
-    /** The nodes answering on the chain: the highest checked newest block first, then the most work, then in the user's order. */
+    /**
+     * The nodes answering on the chain: the highest newest block another node
+     * has too first, then in the user's order. A node's own word on its height
+     * or its work ranks nothing: one node alone can make up blocks.
+     */
     private fun usable(): List<NodeClient> {
-        val height = { n: NodeClient -> h(n).status?.height ?: 0L }
-        val work = { n: NodeClient -> h(n).status?.work ?: BigInteger.ZERO }
-        return nodes.filter { h(it).state == NodeState.Ok }.sortedWith(
-            compareByDescending<NodeClient> { height(it) }.thenByDescending { work(it) }.thenBy { nodes.indexOf(it) },
-        )
+        val height = { n: NodeClient -> h(n).status?.takeIf { confirmed.containsKey(it.tip) }?.height ?: -1L }
+        return nodes.filter { h(it).state == NodeState.Ok }.sortedWith(compareByDescending<NodeClient> { height(it) }.thenBy { nodes.indexOf(it) })
+    }
+
+    /**
+     * Whether another node answering on the chain has block `tip` at `height`:
+     * it is then confirmed. One no other node has yet is kept, for the others
+     * to be asked again ([recheck]).
+     */
+    private suspend fun confirm(node: NodeClient, tip: String, height: Long): Boolean {
+        if (confirmed.containsKey(tip)) return true
+        val others = nodes.filter { it != node && h(it).state == NodeState.Ok }
+        // A node's status can be a poll old: each is asked, even one whose status is below the height.
+        val has = others.any { h(it).status?.tip == tip } || coroutineScope {
+            others.map { o -> async { runCatching { o.blocks(height, 1) }.getOrNull()?.firstOrNull()?.id == tip } }.awaitAll().any { it }
+        }
+        if (has) {
+            agree(tip, height)
+        } else if (!pending.containsKey(tip)) {
+            pending[tip] = PendingBlock(height, node.url)
+            scope.launch { recheck() }
+        }
+        return has
+    }
+
+    /** Another node has block `tip` at `height`. */
+    private fun agree(tip: String, height: Long) {
+        confirmed[tip] = Unit
+        // A node whose block the others reached is on their chain, only ahead: its time ahead starts again.
+        pending.remove(tip)?.let { aheadSince.remove(it.servedBy) }
+        seen = maxOf(seen, height)
+        // The nodes agree again, unless one is still far ahead on its own.
+        if (_notice.value == PoolNotice.Split && !apart) _notice.value = null
+    }
+
+    /**
+     * Nodes whose newest block no other node has. One that stays above all
+     * the others for [AHEAD_SECONDS] is outvoted when there are two or more
+     * of them, and distrusted. Otherwise the pool says the nodes split, once
+     * that long has passed or while one is more than [STALE_BLOCKS] ahead of
+     * the newest block two nodes have: the others' answers may be old, or its
+     * blocks made up, and which is right cannot be told.
+     */
+    private fun judgeAhead() {
+        var split = false
+        for (node in nodes) {
+            val s = h(node).status
+            if (h(node).state != NodeState.Ok || s == null || confirmed.containsKey(s.tip)) {
+                aheadSince.remove(node.url)
+                continue
+            }
+            val others = nodes.filter { it != node && h(it).state == NodeState.Ok }
+            if (others.isEmpty()) continue
+            val above = others.all { (h(it).status?.height ?: 0L) < s.height }
+            if (!above) aheadSince.remove(node.url)
+            val long = above && now() - aheadSince.getOrPut(node.url) { now() } > AHEAD_SECONDS
+            if (long && others.size > 1) {
+                aheadSince.remove(node.url)
+                distrust(node, "its newest blocks are not on your other nodes’ chain")
+                continue
+            }
+            if (long || (seen > 0 && s.height > seen + STALE_BLOCKS)) split = true
+        }
+        val n = _notice.value
+        if (split && (n == null || n is PoolNotice.Old)) _notice.value = PoolNotice.Split
+        else if (!split && apart && n == PoolNotice.Split) _notice.value = null
+        apart = split
     }
 
     /** The nodes to ask, in order: the usable ones, then ones not known to fail. */
@@ -305,7 +406,7 @@ class NodePool(
                 return@withContext ask(node)
             } catch (e: Exception) {
                 if (!nodeFailed(e)) throw e
-                fail(node, e)
+                if (e !is Unconfirmed) fail(node, e)
                 failure = e
             }
         }
@@ -337,7 +438,7 @@ class NodePool(
                             todo.chunked(STORAGE_BATCH).flatMap { provedFrom(node, it) }
                         } catch (e: Exception) {
                             if (!nodeFailed(e)) throw e
-                            fail(node, e)
+                            if (e !is Unconfirmed) fail(node, e)
                             null
                         }
                     }
@@ -393,22 +494,23 @@ class NodePool(
         }
         if (known.root != root) throw distrust(node, "its values are not from the block it named")
         // An answer from far behind the newest block could hide what happened since, such as a
-        // withdrawal to cancel: another node is asked instead.
-        val newest = maxOf(seen, usable().maxOfOrNull { h(it).status?.height ?: 0L } ?: 0L)
+        // withdrawal to cancel: another node is asked instead. The newest is one two nodes have, or
+        // the node's own: what one node alone claims cannot make the others' answers old.
+        val newest = maxOf(seen, h(node).status?.height ?: 0L)
         if (known.height + STALE_BLOCKS < newest) throw NodeError("the node answered from block ${known.height}, behind the newest, $newest")
-        seen = maxOf(seen, known.height)
+        // With other nodes, one of them must have the block too: one node alone can make up a block
+        // with any state.
+        if (!confirm(node, tip, known.height) && nodes.any { it != node && h(it).state == NodeState.Ok }) {
+            throw Unconfirmed("no other node has block ${known.height}, which it answered from")
+        }
         val old = now() - known.timestamp > OLD_TIP
         val n = _notice.value
         if (old && n == null) _notice.value = PoolNotice.Old(known.timestamp)
         else if (!old && n is PoolNotice.Old) _notice.value = null
-        if (!confirmed.containsKey(tip) && !pending.containsKey(tip)) {
-            pending[tip] = PendingBlock(known.height, node.url)
-            scope.launch { recheck() }
-        }
     }
 
     /**
-     * Asks the other nodes whether the blocks answers came from are on their
+     * Asks the other nodes whether the blocks still unconfirmed are on their
      * chain. One that has another block there, and has moved on by
      * [CONFIRMATIONS] blocks, follows another chain: the majority of the nodes
      * decides which is wrong, and without one the pool says the nodes split.
@@ -418,16 +520,14 @@ class NodePool(
         checking = true
         try {
             for ((tip, p) in pending.entries.toList()) {
+                if (!pending.containsKey(tip)) continue
                 val others = nodes.filter { it.url != p.servedBy && h(it).state == NodeState.Ok }
                 for (other in others) {
                     val height = h(other).status?.height ?: 0L
                     if (height < p.height) continue
                     val block = runCatching { other.blocks(p.height, 1) }.getOrDefault(emptyList()).firstOrNull() ?: continue
                     if (block.id == tip) {
-                        confirmed[tip] = Unit
-                        pending.remove(tip)
-                        // The nodes agree again.
-                        if (_notice.value == PoolNotice.Split) _notice.value = null
+                        agree(tip, p.height)
                         break
                     }
                     if (height >= p.height + CONFIRMATIONS) {
@@ -458,25 +558,36 @@ class NodePool(
         }
     }
 
-    /** Sent to every node; the answer of the best one that answers decides, the others only pass it on. */
+    /**
+     * Sent to every node. It is sent once any node takes it, whatever the
+     * others say: nodes of different makes may refuse differently, and one
+     * that has it passes it on. It is refused only when no node took it and
+     * every one answered: then by the first refusal in the user's order. A
+     * node that gave no answer may have it, so the outcome is unknown then
+     * ([MaybeSent]).
+     */
     override suspend fun submit(tx: ByteArray, notBefore: Long?): String = withContext(confined) {
         val targets = order()
         if (targets.isEmpty()) throw NodeError("no node answers")
-        val sent = targets.map { node -> scope.async { node.submit(tx, notBefore) } }
-        var failure: Throwable? = null
-        var maybe: MaybeSent? = null
-        for ((i, s) in sent.withIndex()) {
-            try {
-                return@withContext s.await()
-            } catch (e: Exception) {
-                if (e is MaybeSent) maybe = maybe ?: e
-                else if (!nodeFailed(e)) throw e
-                fail(targets[i], e)
-                failure = failure ?: e
+        val answers = Channel<Pair<Int, Result<String>>>(targets.size)
+        for ((i, node) in targets.withIndex()) scope.launch { answers.send(i to runCatching { node.submit(tx, notBefore) }) }
+        val maybe = arrayOfNulls<MaybeSent>(targets.size)
+        val refused = arrayOfNulls<Throwable>(targets.size)
+        val failed = arrayOfNulls<Throwable>(targets.size)
+        repeat(targets.size) {
+            val (i, answer) = answers.receive()
+            answer.onSuccess { return@withContext it }
+            val e = answer.exceptionOrNull()!!
+            if (e !is Exception) throw e
+            when {
+                e is MaybeSent -> maybe[i] = e
+                !nodeFailed(e) -> refused[i] = e
+                else -> failed[i] = e
             }
+            if (e is MaybeSent || nodeFailed(e)) fail(targets[i], e)
         }
-        // A node that may have it counts for more than one that was not reached.
-        throw maybe ?: failure!!
+        // A node that may have it counts for more than one that refused it, and a refusal for more than a failure.
+        throw maybe.filterNotNull().firstOrNull() ?: refused.filterNotNull().firstOrNull() ?: failed.filterNotNull().first()
     }
 
     override suspend fun transaction(id: String): TransactionLookup? = first { it.transaction(id) }

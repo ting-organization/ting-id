@@ -84,6 +84,7 @@ internal class FakeRestNode(val chainId: ByteArray) : Http {
 
     /** The header of the block such reads come from, at height 1: its state is the empty tree, its target the easiest. */
     private val emptyHeader = ByteArray(HEADER_BYTES).also { h ->
+        h[0] = 1
         chainId.copyInto(h, 2)
         u64le(1).copyInto(h, 34)
         h.fill(0xff.toByte(), 82, 114)
