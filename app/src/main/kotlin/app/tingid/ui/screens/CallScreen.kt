@@ -69,6 +69,7 @@ import app.tingid.text.Names
 import app.tingid.text.callLine
 import app.tingid.text.callSentence
 import app.tingid.text.listItemLine
+import app.tingid.text.paymentLine
 import app.tingid.text.showAmount
 import app.tingid.text.strangeAccounts
 import app.tingid.ui.Banner
@@ -209,6 +210,8 @@ private fun Review(request: CallRequest) {
     val line = callLine(parts)
     val strangers = strangeAccounts(link.decoded, names)
     val recipient = payment?.to?.hex()
+    // The phone's check names what leaves the account in the app's own words, above the program's.
+    val ownerTitle = paymentText?.let { paymentLine(it, recipient?.let { r -> names[r] ?: shortId(r) }) } ?: "Approve for this program"
     val data by services.store.data.collectAsState()
     // Warned about the first time only (TCR-1.md): the program is still one Ting ID has no name for.
     val firstUse = request.program.hex() !in data.programsCalled
@@ -255,7 +258,7 @@ private fun Review(request: CallRequest) {
         error = null
         ui.launch {
             val shown = try {
-                if (!confirmOwner(activity, services, "Approve for this program", line)) {
+                if (!confirmOwner(activity, services, ownerTitle, line)) {
                     going.set(false)
                     busy = false
                     return@launch
