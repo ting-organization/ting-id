@@ -1,0 +1,4 @@
+# Files the app checks by hash keep their committed bytes on every platform:
+# the BIP-39 word list (Wordlist) and the embedded programs (code hashes).
+core/src/main/resources/app/tingid/chain/bip39-english.txt -text
+*.wasm binary
