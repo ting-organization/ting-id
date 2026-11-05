@@ -63,8 +63,9 @@ wants them as a guardian scans it from the wallet, or in Link a guardian,
 where an identity ID on its own also works. The screen fills in the
 identity, checks that it exists on this network and is not the person's own,
 and offers `name` as the name to save it under, which they can change.
-Nothing happens until they propose the change, which, like every change to
-an identity, waits before it applies.
+When that guardian could then recover the identity alone, as a first
+guardian can, the screen says so. Nothing happens until they propose the
+change, which, like every change to an identity, waits before it applies.
 
 ## Setting up someone else's identity
 

@@ -74,7 +74,7 @@ class IdentityScanTest {
                 .map { (h, events) -> h to events.filter { e -> equal(e.contract, contract) && (topic == null || equal(e.payload.copyOf(32), topic)) } }
                 .firstOrNull { it.second.isNotEmpty() }
                 ?: return EventPage(emptyList(), maxOf(height + 1, from), height)
-            return EventPage(listOf(BlockEvents("b${first.first}", first.first, 0, first.second)), first.first + 1, height)
+            return EventPage(listOf(BlockEvents("b${first.first}", first.first, first.first * 60, first.second)), first.first + 1, height)
         }
     }
 
@@ -83,11 +83,22 @@ class IdentityScanTest {
         val node = Node()
         val seen = ArrayList<Long>()
         val found = findIdentitiesWithKey(node, registry, phraseKey) { height, _ -> seen.add(height) }
-        assertEquals(listOf(identities[1].hex()), found.map { it.hex() })
+        assertEquals(listOf(identities[1].hex()), found.map { it.id.hex() })
         // One page per block with a Created event, then the page that says there is no more.
         val t = Id.CREATED_TOPIC.hex().take(4)
         assertEquals(listOf("1d1d:$t:1", "1d1d:$t:8", "1d1d:$t:131", "1d1d:$t:250"), node.asked.filter { !it.startsWith("storage") })
         assertEquals(250L, seen.last())
+    }
+
+    @Test
+    fun `each found identity comes with the block it was created in, the earliest first`() = runBlocking {
+        val node = Node()
+        // Another identity lists the phrase's key too, as anyone's can: the one created in block 7.
+        node.record(registry, Id.keyKey(identities[0], 0, 0), Id.encodeKeyRecord(phraseKey))
+        val found = findIdentitiesWithKey(node, registry, phraseKey)
+        assertEquals(listOf(identities[0].hex(), identities[1].hex()), found.map { it.id.hex() })
+        assertEquals(listOf(7L, 130L), found.map { it.height })
+        assertEquals(listOf(420L, 7_800L), found.map { it.time })
     }
 
     @Test

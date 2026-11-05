@@ -43,7 +43,11 @@ salt included, so the words cannot give it. A restore finds it instead:
    names an ID, and every identity was made by one.
 2. For each ID read the core record and the key records of its current key
    epoch, with their proofs.
-3. The identities whose keys include the phrase's key are the phrase's.
+3. The identities whose keys include the phrase's key are offered, each with
+   the time of the block that created it, the earliest first. Anyone can list
+   a public key in an identity of their own, so more than one may list it;
+   but a key is public only once an identity lists it, so the one created
+   first is normally the phrase's own.
 
 Events come from any node, so a node can leave an identity out but never make
 one up; asking another node covers the first. When no identity lists the key,
@@ -86,3 +90,6 @@ that identity.
   cancelled, and key changes wait the change delay. A guardian recovery, which
   waits less, installs the key of new words and voids the thief's pending
   changes; the old words then stop working.
+- **A recovery you did not ask for:** the Identity tab and the wallet show it
+  while it waits. The identity's devices cannot stop a recovery; only its
+  guardians can, by withdrawing their approvals.

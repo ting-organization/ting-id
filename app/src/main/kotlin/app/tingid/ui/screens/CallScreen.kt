@@ -69,8 +69,8 @@ import app.tingid.text.Names
 import app.tingid.text.callLine
 import app.tingid.text.callSentence
 import app.tingid.text.listItemLine
+import app.tingid.text.paymentLine
 import app.tingid.text.showAmount
-import app.tingid.text.relativeDuration
 import app.tingid.text.strangeAccounts
 import app.tingid.ui.Banner
 import app.tingid.ui.BannerTone
@@ -187,11 +187,12 @@ private fun Review(request: CallRequest) {
     val link = request.link
     val payment = request.payment
 
-    // Who may act: an account without a delay, or with one when the program schedules; the one the link names, if it names one.
-    val choices = w.accounts.filter { (it.delay == 0L || link.delayed) && (link.from == null || it.account.hex() == link.from) }
+    // Who may act: an account without a delay, the one the link names if it names one. Ting ID cannot yet show a
+    // program's scheduled operation with a way to cancel it, nor run it, so no account with a delay acts, even when
+    // the program would schedule (`delayed=1`).
+    val choices = w.accounts.filter { it.delay == 0L && (link.from == null || it.account.hex() == link.from) }
     var chosen by remember { mutableStateOf<Long?>(null) }
     val account = choices.firstOrNull { it.slot == chosen } ?: choices.firstOrNull { it.delay == 0L } ?: choices.firstOrNull()
-    val delayed = account != null && account.delay > 0
     // Coins go by name only when the user follows them: a coin's own configuration names it as its deployer likes.
     val coins = w.coinById
     // An account without a delay pays its fee inside its payment or fee payment, in the link's coin, when it pays fees in that followed coin.
@@ -209,6 +210,8 @@ private fun Review(request: CallRequest) {
     val line = callLine(parts)
     val strangers = strangeAccounts(link.decoded, names)
     val recipient = payment?.to?.hex()
+    // The phone's check names what leaves the account in the app's own words, above the program's.
+    val ownerTitle = paymentText?.let { paymentLine(it, recipient?.let { r -> names[r] ?: shortId(r) }) } ?: "Approve for this program"
     val data by services.store.data.collectAsState()
     // Warned about the first time only (TCR-1.md): the program is still one Ting ID has no name for.
     val firstUse = request.program.hex() !in data.programsCalled
@@ -229,7 +232,14 @@ private fun Review(request: CallRequest) {
             add("add a user first")
         } else if (account == null) {
             val from = link.from
-            add(if (from != null) "this call is for the account ${shortId(from)}, which is not one of yours" else "this user has no account that can make this call")
+            val waits = w.accounts.firstOrNull { it.account.hex() == from && it.delay > 0 }
+            add(
+                when {
+                    waits != null -> "this call is for ${waits.label}, and Ting ID makes program calls only from instant accounts"
+                    from != null -> "this call is for the account ${shortId(from)}, which is not one of yours"
+                    else -> "this user has no account that can make this call"
+                },
+            )
         }
         if (payment != null && available != null && payment.amount + ownFee > available) add("only ${showAmount(payment.coin.id, available, coins)} available")
         fee.problem?.let(::add)
@@ -248,7 +258,7 @@ private fun Review(request: CallRequest) {
         error = null
         ui.launch {
             val shown = try {
-                if (!confirmOwner(activity, services, "Approve for this program", line)) {
+                if (!confirmOwner(activity, services, ownerTitle, line)) {
                     going.set(false)
                     busy = false
                     return@launch
@@ -346,7 +356,6 @@ private fun Review(request: CallRequest) {
                     Detail("To") { DetailValue(names[recipient] ?: shortId(recipient)) }
                 }
             }
-            if (delayed) Detail("Takes effect") { DetailValue("in ${relativeDuration(account.delay)}, cancellable until then") }
             Detail("Can be used") { DetailValue("for an hour after you approve") }
         }
         if (recipient != null && !names.containsKey(recipient)) {
@@ -364,7 +373,7 @@ private fun Review(request: CallRequest) {
                         val selected = a.slot == account?.slot
                         val shape = RoundedCornerShape(999.dp)
                         Text(
-                            if (a.delay > 0) "${a.label} · waits ${relativeDuration(a.delay)}" else a.label,
+                            a.label,
                             style = manropeStyle(13.5f, FontWeight.SemiBold),
                             color = p.text,
                             modifier = Modifier.clip(shape).background(p.card).border(Dp.Hairline, if (selected) p.ink else p.border, shape)

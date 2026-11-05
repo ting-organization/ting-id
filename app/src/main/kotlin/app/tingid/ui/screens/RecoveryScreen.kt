@@ -101,6 +101,9 @@ private enum class RecoveryMode { Mine, Help }
 /** The target and proposal last read, for `subject` (the target, key list and guardian, in hex). */
 private class RecoveryLookup(val subject: String, val info: IdentityInfo?, val status: ProposalStatus?)
 
+/** A withdrawal being confirmed: of the recovery shown, or of `other`, another one the guardian approves. */
+private class Withdrawal(val other: ByteArray?)
+
 /** `route.mode`: "help" to approve another's recovery, else the user's own; `route.code`: a recovery link, scanned or pasted on the wallet. */
 @Composable
 fun RecoveryScreen(route: RecoveryRoute) {
@@ -235,7 +238,8 @@ fun RecoveryScreen(route: RecoveryRoute) {
     val noGuardians = mode == RecoveryMode.Mine && identity != null && identity.core.guardianCount == 0L
     val targetName = targetId?.let { nameOf(w.names, it) } ?: "them"
     var confirming by remember { mutableStateOf(false) }
-    // Approving and finishing a recovery ask the phone to confirm its owner, as payments do.
+    var withdrawing by remember { mutableStateOf<Withdrawal?>(null) }
+    // Approving, withdrawing and finishing a recovery ask the phone to confirm its owner, as payments do.
     val owner = { title: String -> suspend { confirmOwner(activity, services, title) } }
     fun finish() {
         val chosenFee = fee
@@ -344,8 +348,8 @@ fun RecoveryScreen(route: RecoveryRoute) {
                 if (mode == RecoveryMode.Help && status.approvesOther != null) {
                     Banner("You approve another recovery of this identity. A guardian supports one recovery at a time: withdraw that approval to approve this one.", BannerTone.Warning)
                     Button(
-                        "Withdraw the other approval",
-                        onClick = { approval(false, status.approvesOther) },
+                        "Withdraw the other approval…",
+                        onClick = { withdrawing = Withdrawal(status.approvesOther) },
                         kind = ButtonKind.Ghost,
                         loading = sending.busy == "withdraw-other",
                         enabled = identity != null,
@@ -363,7 +367,7 @@ fun RecoveryScreen(route: RecoveryRoute) {
                             loading = sending.busy == "approve",
                             enabled = identity != null && !newKeys.isNullOrEmpty() && status.standing == null && status.approvesOther == null && status.guards != false,
                         )
-                        Button("Withdraw", onClick = { approval(false) }, kind = ButtonKind.Ghost, loading = sending.busy == "withdraw", enabled = identity != null && status.standing == Standing.Approved)
+                        Button("Withdraw…", onClick = { withdrawing = Withdrawal(null) }, kind = ButtonKind.Ghost, loading = sending.busy == "withdraw", enabled = identity != null && status.standing == Standing.Approved)
                     }
                     if (executableAt != null) {
                         Button(
@@ -398,6 +402,33 @@ fun RecoveryScreen(route: RecoveryRoute) {
                 onAnswer = { yes ->
                     confirming = false
                     if (yes) approval(true, check = owner("Approve the recovery of $targetName"))
+                },
+                ready = fee.problem == null,
+            ) {
+                Column(Modifier.fillMaxWidth()) {
+                    Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
+                    Box(Modifier.padding(vertical = 6.dp)) { FeeRow(fee) }
+                    Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(p.border))
+                }
+            }
+        }
+        // A withdrawal is final for its proposal: the guardian can never approve that one again.
+        withdrawing?.let { wd ->
+            ConfirmSheet(
+                ConfirmOptions(
+                    title = if (wd.other != null) "Withdraw your other approval?" else "Withdraw your approval?",
+                    body = if (wd.other != null) {
+                        "This is final: you can never approve that other recovery of $targetName again. Do it only if they ask you, by a call or in person: someone could be posing as them."
+                    } else {
+                        "This is final: you can never approve this recovery of $targetName again."
+                    },
+                    confirm = "Withdraw",
+                    back = "Keep it",
+                    danger = true,
+                ),
+                onAnswer = { yes ->
+                    withdrawing = null
+                    if (yes) approval(false, wd.other, check = owner("Withdraw your approval for $targetName"))
                 },
                 ready = fee.problem == null,
             ) {
