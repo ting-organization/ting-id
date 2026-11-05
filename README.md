@@ -21,7 +21,9 @@ identities, framed by `java scripts/FrameScreenshot.java <screenshot> <framed.pn
 
 ## Download
 
-`Ting-ID.apk` is on the [releases page](https://github.com/ting-organization/ting-id/releases).
+**[Download Ting-ID.apk](https://github.com/ting-organization/ting-id/releases/latest/download/Ting-ID.apk)**,
+the newest release. Earlier ones, and each release's notes, are on the
+[releases page](https://github.com/ting-organization/ting-id/releases).
 
 > **Early builds.** Ting ID is new software and still changing. It can have
 > faults that cost you coins: keep in it only what you can afford to lose. It
