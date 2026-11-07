@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.tingid.chain.Coin
 import app.tingid.chain.formatAmount
+import app.tingid.chain.shortAmount
 import app.tingid.state.CoinInfo
 import app.tingid.state.blocksTime
 import app.tingid.text.amountOf
@@ -222,7 +223,7 @@ private fun Header(c: CoinInfo, listed: Boolean, mine: Boolean, followed: Boolea
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Circulating", style = manropeStyle(12.5f, FontWeight.SemiBold), color = p.onHeaderMuted)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(formatAmount(circulating(c), c.config.decimals), Modifier.alignByBaseline().weight(1f, fill = false), style = Type.amount, color = p.onHeader)
+                Text(shortAmount(circulating(c), c.config.decimals), Modifier.alignByBaseline().weight(1f, fill = false), style = Type.amount, color = p.onHeader)
                 Text(c.shownSymbol, Modifier.alignByBaseline(), style = manropeStyle(16f, FontWeight.Medium), color = p.onHeaderMuted)
             }
             Text(

@@ -56,8 +56,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.tingid.chain.Links
-import app.tingid.chain.formatAmount
 import app.tingid.chain.hex
+import app.tingid.chain.shortAmount
 import app.tingid.state.AccountView
 import app.tingid.state.ActivityFilter
 import app.tingid.state.CoinGroup
@@ -287,7 +287,7 @@ fun WalletScreen() {
                 key(g.coin.hex) {
                     ListItem(
                         g.coin.config.name,
-                        subtitle = "${if (loading) "…" else formatAmount(g.total, g.coin.config.decimals)} ${g.coin.config.symbol}",
+                        subtitle = "${if (loading) "…" else shortAmount(g.total, g.coin.config.decimals)} ${g.coin.config.symbol}",
                         left = { CoinMark(g.coin) },
                         selected = g.coin.hex == shown?.coin?.hex,
                         onClick = {
@@ -316,7 +316,7 @@ fun WalletScreen() {
                 key(f.info.hex) {
                     ListItem(
                         f.info.config.name,
-                        subtitle = "${formatAmount(f.total, f.info.config.decimals)} ${f.info.config.symbol}",
+                        subtitle = "${shortAmount(f.total, f.info.config.decimals)} ${f.info.config.symbol}",
                         left = { CoinMark(f.info) },
                         right = {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
@@ -377,7 +377,7 @@ private fun Balance(
             }
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Amount(
-                    if (loading) "…" else formatAmount(group.total, coin.config.decimals),
+                    if (loading) "…" else shortAmount(group.total, coin.config.decimals),
                     Modifier.alignByBaseline(),
                     style = Type.amount,
                     color = p.onHeader,
@@ -404,8 +404,8 @@ private fun AccountTile(coin: CoinInfo, view: AccountView, loading: Boolean, pen
     val dec = coin.config.decimals
     val reserved = view.record.locked
     val note = listOfNotNull(
-        if (reserved.signum() > 0) "${formatAmount(reserved, dec)} reserved" else null,
-        if (pending.count > 0) "${formatAmount(pending.amount, dec)} on the way" else null,
+        if (reserved.signum() > 0) "${shortAmount(reserved, dec)} reserved" else null,
+        if (pending.count > 0) "${shortAmount(pending.amount, dec)} on the way" else null,
     ).joinToString(" · ")
     Column(
         modifier.clip(RoundedCornerShape(Radius.md)).background(p.headerRaised).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
@@ -415,7 +415,7 @@ private fun AccountTile(coin: CoinInfo, view: AccountView, loading: Boolean, pen
             if (view.account.delay != 0L) Icon(Icons.Outlined.Lock, null, tint = p.onHeaderMuted, modifier = Modifier.size(13.dp))
             Text(view.account.label, style = manropeStyle(12.5f, FontWeight.Medium), color = p.onHeaderMuted)
         }
-        Amount(if (loading) "…" else formatAmount(view.record.available, dec), style = manropeStyle(17f, FontWeight.SemiBold, tabular = true), color = p.onHeader)
+        Amount(if (loading) "…" else shortAmount(view.record.available, dec), style = manropeStyle(17f, FontWeight.SemiBold, tabular = true), color = p.onHeader)
         if (note.isNotEmpty()) Text(note, style = manropeStyle(11.5f, FontWeight.Medium), color = p.onHeaderMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

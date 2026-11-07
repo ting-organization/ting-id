@@ -21,7 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import app.tingid.chain.formatAmount
+import app.tingid.chain.shortAmount
 import app.tingid.chain.trimWhiteSpace
 import app.tingid.state.CoinFilter
 import app.tingid.state.coinRows
@@ -100,7 +100,7 @@ private fun CoinBrowser() {
                         val copy = originalOf(c, all, listedIds)
                         val mine = minterAccount(c, w.accounts)
                         val decimals = c.config.decimals
-                        val supply = formatAmount(circulating(c), decimals) + if (capped(c)) " of ${formatAmount(c.config.maxSupply, decimals)}" else ""
+                        val supply = shortAmount(circulating(c), decimals) + if (capped(c)) " of ${shortAmount(c.config.maxSupply, decimals)}" else ""
                         if (i > 0) ToolsHairline()
                         ListItem(
                             "${c.shownName} · ${c.shownSymbol}",

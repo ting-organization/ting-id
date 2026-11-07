@@ -41,10 +41,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import app.tingid.chain.Canonical
-import app.tingid.chain.formatAmount
 import app.tingid.chain.hex
 import app.tingid.chain.isHex
 import app.tingid.chain.relativeTime
+import app.tingid.chain.shortAmount
 import app.tingid.chain.shortId
 import app.tingid.chain.trimWhiteSpace
 import app.tingid.state.KeyMeta
@@ -323,7 +323,7 @@ private fun CoinsSection(w: WorkspaceState, confirm: ConfirmState) {
                     ListItem(
                         f.info.config.name,
                         left = { CoinMark(f.info) },
-                        subtitle = "you hold ${formatAmount(f.total, f.info.config.decimals)} ${f.info.config.symbol}",
+                        subtitle = "you hold ${shortAmount(f.total, f.info.config.decimals)} ${f.info.config.symbol}",
                         right = { Button("Follow", onClick = { services.store.addCoin(f.info.hex) }, kind = ButtonKind.Secondary, small = true) },
                     )
                 }
