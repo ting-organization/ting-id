@@ -209,7 +209,7 @@ private val GROUP_SPACE = Regex("(?<=[0-9]) (?=[0-9])")
 private val FRACTION = Regex("[.][0-9]+")
 
 /**
- * An amount as shown (`formatAmount`, with a sign or symbol or not): its groups
+ * An amount as shown (`formatAmount` or `shortAmount`, with a sign or symbol or not): its groups
  * split by a narrow space that keeps them on one line, and the digits after
  * the point in `quiet`, so the whole units read first.
  */

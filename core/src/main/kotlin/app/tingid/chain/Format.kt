@@ -6,12 +6,39 @@ import java.math.BigInteger
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
-fun formatAmount(amount: BigInteger, decimals: Int, maxFraction: Int = decimals): String {
+/** An amount exactly, to its last unit: what is confirmed, signed or typed against. */
+fun formatAmount(amount: BigInteger, decimals: Int): String {
     if (decimals == 0) return group(amount.toString())
-    val scale = BigInteger.TEN.pow(decimals)
-    val (whole, rest) = amount.divideAndRemainder(scale)
-    val fraction = rest.toString().padStart(decimals, '0').take(maxFraction).trimEnd('0')
-    return if (fraction.isNotEmpty()) "${group(whole.toString())}.$fraction" else group(whole.toString())
+    val (whole, fraction) = split(amount, decimals)
+    return joined(whole, fraction)
+}
+
+/**
+ * An amount to glance at, a balance: six significant digits, cut rather than
+ * rounded, so it never shows more than there is. Whole units all stay, and at
+ * least two decimals: 239 756.16479997 → 239 756.16, 1.23456789 → 1.23456,
+ * 0.0001234567 → 0.000123456.
+ */
+fun shortAmount(amount: BigInteger, decimals: Int): String {
+    if (decimals == 0) return group(amount.toString())
+    val (whole, fraction) = split(amount, decimals)
+    val keep = if (whole.signum() != 0) maxOf(SHORT_DECIMALS, SHORT_DIGITS - whole.toString().length)
+    else fraction.length - fraction.trimStart('0').length + SHORT_DIGITS
+    return joined(whole, fraction.take(keep))
+}
+
+private const val SHORT_DIGITS = 6
+private const val SHORT_DECIMALS = 2
+
+/** The whole units, and the fraction as all its `decimals` digits. */
+private fun split(amount: BigInteger, decimals: Int): Pair<BigInteger, String> {
+    val (whole, rest) = amount.divideAndRemainder(BigInteger.TEN.pow(decimals))
+    return whole to rest.toString().padStart(decimals, '0')
+}
+
+private fun joined(whole: BigInteger, fraction: String): String {
+    val f = fraction.trimEnd('0')
+    return if (f.isNotEmpty()) "${group(whole.toString())}.$f" else group(whole.toString())
 }
 
 /** Digits in groups of three, a space between: 1 234 567. */

@@ -33,6 +33,7 @@ import androidx.navigation.NavHostController
 import app.tingid.chain.equal
 import app.tingid.chain.formatAmount
 import app.tingid.chain.hex
+import app.tingid.chain.shortAmount
 import app.tingid.state.Acting
 import app.tingid.state.ActivityFilter
 import app.tingid.state.hiddenScheduledOf
@@ -146,13 +147,13 @@ fun CoinScreen(route: CoinRoute) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Available", style = manropeStyle(12.5f, FontWeight.SemiBold), color = p.onHeaderMuted)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (accountViews.loading && view == null) "…" else formatAmount(available, decimals), Modifier.alignByBaseline(), style = Type.amount, color = p.onHeader)
+                    Text(if (accountViews.loading && view == null) "…" else shortAmount(available, decimals), Modifier.alignByBaseline(), style = Type.amount, color = p.onHeader)
                     Text(symbol, Modifier.alignByBaseline(), style = manropeStyle(16f, FontWeight.Medium), color = p.onHeaderMuted)
                 }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Pill(if (locked) lockOf(account.delay) else "Instant", small = true, light = true)
-                    if (reserved.signum() > 0) Pill("${formatAmount(reserved, decimals)} reserved", Tone.Warning, small = true, light = true)
-                    if (out.count > 0) Pill("${formatAmount(out.amount, decimals)} on the way", small = true, light = true)
+                    if (reserved.signum() > 0) Pill("${shortAmount(reserved, decimals)} reserved", Tone.Warning, small = true, light = true)
+                    if (out.count > 0) Pill("${shortAmount(out.amount, decimals)} on the way", small = true, light = true)
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

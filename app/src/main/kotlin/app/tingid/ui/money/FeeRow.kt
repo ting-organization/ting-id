@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import app.tingid.chain.formatAmount
+import app.tingid.chain.shortAmount
 import app.tingid.state.CoinInfo
 import app.tingid.state.FEE_INFO
 import app.tingid.state.PayerOption
@@ -53,7 +54,7 @@ private fun feeText(fee: BigInteger, c: CoinInfo, run: FeeRun?): String {
     return if (run.coin.hex == c.hex) one(fee + run.amount, c) else "${one(fee, c)} + ${one(run.amount, run.coin)}"
 }
 
-private fun balance(o: PayerOption): String = o.available?.let { "${formatAmount(it, o.coin.config.decimals)} ${o.coin.config.symbol}" } ?: "…"
+private fun balance(o: PayerOption): String = o.available?.let { "${shortAmount(it, o.coin.config.decimals)} ${o.coin.config.symbol}" } ?: "…"
 
 /**
  * The fee line of an operation, from [rememberFee]. `boxed`: the line sits in

@@ -31,7 +31,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
-import app.tingid.chain.formatAmount
+import app.tingid.chain.shortAmount
 import app.tingid.state.AccountView
 import app.tingid.state.CoinGroup
 import app.tingid.state.CoinInfo
@@ -92,13 +92,13 @@ private fun AccountLine(
                 Text(view.account.label, style = manropeStyle(14f, FontWeight.SemiBold), color = p.text)
                 val note = buildAnnotatedString {
                     append(accountNote(view))
-                    if (reserved.signum() > 0) withStyle(SpanStyle(color = p.warning)) { append(" · ${formatAmount(reserved, dec)} reserved") }
-                    if (pending != null && pending.count > 0) append(" · ${formatAmount(pending.amount, dec)} on the way")
+                    if (reserved.signum() > 0) withStyle(SpanStyle(color = p.warning)) { append(" · ${shortAmount(reserved, dec)} reserved") }
+                    if (pending != null && pending.count > 0) append(" · ${shortAmount(pending.amount, dec)} on the way")
                 }
                 Text(note, style = Type.caption, color = p.muted)
             }
             Amount(
-                formatAmount(view.record.available, dec) + if (symbol) " ${coin.config.symbol}" else "",
+                shortAmount(view.record.available, dec) + if (symbol) " ${coin.config.symbol}" else "",
                 style = manropeStyle(15f, FontWeight.Medium, tabular = true),
             )
             if (selected) Icon(Icons.Outlined.Check, null, tint = p.primary, modifier = Modifier.size(18.dp))
@@ -123,7 +123,7 @@ private fun CoinHead(group: CoinGroup, total: Boolean, loading: Boolean = false)
         }
         if (total) {
             Amount(
-                if (loading) "…" else formatAmount(group.total, group.coin.config.decimals),
+                if (loading) "…" else shortAmount(group.total, group.coin.config.decimals),
                 style = manropeStyle(20f, FontWeight.SemiBold, tabular = true).copy(letterSpacing = (-0.3 / 20).em),
             )
         }
