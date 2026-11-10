@@ -1,4 +1,4 @@
-// A program's call (TCR-1.md), from a call link: the program, the operation
+// A program's call (TCR-1), from a call link: the program, the operation
 // in the program's own words, and apart from them what Ting ID checked itself:
 // the account that acts, what leaves it, and the fee. A call that pays is
 // approved by its payment; one that does not, by a signature of its own.
@@ -213,7 +213,7 @@ private fun Review(request: CallRequest) {
     // The phone's check names what leaves the account in the app's own words, above the program's.
     val ownerTitle = paymentText?.let { paymentLine(it, recipient?.let { r -> names[r] ?: shortId(r) }) } ?: "Approve for this program"
     val data by services.store.data.collectAsState()
-    // Warned about the first time only (TCR-1.md): the program is still one Ting ID has no name for.
+    // Warned about the first time only (TCR-1): the program is still one Ting ID has no name for.
     val firstUse = request.program.hex() !in data.programsCalled
 
     var busy by remember { mutableStateOf(false) }

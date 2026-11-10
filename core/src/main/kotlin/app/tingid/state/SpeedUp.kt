@@ -18,7 +18,7 @@ import app.tingid.chain.unhex
  * The call a kept transaction makes, when a speed-up can pay for it: a call
  * that pays no fee itself. Not a batch, which may pay already, nor a
  * deployment, which no batch can make. `unpaid`: for a call to a program
- * (TCR-1.md), what the app noted when it sent it ([OutboxEntry.unpaid]): its
+ * (TCR-1), what the app noted when it sent it ([OutboxEntry.unpaid]): its
  * input starts with a template hash, which says nothing of its fee.
  */
 fun unpaidCall(c: Canonical, raw: ByteArray, unpaid: Boolean? = null): CallTx? {

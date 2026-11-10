@@ -1,4 +1,5 @@
-// TCR-1 (TCR-1.md): the wallet's side against docs/tcr-1-vectors.json, which
+// TCR-1: the wallet's side against tcr-1-vectors.json, the standard's test
+// vectors, a copy of the file in the Ting repository's standards/ folder, which
 // the canvas page's tcr.js wrote and the canvas program's Rust checks too.
 package app.tingid.chain
 
@@ -19,11 +20,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 import java.math.BigInteger
 
 private val tcr: JsonObject = Json.parseToJsonElement(
-    File(System.getProperty("ting.repo") ?: "..", "docs/tcr-1-vectors.json").readText(),
+    TcrVectorsTest::class.java.getResource("/tcr-1-vectors.json")!!.readText(),
 ).jsonObject
 
 private val JsonElement.text: String get() = jsonPrimitive.content

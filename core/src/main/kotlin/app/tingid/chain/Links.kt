@@ -8,8 +8,8 @@
 //   device   net, id, scheme, key               add a device to an identity
 //   guardian net, id, name?                     link an identity as a guardian
 //   recover  net, id, keys                      approve a recovery to new keys
-//   sign     url                                a site's signing request (TOCS-1.md)
-//   call     net, program, template, values?,   an operation of a program (TCR-1.md)
+//   sign     url                                a site's signing request (TOCS-1)
+//   call     net, program, template, values?,   an operation of a program (TCR-1)
 //            zvalues?, coin?, burn?, to?,
 //            amount?, from?, delayed?, return?
 //
@@ -33,7 +33,7 @@ sealed class Link(val request: String) {
     class Sign(val url: String) : Link("sign")
 
     /**
-     * An operation of `program` in its own words (TCR-1.md): the template and its
+     * An operation of `program` in its own words (TCR-1): the template and its
      * values, already checked against each other, and the payment it takes, if
      * any: `coin` and either `burn`, or `to` with `amount`. `coin` alone names
      * the coin the program takes fee payments in.
@@ -178,7 +178,7 @@ object Links {
         }
     }
 
-    /** A call link's fields, checked as TCR-1.md says: the values against the template, the payment fields together. */
+    /** A call link's fields, checked as TCR-1 says: the values against the template, the payment fields together. */
     private fun call(
         net: String,
         fields: Map<String, String>,

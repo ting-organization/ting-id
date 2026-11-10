@@ -257,7 +257,7 @@ class Chain(
 
     // ---- Nonces --------------------------------------------------------------------
 
-    /** A coin account's, or a program's (TCR-1.md), whose nonces are its own. */
+    /** A coin account's, or a program's (TCR-1), whose nonces are its own. */
     private fun nonceKey(contract: ByteArray, account: ByteArray) = "${contract.hex()}:${account.hex()}"
 
     /**
@@ -270,7 +270,7 @@ class Chain(
     suspend fun nextNonce(coinId: ByteArray, account: ByteArray, prefix: String? = null): Long =
         nextAfterNoted(nonceKey(coinId, account), prefix) { fetchAccount(it, coinId, account).nonce }
 
-    /** The nonce for the next call of `account` to `program` (TCR-1.md), queued behind this device's last as for a coin. */
+    /** The nonce for the next call of `account` to `program` (TCR-1), queued behind this device's last as for a coin. */
     suspend fun nextCallNonce(program: ByteArray, account: ByteArray): Long =
         nextAfterNoted(nonceKey(program, account), null) { fetchCallNonce(it, program, account) }
 
@@ -419,7 +419,7 @@ class Chain(
     }
 
     /**
-     * Signs a program's call (TCR-1.md) for the signer's account and submits it.
+     * Signs a program's call (TCR-1) for the signer's account and submits it.
      * With a payment, the payment is the account's approval: it comes from the
      * same account, bound to the program and to the call's digest, and the call's
      * own witness stays empty, so one signature is checked. A payer that is the
@@ -579,7 +579,7 @@ class Chain(
         /** The longest a signed action stays valid: [signedExpiry] is at most two days after signing. */
         const val SIGNED_LIFE = 2 * 86_400L
 
-        /** How long a program's call may wait to get in (TCR-1.md: at most an hour). */
+        /** How long a program's call may wait to get in (TCR-1: at most an hour). */
         const val CALL_LIFE = 3_600L
     }
 }
@@ -595,7 +595,7 @@ class TxLookup(val lookup: TransactionLookup?, val error: String?, val missing: 
 suspend fun fetchAccount(node: ChainApi, coinId: ByteArray, account: ByteArray): Coin.AccountRecord =
     Coin.decodeAccount(node.storage(coinId, account))
 
-/** An account's nonce in a program that takes calls (TCR-1.md); an absent record is 0. */
+/** An account's nonce in a program that takes calls (TCR-1); an absent record is 0. */
 suspend fun fetchCallNonce(node: ChainApi, program: ByteArray, account: ByteArray): Long =
     Tcr.decodeNonce(node.storage(program, Tcr.nonceKey(account))) ?: throw NodeError("the program’s nonce record for this account is not a nonce")
 
@@ -843,7 +843,7 @@ data class ActivityItem(
     val contract: ByteArray,
     val coin: Coin.Event? = null,
     val identity: Id.Event? = null,
-    /** An event of a program's for one of the user's operations in it (TCR-1.md). */
+    /** An event of a program's for one of the user's operations in it (TCR-1). */
     val call: CallEvent? = null,
     /** For a scheduled action: whether a later block ran it or cancelled it. */
     val settled: Settled? = null,

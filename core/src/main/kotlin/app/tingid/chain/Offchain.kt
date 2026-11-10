@@ -1,4 +1,4 @@
-// Off-chain signing, TOCS-1 (TOCS-1.md): what a site asks a Ting ID user to sign, the
+// Off-chain signing, TOCS-1: what a site asks a Ting ID user to sign, the
 // document the app shows for it, and the message the app signs. Nothing here
 // is ever valid on chain: the message starts with this convention's own tag,
 // and the app builds it itself, so a site never chooses the bytes that are
@@ -247,7 +247,7 @@ object Offchain {
 
     /**
      * `**bold**` and `*italic*`, not nested and not starting or ending with
-     * white space; anything else stays as written (TOCS-1.md, the body). A line
+     * white space; anything else stays as written (TOCS-1, the body). A line
      * with more markers than [MARKS_MAX] stays plain, so a long line of stray
      * ones cannot make the matching take time in the square of its length.
      */

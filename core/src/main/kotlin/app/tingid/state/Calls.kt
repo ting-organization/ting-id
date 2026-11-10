@@ -1,4 +1,4 @@
-// A program's call request (TCR-1.md), checked against the chain before
+// A program's call request (TCR-1), checked against the chain before
 // anything of it shows: the program is on chain and not one of Ting's own,
 // its published list holds the link's template, so no sentence the program
 // does not have is ever shown for signing, and the payment's coin runs the
@@ -21,7 +21,7 @@ import java.math.BigInteger
 /**
  * A call link, checked: what it asks of which program. Its coins are read for
  * their decimals only; a coin goes by name only when the user follows it
- * (TCR-1.md, field types), as a coin's own configuration names it however its
+ * (TCR-1, field types), as a coin's own configuration names it however its
  * deployer likes.
  */
 class CallRequest(

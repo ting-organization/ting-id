@@ -1,4 +1,4 @@
-// What a program's call says (TCR-1.md): coins by name only when followed,
+// What a program's call says (TCR-1): coins by name only when followed,
 // hashes in full, and no value that can stop the screen.
 package app.tingid.text
 

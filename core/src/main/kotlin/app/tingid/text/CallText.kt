@@ -1,4 +1,4 @@
-// What a program's call says (TCR-1.md): its sentence with each value shown
+// What a program's call says (TCR-1): its sentence with each value shown
 // as its type is shown, so the program's own words and the app's reading of
 // the values stay apart from what the app says itself.
 package app.tingid.text

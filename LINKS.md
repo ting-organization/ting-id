@@ -19,8 +19,8 @@ ting:<request>?<field>=<value>&…
 | `device` | `id`, `scheme`, `key`, `net` | Add the public key `key` of `scheme` to the identity `id` |
 | `guardian` | `id`, `name`?, `net` | Link the identity `id`, which goes by `name`, as a guardian of one's own |
 | `recover` | `id`, `keys`, `net` | Approve the recovery of identity `id` to the key list `keys` |
-| `sign` | `url` | A site's signing request, fetched from `url` ([TOCS-1](TOCS-1.md)) |
-| `call` | `net`, `program`, `template`, `values`? or `zvalues`?, `coin`?, `burn`?, `to`?, `amount`?, `from`?, `delayed`?, `return`? | Do an operation of a program, in the program's own words ([TCR-1](TCR-1.md)) |
+| `sign` | `url` | A site's signing request, fetched from `url` ([TOCS-1](https://github.com/ting-organization/ting/blob/master/node/wiki/standards/tocs-1.md)) |
+| `call` | `net`, `program`, `template`, `values`? or `zvalues`?, `coin`?, `burn`?, `to`?, `amount`?, `from`?, `delayed`?, `return`? | Do an operation of a program, in the program's own words ([TCR-1](https://github.com/ting-organization/ting/blob/master/node/wiki/standards/tcr-1.md)) |
 
 ## Values
 
