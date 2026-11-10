@@ -54,7 +54,13 @@ the file was built by this repository's release workflow.
 - With Settings → Coin tools on, a Coins tab lists every coin on the chain,
   creates coins, and mints coins whose minter is one of your accounts.
 - Sites can ask it to sign in or to sign a statement, with Ting Off-Chain
-  Signing: [TOCS-1](TOCS-1.md) is the protocol, for sites and other wallets.
+  Signing: [TOCS-1](https://github.com/ting-organization/ting/blob/master/node/wiki/standards/tocs-1.md),
+  in the Ting wiki, is the standard, for sites and other wallets.
+- Pages can ask it to do an operation in a program, with Ting Call Requests:
+  [TCR-1](https://github.com/ting-organization/ting/blob/master/node/wiki/standards/tcr-1.md),
+  in the Ting wiki, is the standard. The app reads, checks, shows and signs
+  call links; it does not yet watch for a program's scheduled operations or
+  cancel them.
 
 Keys are made on the phone and sealed by its keystore, in its secure hardware
 where it has some; the written recovery phrase is their only copy outside it. The app reads the chain through
@@ -114,8 +120,11 @@ implementation of the same formats; the tests check that the app produces
 exactly those bytes. `proof-fixture.json` is a storage answer with its proofs,
 taken from a node, for the proof checks. The recovery phrase code is checked
 against the published BIP-39 and BIP-32 vectors, on the JVM and on the phone.
-[`docs/tocs-1-vectors.json`](docs/tocs-1-vectors.json) are the off-chain
-signing vectors every implementation of [TOCS-1](TOCS-1.md) should pass.
+`tcr-1-vectors.json` and `tocs-1-vectors.json`, beside them, are the test
+vectors of TCR-1 and TOCS-1, which every implementation should pass: copies of
+the files in the Ting repository's
+[`standards/`](https://github.com/ting-organization/ting/tree/master/standards)
+folder.
 
 | Path | Contents |
 |---|---|

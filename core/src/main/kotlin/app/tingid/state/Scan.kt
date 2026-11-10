@@ -88,7 +88,7 @@ fun touches(event: Id.Event, @Suppress("UNUSED_PARAMETER") accounts: List<ByteAr
 /**
  * The events of some blocks that touch the scope: identity events of the
  * registry, and events of any contract that read as a program's call events
- * (TCR-1.md) or coin events, so a program or coin the user does not follow is
+ * (TCR-1) or coin events, so a program or coin the user does not follow is
  * found too. A zero transfer of an account to
  * itself only carries a fee bound to a batch and is left out. Each keeps its
  * block's time.

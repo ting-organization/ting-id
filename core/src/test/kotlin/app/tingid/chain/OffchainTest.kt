@@ -1,4 +1,5 @@
-// TOCS-1 (TOCS-1.md): the wallet's side against docs/tocs-1-vectors.json, which
+// TOCS-1: the wallet's side against tocs-1-vectors.json, the standard's test
+// vectors, a copy of the file in the Ting repository's standards/ folder, which
 // the TypeScript reference implementation wrote, and the cases a wallet must
 // refuse.
 package app.tingid.chain
@@ -21,10 +22,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 private val tocs: JsonObject = Json.parseToJsonElement(
-    File(System.getProperty("ting.repo") ?: "..", "docs/tocs-1-vectors.json").readText(),
+    OffchainTest::class.java.getResource("/tocs-1-vectors.json")!!.readText(),
 ).jsonObject
 
 private val JsonElement.text: String get() = jsonPrimitive.content

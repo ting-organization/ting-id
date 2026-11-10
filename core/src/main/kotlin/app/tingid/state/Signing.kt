@@ -1,4 +1,4 @@
-// Answering a site's signing request (TOCS-1.md): fetching it, checking it
+// Answering a site's signing request (TOCS-1): fetching it, checking it
 // against this device's chain and users, and sending the signed answer, or the
 // refusal, back to the site.
 //

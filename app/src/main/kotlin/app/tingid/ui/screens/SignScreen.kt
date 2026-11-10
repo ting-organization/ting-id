@@ -1,4 +1,4 @@
-// A site's signing request (TOCS-1.md): fetched from the address in its code,
+// A site's signing request (TOCS-1): fetched from the address in its code,
 // shown with the facts the app vouches for apart from what the site wrote, and
 // answered with the user's signature or a refusal.
 package app.tingid.ui.screens

@@ -1,4 +1,4 @@
-// Ting Call Requests (TCR-1.md): an operation of a program in the program's
+// Ting Call Requests (TCR-1): an operation of a program in the program's
 // own words, a template and its values, and the call that does it for an
 // account. The template is checked by the program itself: its hash starts
 // the call, and the program accepts only its own.
@@ -207,7 +207,7 @@ sealed class SlotType {
 class Slot(val name: String, val type: SlotType)
 
 /**
- * An operation of a program (TCR-1.md: templates): its name and fields, in
+ * An operation of a program (TCR-1: templates): its name and fields, in
  * the order their bytes come, and the sentence that shows them.
  */
 class Template private constructor(
@@ -443,7 +443,7 @@ private fun strictUtf8(bytes: ByteArray): String? {
     return if (utf8(text).contentEquals(bytes)) text else null
 }
 
-/** An event a program emits for an account's operation (TCR-1.md: events). */
+/** An event a program emits for an account's operation (TCR-1: events). */
 @Serializable
 sealed class CallEvent : ByContent() {
     abstract val account: ByteArray

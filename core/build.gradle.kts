@@ -39,8 +39,6 @@ configurations.testRuntimeClasspath {
 }
 
 tasks.test {
-    // The TOCS-1 vectors live with the protocol, in docs/, for other projects to use.
-    systemProperty("ting.repo", rootDir.absolutePath)
     systemProperty("ting.live", providers.gradleProperty("ting.live").isPresent.toString())
     testLogging { showStandardStreams = providers.gradleProperty("ting.live").isPresent }
 }

@@ -173,7 +173,7 @@ data class OutboxEntry(
     /** For a batch that pays for an operation: the operation sent alone, whichever of the two goes in. */
     val twin: String? = null,
     /**
-     * For a call to a program (TCR-1.md): whether it pays no fee itself, as the
+     * For a call to a program (TCR-1): whether it pays no fee itself, as the
      * app knew when it sent it. Null for anything else, read from its bytes.
      */
     val unpaid: Boolean? = null,
@@ -262,7 +262,7 @@ data class AppData(
     /** The bytes of submitted transactions no block has included yet, by id. */
     val outbox: Map<String, OutboxEntry> = emptyMap(),
     val strayPhrases: List<StrayPhrase> = emptyList(),
-    /** Programs (ContractId hex) a call went to from this device, so only the first call warns (TCR-1.md). */
+    /** Programs (ContractId hex) a call went to from this device, so only the first call warns (TCR-1). */
     val programsCalled: List<String> = emptyList(),
 ) {
     /** The active user, or the first, or none. */

@@ -1,4 +1,4 @@
-// Ting Call Requests (TCR-1.md): templates, values, hashes and call links,
+// Ting Call Requests (TCR-1): templates, values, hashes and call links,
 // checked against the worked example in the spec.
 package app.tingid.chain
 

@@ -53,7 +53,7 @@ data object ReviewRoute
 @Serializable
 data class SponsorRoute(val code: String? = null, val at: Long = 0)
 
-/** `sent`: just submitted; `unsure`: its answer was lost; `back`: a page the call link offers to go back to (TCR-1.md). */
+/** `sent`: just submitted; `unsure`: its answer was lost; `back`: a page the call link offers to go back to (TCR-1). */
 @Serializable
 data class TxRoute(val id: String, val sent: Boolean = false, val unsure: Boolean = false, val back: String? = null)
 
@@ -77,7 +77,7 @@ data class RecoveryRoute(val mode: String? = null, val code: String? = null, val
 @Serializable
 data class SignRoute(val code: String? = null, val at: Long = 0)
 
-/** A program's call (TCR-1.md), from its call link. */
+/** A program's call (TCR-1), from its call link. */
 @Serializable
 data class CallRoute(val code: String? = null, val at: Long = 0)
 
