@@ -1,8 +1,9 @@
-// The reference programs the app uses and their canonical ids on a chain
-// (wiki: programs). Their code is embedded (resources, `contracts/*.wasm`,
-// copied from the Ting repository's `programs` by scripts/sync-contracts.sh),
-// so the app derives every standard contract's id itself rather than taking
-// a node's word for it.
+// The programs the app uses and their canonical ids on a chain (wiki:
+// programs). Their code is embedded (resources, `contracts/*.wasm`, copied by
+// scripts/sync-contracts.sh: the reference programs from the Ting
+// repository's `programs`, and policy-webauthn, Ting ID Web's passkey policy,
+// from that repository's `program.wasm`), so the app derives every one's id
+// itself rather than taking a node's word for it.
 package app.tingid.chain
 
 import java.util.concurrent.ConcurrentHashMap
@@ -14,6 +15,9 @@ enum class ContractName(val file: String) {
     IdRegistry("id-registry"),
     Coin("coin"),
     Batch("batch"),
+
+    /** Not a reference program: Ting ID Web's, whose passkeys are keys of identities like any other. */
+    PolicyWebauthn("policy-webauthn"),
 }
 
 object Contracts {
@@ -37,6 +41,7 @@ object Contracts {
             multisig = canonicalId(chain, code(ContractName.PolicyMultisigSecp256k1)),
             registry = canonicalId(chain, code(ContractName.IdRegistry)),
             batch = canonicalId(chain, code(ContractName.Batch)),
+            policyWebauthn = canonicalId(chain, code(ContractName.PolicyWebauthn)),
         )
     }
 }
@@ -47,8 +52,14 @@ class Canonical(
     val multisig: ByteArray,
     val registry: ByteArray,
     val batch: ByteArray,
+    /** Where policy-webauthn sits once deployed on the chain; a key of it does nothing until it is. */
+    val policyWebauthn: ByteArray,
 ) {
-    fun policyFor(scheme: Scheme): ByteArray = if (scheme == Scheme.P256) policyP256 else policySecp256k1
+    fun policyFor(scheme: Scheme): ByteArray = when (scheme) {
+        Scheme.Secp256k1 -> policySecp256k1
+        Scheme.P256 -> policyP256
+        Scheme.Webauthn -> policyWebauthn
+    }
 
     /** What a canonical policy verifies, if it is one of the standard ones. */
     fun kindOf(policy: ByteArray): PolicyKind? = when {
@@ -56,16 +67,18 @@ class Canonical(
         equal(policy, policyP256) -> PolicyKind.P256
         equal(policy, multisig) -> PolicyKind.Multisig
         equal(policy, registry) -> PolicyKind.Identity
+        equal(policy, policyWebauthn) -> PolicyKind.Webauthn
         else -> null
     }
 }
 
 enum class PolicyKind {
-    Secp256k1, P256, Multisig, Identity;
+    Secp256k1, P256, Multisig, Identity, Webauthn;
 
     val scheme: Scheme? get() = when (this) {
         Secp256k1 -> Scheme.Secp256k1
         P256 -> Scheme.P256
+        Webauthn -> Scheme.Webauthn
         else -> null
     }
 }

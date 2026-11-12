@@ -28,7 +28,11 @@ ting:<request>?<field>=<value>&…
 - **Longer bytes** (`input`, `keys`): base64url without padding (RFC 4648 §5),
   with no bits left over.
 - **`key`**: the 65-byte uncompressed public key in hex; `scheme` is
-  `secp256k1` or `p256`.
+  `secp256k1` or `p256` for a key of that reference policy, or `webauthn` for a
+  passkey of [Ting ID Web](https://github.com/ting-organization/ting-id-web): a
+  P-256 key of its policy, policy-webauthn, at that program's canonical
+  deployment on the link's network. The policy is checked to run there before
+  such a key is added.
 - **`amount`**: decimal, in the coin's units, with a dot: `12.5`.
 - **`name`, `note`**: text of at most 80 characters, percent-encoded.
 - **`net`**: the first 8 hex digits of the chain ID. A link for another network

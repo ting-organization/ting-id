@@ -5,7 +5,9 @@
 // Ting ID makes and signs with secp256k1 keys only, through libsecp256k1
 // (Bitcoin Core's library: constant-time, RFC 6979 nonces, low-S), so signing
 // needs no randomness. P-256 keys only come from elsewhere — another device's
-// link, an identity's key list — and are only checked to be on the curve.
+// link, an identity's key list — and are only checked to be on the curve. So
+// do passkeys of Ting ID Web: P-256 keys too, whose signatures its own
+// program, policy-webauthn, checks (Contracts).
 package app.tingid.chain
 
 import fr.acinq.secp256k1.Secp256k1
@@ -19,7 +21,11 @@ enum class Scheme(val id: String, val label: String) {
     Secp256k1("secp256k1", "secp256k1"),
 
     @SerialName("p256")
-    P256("p256", "P-256");
+    P256("p256", "P-256"),
+
+    /** A passkey of Ting ID Web: never made or held here, only added from its device link. */
+    @SerialName("webauthn")
+    Webauthn("webauthn", "passkey");
 
     companion object {
         fun of(id: String): Scheme? = entries.firstOrNull { it.id == id }
@@ -80,7 +86,7 @@ fun isPublicKey(scheme: Scheme, pub: ByteArray): Boolean {
         } catch (e: Exception) {
             false
         }
-        Scheme.P256 -> P256.onCurve(pub)
+        Scheme.P256, Scheme.Webauthn -> P256.onCurve(pub)
     }
 }
 

@@ -28,9 +28,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import app.tingid.chain.ContractName
+import app.tingid.chain.Contracts
 import app.tingid.chain.DELAY_PRESETS
 import app.tingid.chain.Id
 import app.tingid.chain.Links
+import app.tingid.chain.Scheme
 import app.tingid.chain.equal
 import app.tingid.chain.hex
 import app.tingid.chain.isHex
@@ -223,6 +226,19 @@ fun ProposeScreen(route: ProposeRoute) {
     // The device link's key, when it is a link for this identity on this network.
     val device = deviceLinkKey(code, net, me?.id?.hex(), user?.name)
     val parsedCode = (device as? Checked.Ok)?.value
+    // A passkey of Ting ID Web is a key only where its policy runs: looked up on the network before it is added.
+    var passkeyPolicyFound by remember { mutableStateOf<Boolean?>(null) }
+    val passkeyPolicy = info?.canonical?.policyWebauthn
+    LaunchedEffect(parsedCode?.scheme, passkeyPolicy?.hex(), w.node) {
+        passkeyPolicyFound = null
+        if (parsedCode?.scheme != Scheme.Webauthn || passkeyPolicy == null) return@LaunchedEffect
+        try {
+            passkeyPolicyFound = w.node.contract(passkeyPolicy)?.codeHash == Contracts.codeHash(ContractName.PolicyWebauthn)
+        } catch (e: Exception) {
+            // Not found out: the change waits for the answer, which another try may give.
+            if (e is CancellationException) throw e
+        }
+    }
 
     // The change as the inputs say now, or what is missing.
     fun operation(): Checked<Id.Operation> {
@@ -235,6 +251,8 @@ fun ProposeScreen(route: ProposeRoute) {
                     FROM_LINK -> when {
                         parsedCode == null -> no("paste the device link")
                         isLinked(parsedCode.pub) -> no("that device already has access")
+                        parsedCode.scheme == Scheme.Webauthn && passkeyPolicyFound == false -> no("Ting ID Web’s passkeys do not work on this network")
+                        parsedCode.scheme == Scheme.Webauthn && passkeyPolicyFound != true -> no("looking up Ting ID Web’s passkey program")
                         else -> Checked.Ok(Id.Operation.AddKey(Id.Key(i.canonical.policyFor(parsedCode.scheme), parsedCode.pub)))
                     }
                     else -> w.keys.firstOrNull { it.id == source }?.let { Checked.Ok(Id.Operation.AddKey(Id.Key(i.canonical.policyFor(it.scheme), unhex(it.pub)))) }
@@ -332,7 +350,7 @@ fun ProposeScreen(route: ProposeRoute) {
                 if (advanced) {
                     ListItem("A device link", subtitle = "from another phone", selected = source == FROM_LINK, onClick = { source = FROM_LINK }, right = if (source == FROM_LINK) selected else null)
                 } else {
-                    Caption("Paste the device link the other device shows after Add a user → Restore → Identity ID, or scan its code from the wallet.")
+                    Caption("Paste the device link the other device shows after Add a user → Restore → Identity ID, or scan its code from the wallet. Ting ID Web shows one too, for a passkey in a browser.")
                 }
                 if (source == FROM_LINK) {
                     Column(Modifier.padding(start = if (advanced) Spacing.md else 0.dp), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
@@ -347,7 +365,11 @@ fun ProposeScreen(route: ProposeRoute) {
                         )
                         if (parsedCode != null) {
                             Banner(
-                                "Key ${deviceFingerprint(parsedCode.pub)}: check that the new phone shows the same. Only add a phone you hold yourself.",
+                                if (parsedCode.scheme == Scheme.Webauthn) {
+                                    "A passkey of Ting ID Web, key ${deviceFingerprint(parsedCode.pub)}: check that the browser shows the same. Only add a device you hold yourself."
+                                } else {
+                                    "Key ${deviceFingerprint(parsedCode.pub)}: check that the new phone shows the same. Only add a phone you hold yourself."
+                                },
                                 BannerTone.Info,
                                 Icons.Outlined.PhoneAndroid,
                             )
