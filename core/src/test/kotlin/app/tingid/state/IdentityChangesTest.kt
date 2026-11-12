@@ -10,6 +10,7 @@ import app.tingid.chain.Links
 import app.tingid.chain.Scheme
 import app.tingid.chain.filled
 import app.tingid.chain.publicKey
+import app.tingid.chain.unhex
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -66,6 +67,11 @@ class IdentityChangesTest {
         assertArrayEquals(pub, found.value.pub)
         // The identity as the store keeps it, in any case.
         assertTrue(deviceLinkKey(link, net, id.uppercase(), "Anna") is Checked.Ok)
+        // A passkey of Ting ID Web: a P-256 key, added under policy-webauthn.
+        val passkey = unhex("046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5")
+        val web = deviceLinkKey(Links.encode(Link.Device(net, id, Scheme.Webauthn, passkey)), net, id, "Anna") as Checked.Ok
+        assertEquals(Scheme.Webauthn, web.value.scheme)
+        assertArrayEquals(c.policyWebauthn, c.policyFor(web.value.scheme))
     }
 
     @Test
@@ -133,6 +139,7 @@ class IdentityChangesTest {
     fun `a key's kind in words, from its policy`() {
         assertEquals("secp256k1", policyLabel(c, c.policySecp256k1))
         assertEquals("P-256", policyLabel(c, c.policyP256))
+        assertEquals("passkey", policyLabel(c, c.policyWebauthn))
         assertEquals("multisig", policyLabel(c, c.multisig))
         assertEquals("another identity", policyLabel(c, c.registry))
         assertEquals("custom policy", policyLabel(c, filled(3)))

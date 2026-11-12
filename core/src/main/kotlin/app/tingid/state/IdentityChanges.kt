@@ -126,10 +126,11 @@ fun coreAfter(core: Id.Core, op: Id.Operation): Id.Core = when (op) {
  */
 fun guardianAloneRecovers(after: Id.Core): Boolean = after.guardianCount > 0 && after.required == 1L
 
-/** What kind of key a policy makes, in words: its scheme, "multisig", "another identity", or "custom policy" for one the app does not know (or while `c` is not known). */
+/** What kind of key a policy makes, in words: its scheme, "passkey", "multisig", "another identity", or "custom policy" for one the app does not know (or while `c` is not known). */
 fun policyLabel(c: Canonical?, policy: ByteArray): String = when (c?.kindOf(policy)) {
     PolicyKind.Secp256k1 -> Scheme.Secp256k1.label
     PolicyKind.P256 -> Scheme.P256.label
+    PolicyKind.Webauthn -> Scheme.Webauthn.label
     PolicyKind.Multisig -> "multisig"
     PolicyKind.Identity -> "another identity"
     null -> "custom policy"

@@ -167,7 +167,9 @@ class DescribeActivityTest {
     @Test
     fun `keys read as fingerprints`() {
         assertTrue(Regex("^[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}$").matches(deviceFingerprint(filled(4, 65))))
-        assertEquals("1 key: 04040404…0404", describeKeys(listOf(Id.Key(filled(1), filled(4, 65)))))
+        // A recovery's keys read as a device being added does, and as Ting ID Web shows them.
+        assertEquals("1 key: 9bda 95bd a1ef 8f1b", describeKeys(listOf(Id.Key(filled(1), filled(4, 65)))))
+        assertEquals(deviceFingerprint(filled(4, 65)), keyFingerprint(Id.Key(filled(1), filled(4, 65))))
     }
 
     @Test

@@ -131,15 +131,18 @@ folder.
 | `core/src/main/kotlin/app/tingid/chain/` | Byte formats, hashing, keys and recovery phrases, accounts, coin, identity, fees, transactions, proofs, links, off-chain signing, the node client and the node pool |
 | `core/src/main/kotlin/app/tingid/state/` | Saved state, the chain cache, what the app reads from the nodes and submits to them |
 | `core/src/main/kotlin/app/tingid/text/` | What the app says about activity, requests, nodes and coins |
-| `core/src/main/resources/app/tingid/chain/` | The BIP-39 word list and the reference programs (`contracts/*.wasm`) |
+| `core/src/main/resources/app/tingid/chain/` | The BIP-39 word list, the reference programs and Ting ID Web's passkey policy (`contracts/*.wasm`) |
 | `app/src/main/kotlin/app/tingid/vault/` | The keystore vault for keys and recovery phrases, the owner check |
 | `app/src/main/kotlin/app/tingid/ui/` | Theme, components and screens |
 | `assets/logo/` | The Ting ID mark, from which the app icon's layers are drawn |
 
 The reference programs are copied from the Ting repository's `programs`
-folder with `scripts/sync-contracts.sh <path of the ting repository>`; the app
-derives their ContractIds on any chain from them, and the tests check their
-code hashes.
+folder, and policy-webauthn from Ting ID Web's `program.wasm`, with
+`scripts/sync-contracts.sh <ting repository> <ting-id-web repository>`; the
+app derives their ContractIds on any chain from them, and the tests check
+their code hashes. policy-webauthn makes a passkey of Ting ID Web a key of an
+identity: Ting ID adds one from its device link and calls it a passkey, but
+never makes or signs with one.
 
 ## Releases
 

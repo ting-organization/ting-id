@@ -566,7 +566,7 @@ private fun KeysSection(w: WorkspaceState, user: User, id: IdentityInfo, canAct:
                 }
                 ListItem(
                     title,
-                    subtitle = if (advanced) "key $keyId · $label · ${shortId(key.params, 10, 6)}$note" else "can act for this identity$note",
+                    subtitle = if (advanced) "key $keyId · $label · ${deviceFingerprint(key.params)}$note" else "can act for this identity$note",
                     left = {
                         IconCircle(
                             if (device != null) Icons.Outlined.PhoneAndroid else if (advanced) Icons.Outlined.Key else Icons.Outlined.TabletAndroid,

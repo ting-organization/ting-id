@@ -50,6 +50,8 @@ class ChainTest {
     fun `code hashes are the manifest's`() {
         assertEquals("edea54d81ee9c28319bb5f0aea7aacbe891654e358f6a5cbe7225078ba7396d3", Contracts.codeHash(ContractName.IdRegistry))
         assertEquals("492e5470e3384a0bfa7cdfcf496c2e374a314325ce24327c75670f17e9201dcf", Contracts.codeHash(ContractName.PolicySecp256k1))
+        // Ting ID Web's README names this CodeHash, built reproducibly from its program/.
+        assertEquals("91a7b9705abf0ee97947d45f7914cea689034c464e1da9186c0b06ddfb769fea", Contracts.codeHash(ContractName.PolicyWebauthn))
     }
 
     @Test
@@ -344,6 +346,10 @@ class ChainTest {
         assertEquals("1185ab4a07f12fd03e130acfd51211cd9360ec94b89e5f742bbd8f52767714bd", prod.registry.hex())
         assertEquals("9558a75642eb797de5ec1be056f01c62d99c492c8f7ec6efed460767588987c9", prod.policySecp256k1.hex())
         assertNotNull(prod.kindOf(prod.policyP256))
+        // policy-webauthn, deployed canonically on 11 November 2026.
+        assertEquals("cfd585a5d39f59ae50a19a33e972c4daaa18fae0cf989ca00a999ca4bc94619c", prod.policyWebauthn.hex())
+        assertEquals(PolicyKind.Webauthn, prod.kindOf(prod.policyWebauthn))
+        assertArrayEquals(prod.policyWebauthn, prod.policyFor(Scheme.Webauthn))
     }
 }
 

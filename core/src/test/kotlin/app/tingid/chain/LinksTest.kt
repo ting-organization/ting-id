@@ -13,6 +13,12 @@ class LinksTest {
     private val daler = "305378d17f6af84a563d0f8a8455084948aff7330b62b4f2f98a44b82ba113c4"
     private val pub = publicKey(filled(7))
 
+    /** P-256's generator, uncompressed: a point on that curve, as a passkey's key is. */
+    private val p256Point = unhex(
+        "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296" +
+            "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+    )
+
     private fun show(l: Link): String = when (l) {
         is Link.Pay -> "pay ${l.net} ${l.to} ${l.coin} ${l.amount} ${l.note}"
         is Link.Create -> "create ${l.net} ${l.input.hex()} ${l.name} ${l.coin} ${l.amount}"
@@ -44,6 +50,7 @@ class LinksTest {
             Link.Pay(net, account),
             Link.Create(net, byteArrayOf(1, 2, 3, 250.toByte()), "Anna Ö", daler, "50"),
             Link.Device(net, account, Scheme.Secp256k1, pub),
+            Link.Device(net, account, Scheme.Webauthn, p256Point),
             Link.Guardian(net, account, "Erik Holm"),
             Link.Guardian(net, account),
             Link.Recover(net, account, byteArrayOf(9, 8, 7)),
@@ -83,6 +90,16 @@ class LinksTest {
         refuses("ting:guardian?id=$account&name=Mo%E2%80%8Bm&net=$net", "hide or reorder")
         // 65 bytes, but not a point on the curve.
         refuses("ting:device?id=$account&scheme=secp256k1&key=04${"00".repeat(64)}&net=$net", "public key")
+        // A passkey is a P-256 key: a secp256k1 point is not one.
+        refuses("ting:device?id=$account&scheme=webauthn&key=${pub.hex()}&net=$net", "public key")
+    }
+
+    @Test
+    fun `read a passkey of Ting ID Web from its device link`() {
+        val link = Links.parseOf<Link.Device>("ting:device?id=$account&scheme=WebAuthn&key=${p256Point.hex()}&net=$net", "device")
+        assertEquals(Scheme.Webauthn, link.scheme)
+        assertEquals(p256Point.hex(), link.key.hex())
+        assertEquals("ting:device?id=$account&scheme=webauthn&key=${p256Point.hex()}&net=$net", Links.encode(link))
     }
 
     @Test

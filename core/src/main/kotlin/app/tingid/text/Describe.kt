@@ -83,13 +83,18 @@ fun describeEffect(e: Coin.Effect, c: CoinInfo?, names: Names): String = when (e
     is Coin.Effect.SetMinter -> "Set minter to ${nameOf(names, e.minter)}"
 }
 
-/** A short fingerprint of a key: its parameters, abbreviated. */
-fun keyFingerprint(key: Id.Key): String = shortId(key.params, 8, 4)
+/**
+ * A key as a person compares it: its device fingerprint, whatever its kind.
+ * One form everywhere, here and in Ting ID Web, so that what one device or
+ * wallet shows can be checked against what another reads out: a device
+ * being added, the keys a recovery installs, a change waiting to apply.
+ */
+fun keyFingerprint(key: Id.Key): String = deviceFingerprint(key.params)
 
 /** A device key as both phones show it before one adds the other: 16 hex digits of its hash, in groups of four. */
 fun deviceFingerprint(pub: ByteArray): String = sha256(pub).copyOf(8).hex().chunked(4).joinToString(" ")
 
-/** The keys a recovery installs, e.g. "1 key: 04a1b2c3…d4e5". */
+/** The keys a recovery installs, e.g. "1 key: 9655 e25e 7e57 784e". */
 fun describeKeys(keys: List<Id.Key>): String =
     "${keys.size} key${if (keys.size == 1) "" else "s"}: ${keys.joinToString(", ") { keyFingerprint(it) }}"
 
