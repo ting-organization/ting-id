@@ -94,6 +94,7 @@ import app.tingid.ui.money.withFee
 import app.tingid.ui.nameTaken
 import app.tingid.ui.sentence
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 
 private val TITLES = mapOf(
     "addKey" to "Add a device",
@@ -228,15 +229,24 @@ fun ProposeScreen(route: ProposeRoute) {
     val parsedCode = (device as? Checked.Ok)?.value
     // A passkey of Ting ID Web is a key only where its policy runs: looked up on the network before it is added.
     var passkeyPolicyFound by remember { mutableStateOf<Boolean?>(null) }
+    // Whether a lookup went unanswered: the screen then says it is trying again.
+    var passkeyLookupFailed by remember { mutableStateOf(false) }
     val passkeyPolicy = info?.canonical?.policyWebauthn
     LaunchedEffect(parsedCode?.scheme, passkeyPolicy?.hex(), w.node) {
         passkeyPolicyFound = null
+        passkeyLookupFailed = false
         if (parsedCode?.scheme != Scheme.Webauthn || passkeyPolicy == null) return@LaunchedEffect
-        try {
-            passkeyPolicyFound = w.node.contract(passkeyPolicy)?.codeHash == Contracts.codeHash(ContractName.PolicyWebauthn)
-        } catch (e: Exception) {
-            // Not found out: the change waits for the answer, which another try may give.
-            if (e is CancellationException) throw e
+        // Asked again until a node answers, a little longer apart each time; leaving the screen or another link stops it.
+        var pause = 2_000L
+        while (passkeyPolicyFound == null) {
+            try {
+                passkeyPolicyFound = w.node.contract(passkeyPolicy)?.codeHash == Contracts.codeHash(ContractName.PolicyWebauthn)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                passkeyLookupFailed = true
+                delay(pause)
+                pause = minOf(pause * 2, 30_000L)
+            }
         }
     }
 
@@ -252,7 +262,8 @@ fun ProposeScreen(route: ProposeRoute) {
                         parsedCode == null -> no("paste the device link")
                         isLinked(parsedCode.pub) -> no("that device already has access")
                         parsedCode.scheme == Scheme.Webauthn && passkeyPolicyFound == false -> no("Ting ID Web’s passkeys do not work on this network")
-                        parsedCode.scheme == Scheme.Webauthn && passkeyPolicyFound != true -> no("looking up Ting ID Web’s passkey program")
+                        parsedCode.scheme == Scheme.Webauthn && passkeyPolicyFound != true ->
+                            no(if (passkeyLookupFailed) "no node answered the lookup of Ting ID Web’s passkey program: trying again" else "looking up Ting ID Web’s passkey program")
                         else -> Checked.Ok(Id.Operation.AddKey(Id.Key(i.canonical.policyFor(parsedCode.scheme), parsedCode.pub)))
                     }
                     else -> w.keys.firstOrNull { it.id == source }?.let { Checked.Ok(Id.Operation.AddKey(Id.Key(i.canonical.policyFor(it.scheme), unhex(it.pub)))) }
