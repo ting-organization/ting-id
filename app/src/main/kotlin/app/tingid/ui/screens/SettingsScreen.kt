@@ -47,6 +47,7 @@ import app.tingid.chain.relativeTime
 import app.tingid.chain.shortAmount
 import app.tingid.chain.shortId
 import app.tingid.chain.trimWhiteSpace
+import app.tingid.chain.unhex
 import app.tingid.state.KeyMeta
 import app.tingid.state.SignatureKind
 import app.tingid.state.SignatureNote
@@ -60,6 +61,7 @@ import app.tingid.state.isStandardCoin
 import app.tingid.state.keyUsers
 import app.tingid.state.knownCoinsFor
 import app.tingid.state.nextColor
+import app.tingid.text.deviceFingerprint
 import app.tingid.text.siteName
 import app.tingid.ui.Banner
 import app.tingid.ui.BannerTone
@@ -444,7 +446,7 @@ private fun KeysSection(w: WorkspaceState, keys: List<KeyMeta>, users: List<User
                 }
                 ListItem(
                     k.name,
-                    subtitle = "${k.scheme.label} · ${shortId(k.pub, 10, 6)} · $serves",
+                    subtitle = "${k.scheme.label} · ${deviceFingerprint(unhex(k.pub))} · $serves",
                     right = if (used.isNotEmpty() || unknown.isNotEmpty()) null else ({
                         Row {
                             Button(
