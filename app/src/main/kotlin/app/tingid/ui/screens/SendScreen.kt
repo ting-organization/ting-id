@@ -301,6 +301,17 @@ fun SendScreen(route: SendTab) {
     }
     val currentApplyCode by rememberUpdatedState(applyCode)
 
+    // A pay link pasted or typed in the recipient field is taken once the field
+    // shows it, not in the field's own change: a field that refuses or replaces
+    // what it was given is left apart from the keyboard, which then reports the
+    // old, empty text back, and that emptied the recipient the link had just
+    // set. Taken, the link's recipient replaces the field; refused, the link
+    // stays in it, with why under it.
+    LaunchedEffect(form.to) {
+        val text = form.to
+        if (Links.isLink(text)) currentApplyCode(text)?.let { form.codeNotice = it }
+    }
+
     val scanned: (String) -> String? = { text ->
         // A pay link fills this form; any other link opens its own screen.
         try {
@@ -343,7 +354,8 @@ fun SendScreen(route: SendTab) {
     val check = checkPayment(
         PaymentInput(
             amount = form.amount,
-            to = form.to,
+            // A link in the field is no recipient until it is taken.
+            to = if (Links.isLink(form.to)) "" else form.to,
             coin = selectedCoin,
             from = from,
             outgoing = outgoing.amount,
@@ -545,16 +557,21 @@ fun SendScreen(route: SendTab) {
                     Field(
                         form.to,
                         { v ->
-                            if (Links.isLink(v)) {
-                                applyCode(v)?.let { form.codeNotice = it }
-                            } else {
-                                form.to = trimWhiteSpace(v).lowercase()
-                                form.forgetCode()
+                            // The field shows only while no recipient is set: a change it reports once one is,
+                            // as just after a link was taken from it, is the keyboard catching up.
+                            if (!isHex(form.to, 32)) {
+                                if (Links.isLink(v)) {
+                                    form.to = trimWhiteSpace(v)
+                                } else {
+                                    form.to = trimWhiteSpace(v).lowercase()
+                                    form.forgetCode()
+                                }
                             }
                         },
                         Modifier.weight(1f),
                         placeholder = "Account or pay link",
                         keyboardType = KeyboardType.Ascii,
+                        error = if (Links.isLink(form.to)) form.codeNotice else null,
                     )
                     IconButton(Icons.Outlined.People, "Recipients", onClick = { picker = true })
                     IconButton(Icons.Outlined.QrCodeScanner, "Scan a code", onClick = { scanning = true })
@@ -568,7 +585,8 @@ fun SendScreen(route: SendTab) {
             FeeRow(fee, run = if (selectedCoin != null && check.runFee.signum() > 0) FeeRun(check.runFee, selectedCoin) else null)
         }
 
-        val codeNotice = form.codeNotice
+        // A refused link's notice shows under the link, in the field.
+        val codeNotice = form.codeNotice.takeIf { !Links.isLink(form.to) }
         val codeCoin = form.codeCoin
         if (codeNotice != null) {
             Banner(codeNotice, BannerTone.Warning)
