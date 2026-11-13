@@ -99,13 +99,15 @@ fun rememberChangeState(w: WorkspaceState, ops: List<Id.Operation> = emptyList()
     val identity = w.identity ?: return ChangeRead(null, false)
     val named = guardiansToRead(identity, ops)
     var retrying by remember { mutableStateOf(false) }
-    // Which of the named guardians are linked, by hex ID; the rest of the state is the identity as read last.
-    val links by produceState<Map<String, Boolean>?>(null, identity.id.hex(), identity.core, identity.pending.map { it.changeNo }, named.map { it.hex() }, w.node) {
+    // What the links are read for: the identity as read, its pending changes and the guardians they name.
+    // Links read for an earlier state are no answer for this one, as a change that applied may have moved them.
+    val readFor = listOf(identity.id.hex(), identity.core, identity.pending.map { it.changeNo }, named.map { it.hex() })
+    val read by produceState<Pair<List<Any>, Map<String, Boolean>>?>(null, readFor, w.node) {
         retrying = false
         var pause = 2_000L
         while (true) {
             try {
-                value = readChangeState(w.node, identity, ops).guardians
+                value = readFor to readChangeState(w.node, identity, ops).guardians
                 retrying = false
                 return@produceState
             } catch (e: Exception) {
@@ -116,9 +118,9 @@ fun rememberChangeState(w: WorkspaceState, ops: List<Id.Operation> = emptyList()
             }
         }
     }
-    // With no guardian to read, the state is known at once; links of other guardians are no answer for these.
-    val read = if (named.isEmpty()) emptyMap() else links?.takeIf { l -> named.all { it.hex() in l } }
-    val known = read?.let { l -> changeStateOf(identity, named, named.filter { l[it.hex()] == true }) }
+    // With no guardian to read, the state is known at once.
+    val links = if (named.isEmpty()) emptyMap() else read?.takeIf { it.first == readFor }?.second
+    val known = links?.let { l -> changeStateOf(identity, named, named.filter { l[it.hex()] == true }) }
     return ChangeRead(known, retrying && known == null)
 }
 
