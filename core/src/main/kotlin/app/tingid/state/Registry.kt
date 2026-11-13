@@ -80,6 +80,10 @@ class Registry(
         ops: List<Id.Operation>,
         payer: FeePayer? = null,
     ): String {
+        // A change that could not apply, now or behind the ones already waiting, would only wait to be cancelled.
+        blockedBehind(readChangeState(chain.node, identity, ops), identity.pending, ops, signer.keyId)?.let {
+            throw IllegalStateException(blockedWords(it.why, it.waiting, advanced = false) { "that identity" })
+        }
         val change = Id.encodeChange(ops)
         val nonce = nextOpNonce(identity)
         val noted = { txId: String -> store.noteNonce(opNonceKey(identity), NonceNote(nonce, txId, now())) }
@@ -145,8 +149,18 @@ class Registry(
         )
     }
 
-    suspend fun applyChange(chainId: ByteArray, identity: IdentityInfo, changeNo: Long, payer: FeePayer? = null): String =
-        chain.submitWithFee(Contracts.canonical(chainId), chainId, BatchCall(identity.registry, Id.applyInput(identity.id, changeNo)), payer)
+    /**
+     * Applies pending change `changeNo`. One that is not pending, or can no
+     * longer apply, is refused: the registry would refuse it, and the node
+     * would hold the transaction until it lapses.
+     */
+    suspend fun applyChange(chainId: ByteArray, identity: IdentityInfo, changeNo: Long, payer: FeePayer? = null): String {
+        val change = identity.pending.firstOrNull { it.changeNo == changeNo } ?: throw IllegalStateException("change #$changeNo is no longer pending")
+        blockedNow(readChangeState(chain.node, identity), change.record.operations)?.let {
+            throw IllegalStateException("change #$changeNo can no longer apply: ${blockedWords(it, waiting = false, advanced = false) { "that identity" }}")
+        }
+        return chain.submitWithFee(Contracts.canonical(chainId), chainId, BatchCall(identity.registry, Id.applyInput(identity.id, changeNo)), payer)
+    }
 
     /**
      * A guardian approves replacing `target`'s keys with `keyList`. The input carries

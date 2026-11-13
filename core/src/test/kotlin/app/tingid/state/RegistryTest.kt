@@ -46,14 +46,17 @@ class RegistryTest {
         app.store.addUser(user)
     }
 
-    private fun identity(opNonce: Long = 5, keyId: Long = 0, of: ByteArray = id) = IdentityInfo(
+    // One guardian, so that a threshold of 1 is one the identity can have.
+    private fun identity(opNonce: Long = 5, keyId: Long = 0, of: ByteArray = id, pending: List<PendingChange> = emptyList()) = IdentityInfo(
         of,
         c.registry,
-        Id.Core(opNonce, 0, 0, 0, keyId + 1, 1, 0, 2, 0, 604_800, 172_800, 0),
+        Id.Core(opNonce, 0, 0, 0, keyId + 1, 1, 1, 2, 0, 604_800, 172_800, 5),
         listOf(IdentityKey(keyId, Id.Key(c.policySecp256k1, pub))),
         listOf(IdentitySlot(0, 0), IdentitySlot(1, 604_800)),
-        emptyList(),
+        pending,
     )
+
+    private fun pendingChange(changeNo: Long, op: Id.Operation) = PendingChange(changeNo, Id.ChangeRecord(0, 0, 1_000, 2_000, listOf(op)))
 
     private val opKey = "op:${c.registry.hex()}:${id.hex()}"
 
@@ -183,7 +186,7 @@ class RegistryTest {
     @Test
     fun `applying, recovering and queueing a recovery need no signature`() = runBlocking {
         val keyList = Id.encodeKeyList(listOf(Id.Key(c.policySecp256k1, pub)))
-        registry.applyChange(chainId, identity(), 4)
+        registry.applyChange(chainId, identity(pending = listOf(pendingChange(4, Id.Operation.SetDelays(604_800, 172_800)))), 4)
         registry.recover(chainId, c.registry, id, keyList)
         registry.queueRecover(c.registry, id, keyList, 1_900_000_000)
         val recover = encodeCall(c.registry, Id.recoverInput(id, keyList), Budgets.CALL).hex()
@@ -200,6 +203,32 @@ class RegistryTest {
         assertEquals("the identity is not on chain yet", runCatching { registry.identitySigner(user, c, listOf(key), null) }.exceptionOrNull()?.message)
         val single = User("s", "Savings", "#000", UserKind.Key, keyId = key.id)
         assertEquals("not an identity", runCatching { registry.identitySigner(single, c, listOf(key), null) }.exceptionOrNull()?.message)
+    }
+
+    @Test
+    fun `a change that could not apply is never sent`() = runBlocking {
+        // Guardian records are read, proved, from a node the pool knows the chain of: there are none.
+        node.emptyState = true
+        app.chain.node.status()
+        val stranger = filled(0x51)
+        val signer = registry.identitySigner(user, c, listOf(key), identity())
+        // The registry has no record of them as a guardian: unlinking them could never apply.
+        val unlink = runCatching { registry.proposeChange(chainId, identity(), signer, listOf(Id.Operation.RemoveGuardian(stranger))) }.exceptionOrNull()
+        assertEquals("that identity is not your guardian", unlink?.message)
+        // Nor one that leaves no key, or links them a second time behind a waiting change.
+        val last = runCatching { registry.proposeChange(chainId, identity(), signer, listOf(Id.Operation.RemoveKey(0))) }.exceptionOrNull()
+        assertEquals("the identity would have no device left", last?.message)
+        val waiting = identity(pending = listOf(pendingChange(4, Id.Operation.AddGuardian(stranger))))
+        val again = runCatching { registry.proposeChange(chainId, waiting, signer, listOf(Id.Operation.AddGuardian(stranger))) }.exceptionOrNull()
+        assertEquals("a change linking that identity is already waiting", again?.message)
+        // A change waiting to unlink them can only be cancelled; one that is not pending, not even that.
+        val dead = identity(pending = listOf(pendingChange(4, Id.Operation.RemoveGuardian(stranger))))
+        assertEquals(
+            "change #4 can no longer apply: that identity is not your guardian",
+            runCatching { registry.applyChange(chainId, dead, 4) }.exceptionOrNull()?.message,
+        )
+        assertEquals("change #3 is no longer pending", runCatching { registry.applyChange(chainId, dead, 3) }.exceptionOrNull()?.message)
+        assertTrue(node.posted.isEmpty())
     }
 }
 
