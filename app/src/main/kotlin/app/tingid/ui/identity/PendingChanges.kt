@@ -76,6 +76,7 @@ import app.tingid.ui.money.Hairline
 import app.tingid.ui.money.rememberFee
 import app.tingid.ui.t
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 
 /** A cancel or apply being confirmed: its question, and what runs with the owner's check once confirmed. */
 private class ChangeAsking(val options: ConfirmOptions, val run: (check: suspend () -> Boolean) -> Unit)
@@ -83,30 +84,42 @@ private class ChangeAsking(val options: ConfirmOptions, val run: (check: suspend
 /** What a cancel of `changeNos` says it did. */
 private fun cancelSummary(changeNos: List<Long>): String = if (changeNos.size == 1) "Cancel change #${changeNos[0]}" else "Cancel ${changeNos.size} changes"
 
+/** The state changes are checked against, null until it is read; `retrying` once a read went unanswered and another is to follow. */
+class ChangeRead(val state: ChangeState?, val retrying: Boolean)
+
 /**
- * The state the identity's pending changes, and `ops`, are checked against;
- * null until the guardians they name are read. Read again when the identity
- * or its pending changes change; with no guardian to read, known at once.
+ * The state the identity's pending changes, and `ops`, are checked against.
+ * Read again when the identity or its pending changes change; with no
+ * guardian to read, known at once. A read no node answers is asked again, a
+ * little longer apart each time (2 s, doubling to 30 s), as long as the
+ * screen stays.
  */
 @Composable
-fun rememberChangeState(w: WorkspaceState, ops: List<Id.Operation> = emptyList()): ChangeState? {
-    val identity = w.identity ?: return null
+fun rememberChangeState(w: WorkspaceState, ops: List<Id.Operation> = emptyList()): ChangeRead {
+    val identity = w.identity ?: return ChangeRead(null, false)
     val named = guardiansToRead(identity, ops)
-    val state by produceState<ChangeState?>(null, identity.id.hex(), identity.core, identity.pending.map { it.changeNo }, named.map { it.hex() }, w.node) {
-        value = if (named.isEmpty()) {
-            changeStateOf(identity, named, emptyList())
-        } else {
+    var retrying by remember { mutableStateOf(false) }
+    // Which of the named guardians are linked, by hex ID; the rest of the state is the identity as read last.
+    val links by produceState<Map<String, Boolean>?>(null, identity.id.hex(), identity.core, identity.pending.map { it.changeNo }, named.map { it.hex() }, w.node) {
+        retrying = false
+        var pause = 2_000L
+        while (true) {
             try {
-                readChangeState(w.node, identity, ops)
+                value = readChangeState(w.node, identity, ops).guardians
+                retrying = false
+                return@produceState
             } catch (e: Exception) {
-                // Not found out: the changes wait for the answer, which the next read may give.
                 if (e is CancellationException) throw e
-                null
+                retrying = true
+                delay(pause)
+                pause = minOf(pause * 2, 30_000L)
             }
         }
     }
-    // A state of other guardians, or another identity, is no answer for these.
-    return state?.takeIf { s -> s.id == identity.id.hex() && named.all { it.hex() in s.guardians } }
+    // With no guardian to read, the state is known at once; links of other guardians are no answer for these.
+    val read = if (named.isEmpty()) emptyMap() else links?.takeIf { l -> named.all { it.hex() in l } }
+    val known = read?.let { l -> changeStateOf(identity, named, named.filter { l[it.hex()] == true }) }
+    return ChangeRead(known, retrying && known == null)
 }
 
 /**
@@ -131,7 +144,7 @@ fun PendingChanges(w: WorkspaceState, user: User, sending: Sending, onWallet: Bo
     val info = w.info ?: return
     // One fee for cancelling and applying pending changes; registry operations pay nothing themselves.
     val fee = rememberFee(null)
-    val state = rememberChangeState(w)
+    val state = rememberChangeState(w).state
     // The cancel or apply being confirmed: its sheet shows the fee, which can be changed there.
     var asking by remember { mutableStateOf<ChangeAsking?>(null) }
     if (id.pending.isEmpty()) return
@@ -291,8 +304,14 @@ private fun PendingSection(
                                 style = manropeStyle(14.5f, FontWeight.Medium),
                                 color = p.text,
                             )
+                            // Who proposed it: a change none of this owner's devices made stands out.
+                            val by = when {
+                                w.advanced -> "by key ${record.proposer}"
+                                onThisDevice(record.proposer) -> "by this device"
+                                else -> "by Device ${record.proposer + 1}"
+                            }
                             Text(
-                                "#$changeNo · " + when {
+                                "#$changeNo · $by · " + when {
                                     why != null -> if (why.forGood) "cannot apply" else "cannot apply yet"
                                     due -> "ready to apply"
                                     else -> "applies ${relativeTime(record.effectiveAt)}"

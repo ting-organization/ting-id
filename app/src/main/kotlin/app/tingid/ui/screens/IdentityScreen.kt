@@ -592,10 +592,12 @@ private fun RecoverySection() {
 private fun TimeLocksSection(id: IdentityInfo, canAct: Boolean, propose: (ProposeRoute) -> Unit) {
     val p = t
     val core = id.core
+    // An account being added takes the next number: a second one waits until it has applied.
+    val adding = id.pending.firstOrNull { c -> c.record.operations.any { it is Id.Operation.SetSlot && it.slot >= core.slotCount } }
     SectionHeader(
         "Time locks",
         icon = Icons.Outlined.HourglassEmpty,
-        action = if (canAct) "Add account" else null,
+        action = if (canAct && adding == null) "Add account" else null,
         onAction = { propose(ProposeRoute(kind = "setSlot", slot = core.slotCount)) },
         info = "Recovery must be shorter than changes, so guardians can undo what a thief starts. A change here applies after the current change delay; lowering an account's lock also waits out that lock.",
     )
@@ -631,6 +633,14 @@ private fun TimeLocksSection(id: IdentityInfo, canAct: Boolean, propose: (Propos
                         )
                     },
                     right = change(ProposeRoute(kind = "setSlot", slot = s.slot)),
+                )
+            }
+            if (adding != null) {
+                Rule()
+                ListItem(
+                    slotLabel(core.slotCount),
+                    subtitle = "added once change #${adding.changeNo} applies",
+                    left = { IconCircle(Icons.Outlined.HourglassEmpty, p.warning, p.warningSoft) },
                 )
             }
         }

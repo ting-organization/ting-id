@@ -45,6 +45,7 @@ import app.tingid.state.Checked
 import app.tingid.state.SubmittedTx
 import app.tingid.state.blockedBehind
 import app.tingid.state.blockedWords
+import app.tingid.state.proposingKeyId
 import app.tingid.state.coreAfter
 import app.tingid.state.deviceLinkKey
 import app.tingid.state.fetchIdentity
@@ -199,7 +200,7 @@ fun ProposeScreen(route: ProposeRoute) {
     }
     // The identity as a change would find it, with the guardian in question: a change
     // that could not apply, now or once the changes already waiting do, is not proposed.
-    val changeState = rememberChangeState(w, if (isHex(guardianId, 32)) listOf(Id.Operation.RemoveGuardian(unhex(guardianId))) else emptyList())
+    val changeRead = rememberChangeState(w, if (isHex(guardianId, 32)) listOf(Id.Operation.RemoveGuardian(unhex(guardianId))) else emptyList())
     var threshold by remember { mutableStateOf(core?.threshold?.toString() ?: "0") }
     var changeDelay by remember { mutableLongStateOf(core?.changeDelay ?: Id.DEFAULT_CHANGE_DELAY) }
     var recoveryDelay by remember { mutableLongStateOf(core?.recoveryDelay ?: Id.DEFAULT_RECOVERY_DELAY) }
@@ -296,9 +297,19 @@ fun ProposeScreen(route: ProposeRoute) {
             else -> Checked.Ok(Id.Operation.SetSlot(slotNo, slotDelay))
         }
         if (planned !is Checked.Ok) return planned
-        val ops = listOf(planned.value)
-        val state = changeState ?: return no("checking it against the changes already waiting")
-        val blocked = blockedBehind(state, identity?.pending ?: emptyList(), ops) ?: return planned
+        val op = planned.value
+        val waiting = identity?.pending ?: emptyList()
+        // A second new account while one waits would take the same number, and only set that account's lock.
+        if (op is Id.Operation.SetSlot && core != null && op.slot >= core.slotCount &&
+            waiting.any { c -> c.record.operations.any { it is Id.Operation.SetSlot && it.slot >= core.slotCount } }
+        ) {
+            return no("a change adding an account is already waiting: add another once it applies")
+        }
+        val state = changeRead.state ?: return no(
+            if (changeRead.retrying) "no node answered the check against the changes already waiting: trying again" else "checking it against the changes already waiting",
+        )
+        val proposer = if (identity != null && info != null) proposingKeyId(info.canonical, identity, w.keys) else null
+        val blocked = blockedBehind(state, waiting, listOf(op), proposer) ?: return planned
         return no(blockedWords(blocked.why, blocked.waiting, advanced) { nameOf(withGuardian(w.names), it) })
     }
 

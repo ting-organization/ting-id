@@ -81,7 +81,7 @@ class Registry(
         payer: FeePayer? = null,
     ): String {
         // A change that could not apply, now or behind the ones already waiting, would only wait to be cancelled.
-        blockedBehind(readChangeState(chain.node, identity, ops), identity.pending, ops)?.let {
+        blockedBehind(readChangeState(chain.node, identity, ops), identity.pending, ops, signer.keyId)?.let {
             throw IllegalStateException(blockedWords(it.why, it.waiting, advanced = false) { "that identity" })
         }
         val change = Id.encodeChange(ops)

@@ -5,13 +5,17 @@
 // cannot apply never will by itself, so Apply would wait forever: it only
 // waits to be cancelled. A new change is also checked behind the changes
 // already waiting, as if they apply first, so that it is not proposed to fail
-// once they do.
+// once they do. A change dies with the key that proposed it, so a waiting
+// change that removes that key never leaves another stuck behind it: if it
+// applies, the other is void.
 package app.tingid.state
 
+import app.tingid.chain.Canonical
 import app.tingid.chain.ChainApi
 import app.tingid.chain.Id
 import app.tingid.chain.equal
 import app.tingid.chain.hex
+import app.tingid.chain.unhex
 
 /**
  * What decides whether a change applies to the identity `id`: its core, the
@@ -89,6 +93,24 @@ fun blockedNow(state: ChangeState, ops: List<Id.Operation>): Blocked? = (afterCh
 /** Why a pending change cannot apply now, and whether it never will (`forGood`). */
 class ApplyBlocked(val why: Blocked, val forGood: Boolean)
 
+/** Whether `change` removes key `keyId`: once it applies, every change that key proposed is void. */
+private fun removesKey(change: PendingChange, keyId: Long?): Boolean =
+    keyId != null && change.record.operations.any { it is Id.Operation.RemoveKey && it.keyId == keyId }
+
+/**
+ * `state` after the `pending` changes, in their order, each one that can
+ * apply; leaving out `skip` and every change that removes key `proposer`,
+ * which would void a change of that key rather than leave it stuck.
+ */
+private fun afterPending(state: ChangeState, pending: List<PendingChange>, proposer: Long?, skip: Long? = null): ChangeState {
+    var after = state
+    for (change in pending.sortedBy { it.changeNo }) {
+        if (change.changeNo == skip || removesKey(change, proposer)) continue
+        (afterChange(after, change.record.operations) as? Applied.Yes)?.let { after = it.state }
+    }
+    return after
+}
+
 /**
  * Why pending `change` cannot apply to the identity as `state` has it, or
  * null when it can. It can apply later (not `forGood`) when it could after
@@ -97,11 +119,7 @@ class ApplyBlocked(val why: Blocked, val forGood: Boolean)
  */
 fun blockedApply(state: ChangeState, pending: List<PendingChange>, change: PendingChange): ApplyBlocked? {
     val why = blockedNow(state, change.record.operations) ?: return null
-    var after = state
-    for (other in pending.sortedBy { it.changeNo }) {
-        if (other.changeNo == change.changeNo) continue
-        (afterChange(after, other.record.operations) as? Applied.Yes)?.let { after = it.state }
-    }
+    val after = afterPending(state, pending, change.record.proposer, skip = change.changeNo)
     return ApplyBlocked(why, forGood = blockedNow(after, change.record.operations) != null)
 }
 
@@ -109,18 +127,24 @@ fun blockedApply(state: ChangeState, pending: List<PendingChange>, change: Pendi
 class ProposeBlocked(val why: Blocked, val waiting: Boolean)
 
 /**
- * Why `ops` should not be proposed to the identity `state` has: they cannot
- * apply to it as it is, or not after the `pending` changes, applied in their
- * order, each one that can. Null when they can.
+ * Why `ops`, proposed with key `proposer`, should not be proposed to the
+ * identity `state` has: they cannot apply to it as it is, or not after the
+ * `pending` changes, applied in their order, each one that can. A change
+ * removing `proposer` is left out: the new change would be void after it,
+ * not stuck, as when a thief's key proposes removing this device while this
+ * device proposes removing the thief's. Null when they can.
  */
-fun blockedBehind(state: ChangeState, pending: List<PendingChange>, ops: List<Id.Operation>): ProposeBlocked? {
+fun blockedBehind(state: ChangeState, pending: List<PendingChange>, ops: List<Id.Operation>, proposer: Long?): ProposeBlocked? {
     blockedNow(state, ops)?.let { return ProposeBlocked(it, waiting = false) }
-    var after = state
-    for (change in pending.sortedBy { it.changeNo }) {
-        (afterChange(after, change.record.operations) as? Applied.Yes)?.let { after = it.state }
-    }
-    return blockedNow(after, ops)?.let { ProposeBlocked(it, waiting = true) }
+    return blockedNow(afterPending(state, pending, proposer), ops)?.let { ProposeBlocked(it, waiting = true) }
 }
+
+/**
+ * The key of `identity` its changes from this device are proposed with: the
+ * first of its keys this device holds, as Chain.resolveSigner picks it.
+ */
+fun proposingKeyId(c: Canonical, identity: IdentityInfo, keys: List<KeyMeta>): Long? =
+    identity.keys.firstOrNull { (_, key) -> keys.any { equal(c.policyFor(it.scheme), key.policy) && equal(unhex(it.pub), key.params) } }?.keyId
 
 /** The guardians `ops` name, once each. */
 fun guardiansNamed(ops: List<Id.Operation>): List<ByteArray> = ops.mapNotNull {
