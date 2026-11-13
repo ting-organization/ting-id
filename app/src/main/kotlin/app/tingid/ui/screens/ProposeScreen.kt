@@ -189,6 +189,12 @@ fun ProposeScreen(route: ProposeRoute) {
             null
         }
     }
+    // A guardian link pasted or typed in the field is read once the field shows it, not in the
+    // field's own change, which would leave the field apart from the keyboard. Taken, its identity
+    // replaces it; refused, it stays, with why under it, and no guardian is chosen.
+    LaunchedEffect(guardian) {
+        if (Links.isLink(guardian)) takeGuardian(guardian)?.let { codeProblem = it }
+    }
     LaunchedEffect(guardianId, registry?.hex(), w.node) {
         if (kind != "addGuardian" || registry == null || !isHex(guardianId, 32)) return@LaunchedEffect
         try {
@@ -459,18 +465,8 @@ fun ProposeScreen(route: ProposeRoute) {
                 }
                 Field(
                     guardian,
-                    { v ->
-                        if (Links.isLink(v)) {
-                            // A link refused leaves no guardian chosen, so the field, its error and the change agree.
-                            val problem = takeGuardian(v)
-                            if (problem != null) {
-                                chooseGuardian("")
-                                codeProblem = problem
-                            }
-                        } else {
-                            chooseGuardian(v)
-                        }
-                    },
+                    // A link stays as typed until it is read, below, so the field and the keyboard agree.
+                    { v -> chooseGuardian(v) },
                     label = "Identity ID",
                     placeholder = "64 hex digits",
                     keyboardType = KeyboardType.Ascii,
