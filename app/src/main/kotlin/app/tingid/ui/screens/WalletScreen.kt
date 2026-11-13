@@ -80,6 +80,7 @@ import app.tingid.ui.Caption
 import app.tingid.ui.Card
 import app.tingid.ui.CoinRoute
 import app.tingid.ui.CoinsTab
+import app.tingid.ui.HoldWhileBusy
 import app.tingid.ui.IconCircle
 import app.tingid.ui.IdentityTab
 import app.tingid.ui.InkHeader
@@ -98,6 +99,8 @@ import app.tingid.ui.Sheet
 import app.tingid.ui.Spacing
 import app.tingid.ui.Type
 import app.tingid.ui.Welcome
+import app.tingid.ui.identity.PendingChanges
+import app.tingid.ui.identity.rememberSending
 import app.tingid.ui.manropeStyle
 import app.tingid.ui.money.ActivityList
 import app.tingid.ui.money.CoinGroups
@@ -140,6 +143,9 @@ fun WalletScreen() {
     val found by remember(w.scope, accountsKey, excluded) { services.coins.discovered(w.scope, w.accounts, excluded) }.collectAsState(initial = emptyList())
     // A recovery of the identity that guardians approve shows here too: its devices cannot stop it.
     val recovery = rememberOpenRecoveries(w).firstOrNull()
+    // Cancelling or applying a pending identity change from here.
+    val changes = rememberSending()
+    HoldWhileBusy(changes.busy != null)
 
     val user = w.user
     val info = w.info
@@ -244,6 +250,12 @@ fun WalletScreen() {
                 Caption("You also hold ${found.size} other coin${if (found.size == 1) "" else "s"}")
                 Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, tint = p.muted, modifier = Modifier.size(14.dp))
             }
+        }
+
+        // Changes to the identity wait here as well as on Identity: one nobody here made is a stolen key at work.
+        if (user != null) {
+            changes.error?.let { Banner(sentence(it), BannerTone.Danger) }
+            PendingChanges(w, user, changes, onWallet = true)
         }
 
         if (user != null) ScheduledSection(w, scheduledOf(w.coins, views), hiddenScheduledOf(w.coins, views), acting = null, info = SCHEDULED_INFO)

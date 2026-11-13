@@ -21,8 +21,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Key
@@ -34,7 +32,6 @@ import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.TabletAndroid
 import androidx.compose.material.icons.outlined.VerifiedUser
@@ -65,12 +62,10 @@ import app.tingid.chain.nowSeconds
 import app.tingid.chain.relativeTime
 import app.tingid.chain.shortId
 import app.tingid.chain.unhex
-import app.tingid.state.CANCEL_CHUNK
 import app.tingid.state.IdentityInfo
 import app.tingid.state.KeyMeta
 import app.tingid.state.LinkedKey
 import app.tingid.state.OpenRecovery
-import app.tingid.state.SubmittedTx
 import app.tingid.state.User
 import app.tingid.state.UserKind
 import app.tingid.state.WorkspaceState
@@ -79,13 +74,11 @@ import app.tingid.state.guardiansOf
 import app.tingid.state.linkedDeviceKeys
 import app.tingid.state.openRecoveries
 import app.tingid.state.policyLabel
-import app.tingid.state.sent
 import app.tingid.state.slotLabel
 import app.tingid.state.userIdentity
 import app.tingid.text.Names
 import app.tingid.text.OTHER_CHAIN_USER
 import app.tingid.text.count
-import app.tingid.text.describeOperation
 import app.tingid.text.deviceFingerprint
 import app.tingid.text.nameOf
 import app.tingid.text.relativeDuration
@@ -98,8 +91,6 @@ import app.tingid.ui.ButtonKind
 import app.tingid.ui.Caption
 import app.tingid.ui.Card
 import app.tingid.ui.CardTone
-import app.tingid.ui.ConfirmOptions
-import app.tingid.ui.ConfirmSheet
 import app.tingid.ui.HoldWhileBusy
 import app.tingid.ui.IconCircle
 import app.tingid.ui.IdChip
@@ -123,26 +114,16 @@ import app.tingid.ui.Spacing
 import app.tingid.ui.StatTile
 import app.tingid.ui.Sub
 import app.tingid.ui.Tone
-import app.tingid.ui.TxRoute
 import app.tingid.ui.Type
 import app.tingid.ui.Welcome
-import app.tingid.ui.confirmOwner
+import app.tingid.ui.identity.PendingChanges
 import app.tingid.ui.identity.Sending
 import app.tingid.ui.identity.rememberSending
 import app.tingid.ui.manropeStyle
-import app.tingid.ui.money.FeeChoice
-import app.tingid.ui.money.FeeRow
-import app.tingid.ui.money.rememberFee
 import app.tingid.ui.sentence
 import app.tingid.ui.t
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-
-/** A cancel or apply being confirmed: its question, and what runs with the owner's check once confirmed. */
-private class ChangeAsking(val options: ConfirmOptions, val run: (check: suspend () -> Boolean) -> Unit)
-
-/** What a cancel of `changeNos` says it did. */
-private fun cancelSummary(changeNos: List<Long>): String = if (changeNos.size == 1) "Cancel change #${changeNos[0]}" else "Cancel ${changeNos.size} changes"
 
 @Composable
 fun IdentityScreen() {
@@ -196,74 +177,8 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
     val recoveries = rememberOpenRecoveries(w)
 
     val guardians = rememberLinkedGuardians(w, user)
-    // One fee for cancelling and applying pending changes; registry operations pay nothing themselves.
-    val fee = rememberFee(null)
-
-    // The identity's keys this device holds, named "this device" in what a change does.
+    // The identity's keys this device holds.
     val linked: List<LinkedKey> = if (id != null && info != null) linkedDeviceKeys(info.canonical, id, w.keys) else emptyList()
-    val onThisDevice = { keyId: Long -> linked.any { it.keyId == keyId } }
-    fun operationsOf(changeNo: Long): String? =
-        id?.pending?.firstOrNull { it.changeNo == changeNo }?.record?.operations?.joinToString("; ") { describeOperation(it, w.names, w.advanced, onThisDevice) }
-
-    fun act(label: String, summary: String, check: suspend () -> Boolean, f: suspend () -> String) =
-        sending.send(
-            label,
-            check = check,
-            submit = {
-                val s = sent(f)
-                services.store.addSubmitted(SubmittedTx(id = s.txId, at = nowSeconds(), summary = summary, userId = user.id))
-                s
-            },
-            opened = { s -> nav.navigate(TxRoute(s.txId, unsure = s.unsure)) },
-        )
-
-    // One signature cancels many pending changes; a long list goes in several
-    // cancels of CANCEL_CHUNK, each within one transaction's budget, the last one shown.
-    fun cancel(label: String, changeNos: List<Long>, check: suspend () -> Boolean) {
-        val groups = changeNos.chunked(CANCEL_CHUNK)
-        val last = groups.lastOrNull() ?: emptyList()
-        val chosen = fee
-        act(label, cancelSummary(last), check) {
-            val i = w.info
-            val identity = w.identity
-            if (i == null || identity == null) throw IllegalStateException("the identity is still loading: try again in a moment")
-            val signer = services.registry.identitySigner(user, i.canonical, w.keys, identity)
-            for (g in groups.dropLast(1)) {
-                val s = sent { services.registry.cancelChanges(i.status.chainId, identity, signer, g, chosen.resolve()) }
-                services.store.addSubmitted(SubmittedTx(id = s.txId, at = nowSeconds(), summary = cancelSummary(g), userId = user.id))
-            }
-            services.registry.cancelChanges(i.status.chainId, identity, signer, last, chosen.resolve())
-        }
-    }
-
-    fun apply(changeNo: Long, check: suspend () -> Boolean) {
-        val chosen = fee
-        act("apply-$changeNo", "Apply change #$changeNo", check) {
-            val i = w.info
-            val identity = w.identity
-            if (i == null || identity == null) throw IllegalStateException("the identity is still loading: try again in a moment")
-            services.registry.applyChange(i.status.chainId, identity, changeNo, chosen.resolve())
-        }
-    }
-
-    // The cancel or apply being confirmed: its sheet shows the fee, which can be changed there.
-    var asking by remember { mutableStateOf<ChangeAsking?>(null) }
-    fun confirmCancel(changeNos: List<Long>, label: String) {
-        val one = if (changeNos.size == 1) operationsOf(changeNos[0])?.takeIf { it.isNotEmpty() } else null
-        asking = ChangeAsking(
-            ConfirmOptions(
-                title = if (changeNos.size == 1) "Cancel this change?" else "Cancel all ${changeNos.size} changes?",
-                body = if (one != null) "$one. It will not apply." else "None of them will apply.",
-                confirm = if (changeNos.size == 1) "Cancel change" else "Cancel all",
-                back = if (changeNos.size == 1) "Keep it" else "Keep them",
-                danger = true,
-            ),
-        ) { check -> cancel(label, changeNos, check) }
-    }
-    fun confirmApply(changeNo: Long) {
-        val ops = operationsOf(changeNo)?.takeIf { it.isNotEmpty() }
-        asking = ChangeAsking(ConfirmOptions(title = "Apply change #$changeNo?", body = ops?.let { "$it." }, confirm = "Apply change", back = "Not now")) { check -> apply(changeNo, check) }
-    }
 
     val advanced = w.advanced
     val deviceKey = deviceKeyOf(user, w.keys) ?: linked.firstOrNull()?.key
@@ -352,21 +267,7 @@ private fun IdentityUser(w: WorkspaceState, user: User) {
             if (showDevices) KeysSection(w, user, id, canAct, propose)
             GuardiansSection(w, id, guardians, canAct, propose)
             AccountsSection(id)
-            if (id.pending.isNotEmpty()) {
-                PendingSection(w, id, linked, sending.busy, onThisDevice, { nos, label -> confirmCancel(nos, label) }, ::confirmApply)
-            }
-            asking?.let { a ->
-                ConfirmSheet(
-                    a.options,
-                    onAnswer = { yes ->
-                        asking = null
-                        // The question without its question mark names the phone's check.
-                        val title = a.options.title.removeSuffix("?")
-                        if (yes) a.run { confirmOwner(activity, services, title) }
-                    },
-                    ready = fee.problem == null,
-                ) { ConfirmFee(fee) }
-            }
+            PendingChanges(w, user, sending)
             RecoverySection()
             if (advanced) TimeLocksSection(id, canAct, propose)
         }
@@ -403,16 +304,6 @@ private fun GuardianCodeSheet(link: String, onClose: () -> Unit) {
 /** A hairline between rows of a card. */
 @Composable
 private fun Rule(color: Color = t.border) = Spacer(Modifier.fillMaxWidth().height(0.5.dp).background(color))
-
-/** The fee in a confirmation, between hairlines. */
-@Composable
-private fun ConfirmFee(fee: FeeChoice) {
-    Column(Modifier.fillMaxWidth()) {
-        Rule()
-        Box(Modifier.padding(vertical = 6.dp)) { FeeRow(fee) }
-        Rule()
-    }
-}
 
 /**
  * The guardians of the user's identity that this device knows, read again
@@ -660,74 +551,6 @@ private fun AccountsSection(id: IdentityInfo) {
                         )
                     },
                 )
-            }
-        }
-    }
-}
-
-/** The changes waiting to apply, each to cancel, and to apply once due. */
-@Composable
-private fun PendingSection(
-    w: WorkspaceState,
-    id: IdentityInfo,
-    linked: List<LinkedKey>,
-    busy: String?,
-    onThisDevice: (Long) -> Boolean,
-    confirmCancel: (List<Long>, String) -> Unit,
-    confirmApply: (Long) -> Unit,
-) {
-    val p = t
-    val n = id.pending.size
-    Card(tone = CardTone.Warning, padded = false) {
-        Column {
-            Row(
-                Modifier.fillMaxWidth().padding(start = Spacing.lg, end = Spacing.lg, top = 14.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-            ) {
-                Icon(Icons.Outlined.HourglassEmpty, null, tint = p.warning, modifier = Modifier.size(16.dp))
-                Text("$n pending ${if (n == 1) "change" else "changes"}", style = manropeStyle(13.5f, FontWeight.SemiBold), color = p.warning)
-                Info(
-                    "Pending changes",
-                    "A change waits ${relativeDuration(id.core.changeDelay)}, and any of your devices can cancel it meanwhile. " +
-                        "It is void once the device that proposed it is removed, or when guardians approve a recovery.",
-                )
-                Spacer(Modifier.weight(1f))
-                if (linked.isNotEmpty() && n > 1) {
-                    Text(
-                        if (busy == "cancel-all") "Cancelling…" else "Cancel all",
-                        style = manropeStyle(13.5f, FontWeight.Medium),
-                        color = p.danger,
-                        modifier = Modifier.clickable(role = Role.Button) { if (busy == null) confirmCancel(id.pending.map { it.changeNo }, "cancel-all") }.padding(4.dp),
-                    )
-                }
-            }
-            id.pending.forEachIndexed { i, change ->
-                val changeNo = change.changeNo
-                val record = change.record
-                val due = record.effectiveAt <= nowSeconds()
-                if (i > 0) Rule(p.warningLine)
-                Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
-                        IconCircle(if (due) Icons.Outlined.CheckCircle else Icons.Outlined.Schedule, p.warning, p.warningLine, 38.dp)
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                            Text(
-                                record.operations.joinToString("; ") { describeOperation(it, w.names, w.advanced, onThisDevice) },
-                                style = manropeStyle(14.5f, FontWeight.Medium),
-                                color = p.text,
-                            )
-                            Text("#$changeNo · ${if (due) "ready to apply" else "applies ${relativeTime(record.effectiveAt)}"}", style = Type.caption, color = p.warning)
-                        }
-                        if (linked.isNotEmpty()) {
-                            Button("Cancel", onClick = { confirmCancel(listOf(changeNo), "cancel-$changeNo") }, kind = ButtonKind.Danger, small = true, loading = busy == "cancel-$changeNo")
-                        }
-                    }
-                    if (due) {
-                        Row(Modifier.padding(start = 50.dp)) {
-                            Button("Apply", onClick = { confirmApply(changeNo) }, kind = ButtonKind.Secondary, small = true, icon = Icons.Outlined.Check, loading = busy == "apply-$changeNo")
-                        }
-                    }
-                }
             }
         }
     }

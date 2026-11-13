@@ -43,6 +43,8 @@ import app.tingid.chain.trimWhiteSpace
 import app.tingid.chain.unhex
 import app.tingid.state.Checked
 import app.tingid.state.SubmittedTx
+import app.tingid.state.blockedBehind
+import app.tingid.state.blockedWords
 import app.tingid.state.coreAfter
 import app.tingid.state.deviceLinkKey
 import app.tingid.state.fetchIdentity
@@ -87,6 +89,7 @@ import app.tingid.ui.Tone
 import app.tingid.ui.TxRoute
 import app.tingid.ui.WalletTab
 import app.tingid.ui.confirmOwner
+import app.tingid.ui.identity.rememberChangeState
 import app.tingid.ui.identity.rememberSending
 import app.tingid.ui.money.FeeRow
 import app.tingid.ui.money.rememberFee
@@ -194,6 +197,9 @@ fun ProposeScreen(route: ProposeRoute) {
             if (e is CancellationException) throw e
         }
     }
+    // The identity as a change would find it, with the guardian in question: a change
+    // that could not apply, now or once the changes already waiting do, is not proposed.
+    val changeState = rememberChangeState(w, if (isHex(guardianId, 32)) listOf(Id.Operation.RemoveGuardian(unhex(guardianId))) else emptyList())
     var threshold by remember { mutableStateOf(core?.threshold?.toString() ?: "0") }
     var changeDelay by remember { mutableLongStateOf(core?.changeDelay ?: Id.DEFAULT_CHANGE_DELAY) }
     var recoveryDelay by remember { mutableLongStateOf(core?.recoveryDelay ?: Id.DEFAULT_RECOVERY_DELAY) }
@@ -250,10 +256,10 @@ fun ProposeScreen(route: ProposeRoute) {
         }
     }
 
-    // The change as the inputs say now, or what is missing.
+    // The change as the inputs say now, or what is missing, or why it could not apply.
     fun operation(): Checked<Id.Operation> {
         fun no(message: String) = Checked.Refused(message)
-        return when (kind) {
+        val planned = when (kind) {
             "addKey" -> {
                 val i = info ?: return no("not connected")
                 when (source) {
@@ -289,6 +295,11 @@ fun ProposeScreen(route: ProposeRoute) {
             "setDelays" -> if (recoveryDelay < changeDelay) Checked.Ok(Id.Operation.SetDelays(changeDelay, recoveryDelay)) else no("recovery must be shorter than changes")
             else -> Checked.Ok(Id.Operation.SetSlot(slotNo, slotDelay))
         }
+        if (planned !is Checked.Ok) return planned
+        val ops = listOf(planned.value)
+        val state = changeState ?: return no("checking it against the changes already waiting")
+        val blocked = blockedBehind(state, identity?.pending ?: emptyList(), ops) ?: return planned
+        return no(blockedWords(blocked.why, blocked.waiting, advanced) { nameOf(withGuardian(w.names), it) })
     }
 
     if (identity == null || core == null) {
