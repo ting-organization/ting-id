@@ -108,4 +108,94 @@ class WatchTest {
         val items = listOf(PendingItem(tx(1, "c", "a", big), Watch.Waiting, true), PendingItem(tx(2, "c", "a", big), Watch.Checking, true))
         assertEquals(OnTheWay(2, BigInteger(big) * BigInteger.TWO), onTheWay(items, "c", "a"))
     }
+
+    // ---- Expiry -----------------------------------------------------------------------
+
+    @Test
+    fun `the chain's time is the median of eleven timestamps in a row`() {
+        assertEquals(60L, chainTime(listOf(10L, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110)))
+        // A block may be stamped earlier than the one before it: the median is of the sorted stamps.
+        assertEquals(60L, chainTime(listOf(110L, 10, 100, 20, 90, 30, 80, 40, 70, 50, 60)))
+        assertEquals(null, chainTime(listOf(10L, 20, 30, 40, 50, 60, 70, 80, 90, 100)))
+        assertEquals(null, chainTime(emptyList()))
+    }
+
+    @Test
+    fun `what was signed is gone once the clock and the chain's time are both past its expiry`() {
+        // No expiry, or the clock not past it: it can still go in.
+        assertEquals(false, expired(null, 9_999, 9_999))
+        assertEquals(false, expired(1000, 1000, 5000))
+        // A block stamped at the expiry still takes it, and one may yet be while the chain's time is behind.
+        assertEquals(false, expired(1000, 1001, 999))
+        assertEquals(true, expired(1000, 1001, 1000))
+        assertEquals(true, expired(1000, 1001, 1001))
+        // The chain's time unknown: an hour past the expiry stands in.
+        assertEquals(false, expired(1000, 1000 + LATE, null))
+        assertEquals(true, expired(1000, 1001 + LATE, null))
+        // Known and behind, the hour does not: only the chain says when no block can be stamped early enough.
+        assertEquals(false, expired(1000, 1001 + LATE, 999))
+    }
+
+    @Test
+    fun `a submission no block has is over once what it signed has expired`() {
+        val signed = tx(1000).copy(expires = 4600)
+        fun at(now: Long, lookup: TransactionLookup?, chainTime: Long?, twin: Twin? = null) = decide(signed, lookup, kept(1000), now, 200, twin, words, chainTime)
+        fun twin(l: TransactionLookup?) = Twin(l, kept(1000))
+        // Before its expiry, and after it while a block could still be stamped early enough: as ever.
+        assertEquals(Decision.Follow(Watch.Waiting), at(4600, lookup(pending = true), 4600))
+        assertEquals(Decision.Follow(Watch.Waiting), at(4700, lookup(pending = true), 4599))
+        // Gone: a node that still holds it changes nothing, and one that lost it is not sent it again.
+        assertEquals(Decision.Expired, at(4700, lookup(pending = true), 4600))
+        assertEquals(Decision.Expired, at(4700, null, 4600))
+        assertEquals(Decision.Expired, at(4700, lookup(), 4600))
+        // In a block, it is what the block says, whatever the time.
+        assertEquals(Decision.Included(150), at(4700, inBlock(150, "Success"), 4600))
+        assertEquals(Decision.Failed(150, "it ran in block 150 without succeeding: the program refused it"), at(4700, inBlock(150, "Revert"), 4600))
+        // A batch that failed in a block leaves the operation sent alone, until that has expired too: then the failure stands.
+        val failed = inBlock(150, "Revert")
+        assertEquals(Decision.Follow(Watch.Waiting), at(4700, failed, 4599, twin(lookup(pending = true))))
+        assertEquals(Decision.Failed(150, "it ran in block 150 without succeeding: the program refused it"), at(4700, failed, 4600, twin(lookup(pending = true))))
+        // The operation alone going in settles it all the same.
+        assertEquals(Decision.Included(160), at(4700, lookup(pending = true), 4600, twin(inBlock(160, "Success"))))
+        // One that signed nothing with an expiry is never over this way.
+        assertEquals(Decision.Follow(Watch.Waiting), decide(tx(1000), lookup(pending = true), kept(1000), 999_999, 200, null, words, 999_999))
+    }
+
+    @Test
+    fun `the same payment still on its way is found, and no other`() {
+        fun pay(to: String, sends: String?, state: TxState = TxState.Pending) = tx(1, "c", "a", "11").copy(to = to, sends = sends, state = state)
+        val first = pay("b", "10")
+        val items = listOf(PendingItem(first, Watch.Waiting, true))
+        assertEquals(first, samePayment(items, "c", "a", "b", BigInteger.TEN))
+        // Another amount, recipient, account or coin is another payment.
+        assertEquals(null, samePayment(items, "c", "a", "b", BigInteger.ONE))
+        assertEquals(null, samePayment(items, "c", "a", "x", BigInteger.TEN))
+        assertEquals(null, samePayment(items, "c", "x", "b", BigInteger.TEN))
+        assertEquals(null, samePayment(items, "x", "a", "b", BigInteger.TEN))
+        // In a block, failed or over, it is not on its way; one of an earlier version says no amount.
+        assertEquals(null, samePayment(listOf(PendingItem(first, Watch.Confirming(9), true)), "c", "a", "b", BigInteger.TEN))
+        assertEquals(null, samePayment(listOf(PendingItem(pay("b", "10", TxState.Failed), Watch.Failed("x", null), false)), "c", "a", "b", BigInteger.TEN))
+        assertEquals(null, samePayment(listOf(PendingItem(pay("b", null), Watch.Waiting, true)), "c", "a", "b", BigInteger.TEN))
+    }
+
+    @Test
+    fun `the same call still on its way is found by program, account and operation`() {
+        val program = ByteArray(32) { 1 }
+        val account = ByteArray(32) { 2 }
+        val template = ByteArray(32) { 3 }
+        val key = callKey(program, account, template, byteArrayOf(7))
+        val other = callKey(program, account, template, byteArrayOf(8))
+        fun call(key: String?, expires: Long?) = tx(1).copy(call = key, expires = expires)
+        val items = listOf(
+            PendingItem(call(key, 4000), Watch.Waiting, true),
+            PendingItem(call(other, 5000), Watch.Resent, true),
+            PendingItem(call(callKey(program, ByteArray(32) { 9 }, template, byteArrayOf(7)), 6000), Watch.Waiting, true),
+            PendingItem(call(callKey(ByteArray(32) { 9 }, account, template, byteArrayOf(7)), 6000), Watch.Waiting, true),
+            PendingItem(call(null, 6000), Watch.Waiting, true),
+            PendingItem(call(key, 7000), Watch.Confirming(9), true),
+        )
+        assertEquals(items[0].tx, sameCall(items, key))
+        assertEquals(items[1].tx, sameCall(items, other))
+        assertEquals(null, sameCall(items, callKey(program, account, template, byteArrayOf(9))))
+    }
 }

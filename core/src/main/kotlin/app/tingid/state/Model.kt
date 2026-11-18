@@ -162,6 +162,17 @@ data class SubmittedTx(
     val amount: String? = null,
     /** For a payment: the account it goes to (hex). */
     val to: String? = null,
+    /** For a payment: what the recipient gets, in base units, so that the same payment made again is noticed. */
+    val sends: String? = null,
+    /** For a program's call (TCR-1): the program and the operation's hash, hex, as [callKey] gives them. */
+    val call: String? = null,
+    /**
+     * When what it signed stops being valid (seconds), for a signed coin action
+     * or program call: past it no block can include the transaction, and it is
+     * over ([expired]). Null for what carries no expiry, and for submissions
+     * of earlier versions.
+     */
+    val expires: Long? = null,
 )
 
 /** A submitted transaction's bytes, kept until a block includes it, to send again if the node loses it. */
@@ -217,9 +228,10 @@ data class SignatureNote(
 )
 
 /**
- * The last action this device signed for a coin account: its nonce and
- * transaction, when it was signed, and for a fee payment bound to a batch the
- * prefix it commits to.
+ * The last action this device signed for a coin account, or the last call for
+ * a program's: its nonce and transaction, when it was signed, for a fee
+ * payment bound to a batch the prefix it commits to, and when what was signed
+ * expires.
  */
 @Serializable
 data class NonceNote(
@@ -228,6 +240,8 @@ data class NonceNote(
     /** Seconds. */
     val at: Long,
     val prefix: String? = null,
+    /** Seconds; null for a note of an earlier version, or for what carries no expiry. */
+    val expires: Long? = null,
 )
 
 /**

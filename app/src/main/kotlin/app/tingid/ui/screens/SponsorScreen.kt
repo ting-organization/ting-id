@@ -230,7 +230,9 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
                     }
                     if (sending.signum() > 0) {
                         val signer = services.chain.resolveSigner(user, account.slot, canon, now.keys, now.identity)
-                        val action = Coin.Action(Coin.Effect.Transfer(to, sending), Coin.NO_TIMING)
+                        // Signed for an hour: past that no block can include it, and it is over (state/Watch.kt, expired).
+                        val validUntil = services.chain.signedExpiry()
+                        val action = Coin.Action(Coin.Effect.Transfer(to, sending), Coin.NO_TIMING.copy(validUntil = validUntil))
                         val payer = paymentFee.resolve()
                         val r = sent { services.chain.submitCoinAction(chainId, coin.id, signer, action, payer = payer).txId }
                         services.store.addSubmitted(
@@ -243,6 +245,8 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
                                 account = account.account.hex(),
                                 amount = (sending + ownFee).toString(),
                                 to = to.hex(),
+                                sends = sending.toString(),
+                                expires = validUntil,
                             ),
                         )
                         made = Sent(r.txId, r.unsure || made?.unsure == true)

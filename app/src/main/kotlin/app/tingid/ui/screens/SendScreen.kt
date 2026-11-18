@@ -94,6 +94,7 @@ import app.tingid.state.fetchIdentity
 import app.tingid.state.groupTyped
 import app.tingid.state.linkedDeviceKeys
 import app.tingid.state.onTheWay
+import app.tingid.state.samePayment
 import app.tingid.state.paymentDrafts
 import app.tingid.state.recipients
 import app.tingid.state.sent
@@ -412,6 +413,7 @@ fun SendScreen(route: SendTab) {
                 runFee = runFee,
                 total = needed,
                 available = check.availableNow,
+                repeatOf = samePayment(pending, c.hex, account.account.hex(), to, amount)?.at,
                 submit = {
                     if (!progress.compareAndSet(IDLE, SENDING)) {
                         throw IllegalStateException(if (progress.get() == SENT) "this payment was sent already" else "this payment is being sent")
@@ -419,7 +421,9 @@ fun SendScreen(route: SendTab) {
                     try {
                         if (chosenAt != null && chosenAt <= nowSeconds() + 60) throw IllegalStateException("the chosen time has passed: go back and choose a later one")
                         val signer = chain.resolveSigner(user, account.slot, info.canonical, keys, identity)
-                        val action = Coin.Action(Coin.Effect.Transfer(unhex(to), amount), Coin.Timing(tip = runFee, notBefore = chosenAt ?: 0L))
+                        // Signed for an hour: past that no block can include it, and it is over (state/Watch.kt, expired).
+                        val validUntil = chain.signedExpiry()
+                        val action = Coin.Action(Coin.Effect.Transfer(unhex(to), amount), Coin.Timing(tip = runFee, notBefore = chosenAt ?: 0L, validUntil = validUntil))
                         val payer = paying.resolve()
                         var done: Chain.Submitted? = null
                         // With its answer lost, the payment may be in the node: it is followed as sent, never signed again.
@@ -449,6 +453,8 @@ fun SendScreen(route: SendTab) {
                                 account = account.account.hex(),
                                 amount = needed.toString(),
                                 to = to,
+                                sends = amount.toString(),
+                                expires = validUntil,
                             ),
                         )
                         // Sent: the form is empty for the next payment.

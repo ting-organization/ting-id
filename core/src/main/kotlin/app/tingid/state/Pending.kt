@@ -50,13 +50,20 @@ class Pending(
     /** Only what was sent to this chain: another chain's nodes would not know it, and sending it there again is no use. */
     private fun here(t: SubmittedTx, userId: String?, chainHex: String?) = t.userId == userId && (t.chain == null || t.chain == chainHex)
 
-    private suspend fun check(node: ChainApi, tx: SubmittedTx, tip: Long): Watch? {
+    private suspend fun check(node: ChainApi, tx: SubmittedTx, tip: Long, chainTime: Long?): Watch? {
         if (!busy.add(tx.id)) return null
         try {
             val kept = store.data.value.outbox[tx.id]
             val lookup = node.transaction(tx.id)
             val twin = kept?.twin?.let { Twin(node.transaction(it), store.data.value.outbox[it]) }
-            return when (val d = decide(tx, lookup, kept, now(), tip, twin, statusWords)) {
+            return when (val d = decide(tx.copy(expires = expiryOf(tx)), lookup, kept, now(), tip, twin, statusWords, chainTime)) {
+                is Decision.Expired -> {
+                    // Over, though a node may hold it for a day yet: its bytes are no use to send again.
+                    store.forgetOutbox(tx.id)
+                    kept?.twin?.let { store.forgetOutbox(it) }
+                    store.updateSubmitted(tx.id) { it.copy(state = TxState.Failed, height = null, problem = EXPIRED_WORDS) }
+                    null
+                }
                 is Decision.Settle -> {
                     // The bytes go first, so a submission never shows settled with them still kept.
                     store.forgetOutbox(tx.id)
@@ -128,10 +135,26 @@ class Pending(
     private suspend fun round(r: Round) = coroutineScope {
         val mine = store.data.value.submitted.filter { here(it, r.userId, r.chainHex) }
         val tip = r.height ?: 0
-        mine.filter { it.state == TxState.Failed && it.height == null }.map { async { recheck(r.node, it, tip) } }.awaitAll()
-        val found = mine.filter { it.state == TxState.Pending }.map { async { it.id to check(r.node, it, tip) } }.awaitAll()
+        mine.filter { mayHaveGoneIn(it) }.map { async { recheck(r.node, it, tip) } }.awaitAll()
+        val waiting = mine.filter { it.state == TxState.Pending }
+        // The chain's time is asked only while one of them is past its expiry by the clock.
+        val now = now()
+        val chainTime = if (waiting.any { tx -> expiryOf(tx)?.let { now > it } == true }) chain.chainTime() else null
+        val found = waiting.map { async { it.id to check(r.node, it, tip, chainTime) } }.awaitAll()
         watches.update { w -> w + found.mapNotNull { (id, watch) -> watch?.let { id to it } } }
     }
+
+    /**
+     * When what a submission signed expires. One of an earlier version does
+     * not say: a program's call, which the bytes kept of it tell
+     * (Store.markProgramCall), was signed for an hour then as now, and the
+     * submission is no older than its signature.
+     */
+    private fun expiryOf(tx: SubmittedTx): Long? =
+        tx.expires ?: store.data.value.outbox[tx.id]?.unpaid?.let { tx.at + Chain.CALL_LIFE }
+
+    /** A failure in no block, because a node refused the transaction, may have gone in after all; one that expired cannot have. */
+    private fun mayHaveGoneIn(tx: SubmittedTx) = tx.state == TxState.Failed && tx.height == null && tx.problem != EXPIRED_WORDS
 
     /**
      * The active user's unsettled submissions and failures to show, newest
@@ -144,7 +167,7 @@ class Pending(
         }
         launch {
             combine(open, chain.pool, chain.info) { (d, chainHex, list), node, info ->
-                val pendingIds = list.filter { it.state == TxState.Pending || it.height == null }.joinToString(",") { it.id }
+                val pendingIds = list.filter { it.state == TxState.Pending || mayHaveGoneIn(it) }.joinToString(",") { it.id }
                 Round(node, d.activeUserId, chainHex, pendingIds, info?.status?.height)
             }.distinctUntilChanged().collectLatest { r ->
                 if (r.pendingIds.isEmpty()) return@collectLatest

@@ -337,7 +337,9 @@ suspend fun submitMinterAction(
     val user = w.user ?: throw IllegalStateException("no user to sign")
     val info = w.info ?: throw IllegalStateException("the node is not reachable")
     val signer = chain.resolveSigner(user, minter.slot, info.canonical, w.keys, w.identity)
-    val action = Coin.Action(effect, Coin.NO_TIMING.copy(tip = tip))
+    // Signed for an hour: past that no block can include it, and it is over (Watch.kt, expired).
+    val validUntil = now() + Chain.SIGNED_LIFE
+    val action = Coin.Action(effect, Coin.NO_TIMING.copy(tip = tip, validUntil = validUntil))
     val payer = fee.resolve()
     // A lost answer still gives the id, and the action's account and nonce: its run is queued all the same.
     val (r, account, nonce) = try {
@@ -365,6 +367,7 @@ suspend fun submitMinterAction(
             coin = if (paid.signum() > 0) c.hex else null,
             account = if (paid.signum() > 0) minter.account.hex() else null,
             amount = if (paid.signum() > 0) paid.toString() else null,
+            expires = validUntil,
         ),
     )
     return r

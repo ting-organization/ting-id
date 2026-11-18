@@ -62,7 +62,9 @@ import app.tingid.state.Acting
 import app.tingid.state.CallRequest
 import app.tingid.state.CoinInfo
 import app.tingid.state.SubmittedTx
+import app.tingid.state.callKey
 import app.tingid.state.readCallRequest
+import app.tingid.state.sameCall
 import app.tingid.state.sent
 import app.tingid.text.CallPart
 import app.tingid.text.Names
@@ -79,6 +81,8 @@ import app.tingid.ui.ButtonKind
 import app.tingid.ui.Caption
 import app.tingid.ui.CallRoute
 import app.tingid.ui.Card
+import app.tingid.ui.ConfirmHost
+import app.tingid.ui.ConfirmOptions
 import app.tingid.ui.Detail
 import app.tingid.ui.DetailCard
 import app.tingid.ui.DetailValue
@@ -99,8 +103,10 @@ import app.tingid.ui.TxRoute
 import app.tingid.ui.Type
 import app.tingid.ui.WalletTab
 import app.tingid.ui.confirmOwner
+import app.tingid.ui.formatClock
 import app.tingid.ui.formatTime
 import app.tingid.ui.manropeStyle
+import app.tingid.ui.rememberConfirm
 import app.tingid.ui.money.FeeRow
 import app.tingid.ui.money.rememberAccountViews
 import app.tingid.ui.money.rememberFee
@@ -216,6 +222,13 @@ private fun Review(request: CallRequest) {
     // Warned about the first time only (TCR-1): the program is still one Ting ID has no name for.
     val firstUse = request.program.hex() !in data.programsCalled
 
+    // The same call still on its way, which no block has yet: approving it again is asked about first.
+    val pendingItems = remember(services) { services.pending.items() }
+    val pending by pendingItems.collectAsState(initial = emptyList())
+    val callId = account?.let { callKey(request.program, it.account, link.template.hash, link.values) }
+    val repeat = callId?.let { sameCall(pending, it) }
+    val confirm = rememberConfirm()
+
     var busy by remember { mutableStateOf(false) }
     HoldWhileBusy(busy)
     val going = remember { AtomicBoolean(false) }
@@ -258,6 +271,20 @@ private fun Review(request: CallRequest) {
         error = null
         ui.launch {
             val shown = try {
+                // The same call is still on its way: approved again, it runs a second time.
+                val again = repeat
+                if (again != null && !confirm.ask(
+                        ConfirmOptions(
+                            title = "Approve it again?",
+                            body = "You approved this call at ${formatClock(again.at)}, and it is still waiting for a block. Approved again, it runs a second time, after the first.",
+                            confirm = "Approve again",
+                        ),
+                    )
+                ) {
+                    going.set(false)
+                    busy = false
+                    return@launch
+                }
                 if (!confirmOwner(activity, services, ownerTitle, line)) {
                     going.set(false)
                     busy = false
@@ -267,8 +294,10 @@ private fun Review(request: CallRequest) {
                 services.scope.async(Dispatchers.IO) {
                     val signer = services.chain.resolveSigner(user, acting.slot, info.canonical, now.keys, now.identity)
                     val pays = payment?.let { it.coin.id to it.effect }
+                    // Signed for an hour: past that no block can include it, and it is over (state/Watch.kt, expired).
+                    val validUntil = services.chain.callExpiry()
                     val r = sent {
-                        services.chain.submitProgramCall(info.status.chainId, request.program, link.template.hash, link.values, signer, pays, request.feeCoin?.id, fee.resolve()).txId
+                        services.chain.submitProgramCall(info.status.chainId, request.program, link.template.hash, link.values, signer, pays, request.feeCoin?.id, fee.resolve(), validUntil).txId
                     }
                     services.store.noteProgramCalled(request.program.hex())
                     services.store.addSubmitted(
@@ -281,6 +310,8 @@ private fun Review(request: CallRequest) {
                             account = payment?.let { acting.account.hex() },
                             amount = payment?.let { (it.amount + ownFee).toString() },
                             to = recipient,
+                            call = callKey(request.program, acting.account, link.template.hash, link.values),
+                            expires = validUntil,
                         ),
                     )
                     r
@@ -398,6 +429,7 @@ private fun Review(request: CallRequest) {
         }
         Spacer(Modifier.height(Spacing.lg))
     }
+    ConfirmHost(confirm)
 }
 
 /** What leaves the account; in a coin the user does not follow, marked so. */

@@ -29,6 +29,8 @@ class PaymentDraft(
     val total: BigInteger,
     /** What the sending account has available before it. */
     val available: BigInteger,
+    /** When the same payment was sent before, while that one is still on its way (seconds): this one would be a second. */
+    val repeatOf: Long? = null,
     /** Sends it; gives the transaction's id, `unsure` when the node's answer was lost. */
     val submit: suspend () -> Sent,
 ) {
