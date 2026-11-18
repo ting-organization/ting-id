@@ -91,8 +91,9 @@ class ScheduledActions(
         }
     }
 
-    private fun submitted(txId: String, summary: String, userId: String) =
-        chain.store.addSubmitted(SubmittedTx(id = txId, at = now(), summary = summary, userId = userId))
+    /** `expires`: when what it signed stops being valid, for a signed cancel; a run signs nothing. */
+    private fun submitted(txId: String, summary: String, userId: String, expires: Long? = null) =
+        chain.store.addSubmitted(SubmittedTx(id = txId, at = now(), summary = summary, userId = userId, expires = expires))
 
     /** Cancels `entries`: one cancel per account and coin, each paying the fee. */
     fun cancel(entries: List<ScheduledAction>, label: String) = attempt(label) {
@@ -111,10 +112,12 @@ class ScheduledActions(
             // A long list goes in several cancels, each within one transaction's budget.
             for (group in all.chunked(ACTIONS_PER_CANCEL)) {
                 val payer = fee.resolve()
-                val r = sent { chain.submitCoinCancel(info.status.chainId, c.id, signer, group.map { it.sequence }, payer).first }
+                // Signed for an hour: past that no block can include it, and it is over (Watch.kt, expired).
+                val validUntil = chain.signedExpiry()
+                val r = sent { chain.submitCoinCancel(info.status.chainId, c.id, signer, group.map { it.sequence }, payer, validUntil).first }
                 val summary = if (group.size == 1) "Cancel: ${describeEffect(group[0].record.effect, c, w.names)}"
                 else "Cancel ${group.size} scheduled actions from ${view.account.label} (${c.config.symbol})"
-                submitted(r.txId, withFee(summary, fee), user.id)
+                submitted(r.txId, withFee(summary, fee), user.id, validUntil)
                 last = r.txId
             }
         }

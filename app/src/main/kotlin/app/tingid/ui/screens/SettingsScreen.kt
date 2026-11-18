@@ -43,11 +43,13 @@ import androidx.compose.ui.unit.dp
 import app.tingid.chain.Canonical
 import app.tingid.chain.hex
 import app.tingid.chain.isHex
+import app.tingid.chain.nowSeconds
 import app.tingid.chain.relativeTime
 import app.tingid.chain.shortAmount
 import app.tingid.chain.shortId
 import app.tingid.chain.trimWhiteSpace
 import app.tingid.chain.unhex
+import app.tingid.state.AppData
 import app.tingid.state.KeyMeta
 import app.tingid.state.SignatureKind
 import app.tingid.state.SignatureNote
@@ -56,11 +58,13 @@ import app.tingid.state.Theme
 import app.tingid.state.User
 import app.tingid.state.UserKind
 import app.tingid.state.WorkspaceState
+import app.tingid.state.couldGoInUntil
 import app.tingid.state.fetchCoin
 import app.tingid.state.isStandardCoin
 import app.tingid.state.keyUsers
 import app.tingid.state.knownCoinsFor
 import app.tingid.state.nextColor
+import app.tingid.state.waitingToForget
 import app.tingid.text.deviceFingerprint
 import app.tingid.text.siteName
 import app.tingid.ui.Banner
@@ -90,6 +94,7 @@ import app.tingid.ui.money.CoinMark
 import app.tingid.ui.money.FeeSettings
 import app.tingid.ui.money.Hairline
 import app.tingid.ui.money.NodeSettings
+import app.tingid.ui.formatTime
 import app.tingid.ui.rememberConfirm
 import app.tingid.ui.sentence
 import app.tingid.ui.settings.AboutSettings
@@ -147,6 +152,7 @@ fun SettingsScreen() {
         FeeSettings(w)
         NodeSettings(w, missing)
         SignaturesSection(data.signatures.filter { it.userId == w.user?.id }, confirm)
+        WaitingSection(data, w.user, info?.chainHex, confirm)
 
         SectionHeader("Appearance")
         Card {
@@ -385,6 +391,54 @@ private fun SignaturesSection(signatures: List<SignatureNote>, confirm: ConfirmS
                     subtitle = "${siteName(n.origin)} · $outcome ${relativeTime(n.at)}${n.message?.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""}",
                 )
             }
+        }
+    }
+}
+
+/**
+ * A way out for someone whose payments or calls wait for a block and will not
+ * get one: the app stops following them, and the next one no longer queues
+ * behind them. It cancels nothing, which the question says before it is done.
+ */
+@Composable
+private fun WaitingSection(data: AppData, user: User?, chainHex: String?, confirm: ConfirmState) {
+    val services = LocalServices.current
+    val scope = rememberCoroutineScope()
+    val waiting = if (user == null) emptyList() else waitingToForget(data, user.id, chainHex, nowSeconds())
+
+    fun forget() {
+        val u = user ?: return
+        scope.launch {
+            // As they are when asked: one may have gone in since the screen was drawn.
+            val now = services.store.data.value
+            val list = waitingToForget(now, u.id, chainHex, nowSeconds())
+            if (list.isEmpty()) return@launch
+            val until = list.mapNotNull { couldGoInUntil(it, now.outbox) }.max()
+            val many = list.size > 1
+            val yes = confirm.ask(
+                ConfirmOptions(
+                    title = "Forget waiting transactions?",
+                    body = "Ting ID stops following ${if (many) "the ${list.size} transactions" else "the transaction"} that no block has taken yet, and your next one no longer waits behind ${if (many) "them" else "it"}. " +
+                        "This cancels nothing: ${if (many) "any of them" else "it"} may still go through until ${formatTime(until)}. If you send the same payment again before then, it could be paid twice.",
+                    confirm = if (many) "Forget them" else "Forget it",
+                    back = if (many) "Keep them" else "Keep it",
+                    danger = true,
+                ),
+            )
+            if (yes) services.store.forgetWaiting(u.id, chainHex, nowSeconds())
+        }
+    }
+
+    SectionHeader(
+        "Waiting transactions",
+        info = "Payments and program calls that no block has taken yet. One that cannot go in keeps the ones after it waiting until it expires, an hour after it was signed. Forgetting them lets you act again at once, but cancels nothing.",
+    )
+    Card {
+        if (waiting.isEmpty()) {
+            Caption("Nothing is waiting for a block.")
+        } else {
+            Caption("${waiting.size} waiting for a block.")
+            Row { Button("Forget waiting transactions…", onClick = ::forget, kind = ButtonKind.Danger, small = true) }
         }
     }
 }

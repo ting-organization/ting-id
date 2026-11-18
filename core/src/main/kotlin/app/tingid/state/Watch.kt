@@ -145,6 +145,43 @@ fun decide(
     return own
 }
 
+/**
+ * Whether the transaction kept as `id` is a program's call (TCR-1), alone or in
+ * the batch that pays for it. The app marks the call's own bytes when it sends
+ * one (Store.markProgramCall), and a batch names the call sent alone as its twin.
+ */
+fun programCallKept(outbox: Map<String, OutboxEntry>, id: String): Boolean {
+    val kept = outbox[id] ?: return false
+    return kept.unpaid != null || kept.twin?.let { outbox[it]?.unpaid } != null
+}
+
+/**
+ * When what a submission signed expires. One of an earlier version does not
+ * say: a program's call was signed for an hour then as now, and the submission
+ * is no older than its signature.
+ */
+fun expiryOf(tx: SubmittedTx, outbox: Map<String, OutboxEntry>): Long? =
+    tx.expires ?: if (programCallKept(outbox, tx.id)) tx.at + Chain.CALL_LIFE else null
+
+/**
+ * Until when a submission no block has could still get into one, as far as
+ * the app can tell: its expiry; for a payment of an earlier version, which
+ * says none, the end of the day after, as it was signed until then at the
+ * latest. Null for what carries no expiry at all, such as an identity's change.
+ */
+fun couldGoInUntil(tx: SubmittedTx, outbox: Map<String, OutboxEntry>): Long? =
+    expiryOf(tx, outbox) ?: if (tx.coin != null) (tx.at / 86_400 + 2) * 86_400 else null
+
+/**
+ * What [Store.forgetWaiting] forgets for `userId` on `chain`: the payments and
+ * program calls no block has yet. Not what the node holds for a later time,
+ * such as the run of a scheduled payment, and not what carries no expiry.
+ */
+fun waitingToForget(d: AppData, userId: String, chain: String?, now: Long): List<SubmittedTx> = d.submitted.filter {
+    it.userId == userId && (it.chain == null || it.chain == chain) && it.state == TxState.Pending &&
+        couldGoInUntil(it, d.outbox) != null && d.outbox[it.id]?.notBefore?.let { held -> held > now } != true
+}
+
 /** Why an expired submission is over, as its problem. */
 const val EXPIRED_WORDS = "no block included it before it expired: nothing was paid or changed"
 

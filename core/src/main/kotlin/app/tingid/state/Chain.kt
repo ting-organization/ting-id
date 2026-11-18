@@ -283,9 +283,16 @@ class Chain(
     /** A nonce to sign with and, when it is the last fee payment's again, that payment's expiry. */
     private class Next(val nonce: Long, val expires: Long? = null)
 
+    /** A nonce given out behind actions still waiting: until when they hold it, and when the first of them expires. */
+    private class Queued(val nonce: Long, val until: Long, val first: Long)
+
+    /** The nonce last given out behind waiting actions, by [nonceKey], for [noteNonce] to note what it queues behind. */
+    private val queued = java.util.concurrent.ConcurrentHashMap<String, Queued>()
+
     private suspend fun nextAfterNoted(key: String, prefix: String?, read: suspend (ChainApi) -> Long): Next {
         val node = this.node
         val note = store.data.value.nonces[key]
+        queued.remove(key)
         // The earlier transaction is looked up before the nonce is read: if a block
         // takes it in between, the nonce read already counts it. One that cannot be
         // looked up counts as waiting, so no nonce is ever signed twice.
@@ -298,25 +305,33 @@ class Chain(
         if (note == null || !waiting || note.nonce < current) return Next(current)
         // A node can hold a transaction long after it expired. Once the last one signed can no longer go
         // in, none signed before it can either, as none outlives it: nothing waits, and the chain's nonce is next.
-        if (gone(note.until())) return Next(current)
-        return if (prefix != null && note.prefix == prefix) Next(note.nonce, note.expires?.takeIf { it > now() }) else Next(note.nonce + 1)
+        val until = note.until()
+        if (gone(until)) return Next(current)
+        // The first of them is past its expiry and no block took it: what queues behind it cannot go in
+        // either, and one more would only hold the nonce an hour longer. Nothing is signed until they are over.
+        val first = note.first ?: until
+        if (now() > first) throw StillExpiring(until, now())
+        val same = prefix != null && note.prefix == prefix
+        val next = if (same) note.nonce else note.nonce + 1
+        queued[key] = Queued(next, until, first)
+        return Next(next, if (same) note.expires?.takeIf { it > now() } else null)
     }
 
     /**
      * Until when a note holds its nonce: the expiry of what was signed. A note
      * of an earlier version says none: a program's call, which the bytes kept
-     * of it tell (Store.markProgramCall), was signed for an hour then as now,
-     * with its payment; anything else until the end of the day after.
+     * of it tell ([programCallKept]), was signed for an hour then as now, with
+     * its payment; anything else until the end of the day after.
      */
     private fun NonceNote.until(): Long =
-        expires ?: if (store.data.value.outbox[txId]?.unpaid != null) at + CALL_LIFE else (at / 86_400 + 2) * 86_400
+        expires ?: if (programCallKept(store.data.value.outbox, txId)) at + CALL_LIFE else (at / 86_400 + 2) * 86_400
 
     private fun noteNonce(contract: ByteArray, account: ByteArray, nonce: Long, txId: String, expires: Long, prefix: String? = null) {
         val key = nonceKey(contract, account)
-        // Queued right behind an action that outlives it, as one of an earlier version can, it holds the
-        // nonce as long as that one does: the chain's nonce is not taken again while either could go in.
-        val before = store.data.value.nonces[key]?.takeIf { it.nonce + 1 == nonce }
-        store.noteNonce(key, NonceNote(nonce, txId, now(), prefix, maxOf(expires, before?.until() ?: 0)))
+        // Given out behind actions still waiting, it holds the nonce as long as the last of them does, which
+        // one of an earlier version can outlive it, and it remembers when the first of them expires.
+        val behind = queued.remove(key)?.takeIf { it.nonce == nonce }
+        store.noteNonce(key, NonceNote(nonce, txId, now(), prefix, maxOf(expires, behind?.until ?: 0), behind?.first ?: expires))
     }
 
     // ---- The chain's time ---------------------------------------------------------
@@ -358,14 +373,23 @@ class Chain(
     /**
      * When what this app signs expires unless included: an hour after it is
      * signed. A signed action that never went in cannot be used later (wiki:
-     * programs/coin, expiry), so one that cannot go in holds the account's
-     * next actions for that hour at most; one already scheduled still runs
-     * when due.
+     * programs/coin, expiry). One that cannot go in holds its account's nonce
+     * until the last action queued behind it has expired, and nothing more is
+     * signed behind it once it is past its own expiry ([StillExpiring]), so
+     * that is two hours at the most; one already scheduled still runs when due.
      */
-    fun signedExpiry(): Long = now() + SIGNED_LIFE
+    fun signedExpiry(): Long = signingTime() + SIGNED_LIFE
 
     /** When a program's call signed now expires ([CALL_LIFE]). */
-    fun callExpiry(): Long = now() + CALL_LIFE
+    fun callExpiry(): Long = signingTime() + CALL_LIFE
+
+    /**
+     * The time to count an expiry from: the clock, or the latest block the
+     * nodes have shown when that is later. An expiry is held against block
+     * time, so what a phone with its clock an hour behind signed by its clock
+     * alone would have expired before any block could take it.
+     */
+    private fun signingTime(): Long = maxOf(now(), pool.value.newestTime)
 
     // ---- Submitting ----------------------------------------------------------------
 
@@ -474,12 +498,20 @@ class Chain(
      * Cancels scheduled actions of the signer's account with one signature (op 11).
      * The cancel carries no nonce. Its fee is 0 unless `payer` is the account
      * itself (an instant one), which then pays it directly; any other payer pays
-     * through a batch, as it must for a delayed account.
+     * through a batch, as it must for a delayed account. It is valid until
+     * `validUntil`, which the submission that follows it is told.
      */
-    suspend fun submitCoinCancel(chainId: ByteArray, coinId: ByteArray, signer: Signer, sequences: List<Long>, payer: FeePayer? = null): Pair<String, ByteArray> {
+    suspend fun submitCoinCancel(
+        chainId: ByteArray,
+        coinId: ByteArray,
+        signer: Signer,
+        sequences: List<Long>,
+        payer: FeePayer? = null,
+        validUntil: Long = signedExpiry(),
+    ): Pair<String, ByteArray> {
         val account = policyAccount(signer.policy, signer.params)
         val own = paysOwnFee(payer, coinId, account)
-        val cancel = Coin.Cancel(sequences.sorted(), if (own) payer!!.fee else BigInteger.ZERO, signedExpiry())
+        val cancel = Coin.Cancel(sequences.sorted(), if (own) payer!!.fee else BigInteger.ZERO, validUntil)
         val message = Coin.cancelMessage(chainId, coinId, account, cancel)
         val input = Coin.cancelInput(Coin.CancelAuth(signer.policy, signer.params, signer.witness(message)), cancel)
         val txId = submitWithFee(Contracts.canonical(chainId), chainId, BatchCall(coinId, input), if (own) null else payer, Budgets.EXECUTE)
@@ -655,6 +687,25 @@ class Chain(
          * stand for all before it (nextAfterNoted).
          */
         const val CALL_LIFE = SIGNED_LIFE
+    }
+}
+
+/**
+ * Nothing is signed for an account whose earlier action is past its expiry
+ * without a block having taken it, while what was signed behind it can still
+ * hold the nonce (`until`, seconds): one more could not go in either.
+ */
+class StillExpiring(val until: Long, now: Long) : IllegalStateException(
+    "an earlier one from this account did not go in, and what was signed after it is still expiring: try again in about ${inMinutes(until, now)}",
+) {
+    private companion object {
+        /** About how long the chain's time takes to pass an expiry, in minutes. */
+        const val SETTLE_MINUTES = 10
+
+        fun inMinutes(until: Long, now: Long): String {
+            val minutes = maxOf(1, (until - now + 59) / 60 + SETTLE_MINUTES)
+            return if (minutes == 1L) "a minute" else "$minutes minutes"
+        }
     }
 }
 

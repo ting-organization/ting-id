@@ -56,11 +56,10 @@ class Pending(
             val kept = store.data.value.outbox[tx.id]
             val lookup = node.transaction(tx.id)
             val twin = kept?.twin?.let { Twin(node.transaction(it), store.data.value.outbox[it]) }
-            return when (val d = decide(tx.copy(expires = expiryOf(tx)), lookup, kept, now(), tip, twin, statusWords, chainTime)) {
+            return when (val d = decide(tx.copy(expires = expiryOf(tx, store.data.value.outbox)), lookup, kept, now(), tip, twin, statusWords, chainTime)) {
                 is Decision.Expired -> {
-                    // Over, though a node may hold it for a day yet: its bytes are no use to send again.
-                    store.forgetOutbox(tx.id)
-                    kept?.twin?.let { store.forgetOutbox(it) }
+                    // Over, though a node may hold it for a day yet. Its bytes stay, with the twin they name, so
+                    // that a block which took it after all is still found (recheck); they are not sent again.
                     store.updateSubmitted(tx.id) { it.copy(state = TxState.Failed, height = null, problem = EXPIRED_WORDS) }
                     null
                 }
@@ -139,22 +138,19 @@ class Pending(
         val waiting = mine.filter { it.state == TxState.Pending }
         // The chain's time is asked only while one of them is past its expiry by the clock.
         val now = now()
-        val chainTime = if (waiting.any { tx -> expiryOf(tx)?.let { now > it } == true }) chain.chainTime() else null
+        val outbox = store.data.value.outbox
+        val chainTime = if (waiting.any { tx -> expiryOf(tx, outbox)?.let { now > it } == true }) chain.chainTime() else null
         val found = waiting.map { async { it.id to check(r.node, it, tip, chainTime) } }.awaitAll()
         watches.update { w -> w + found.mapNotNull { (id, watch) -> watch?.let { id to it } } }
     }
 
     /**
-     * When what a submission signed expires. One of an earlier version does
-     * not say: a program's call, which the bytes kept of it tell
-     * (Store.markProgramCall), was signed for an hour then as now, and the
-     * submission is no older than its signature.
+     * A failure in no block may have gone in after all: one a node refused,
+     * and one taken as expired too, by the phone's clock while the chain's
+     * time could not be read, or before a reorganization deep enough to stamp
+     * a block early. It is looked up again while it is shown.
      */
-    private fun expiryOf(tx: SubmittedTx): Long? =
-        tx.expires ?: store.data.value.outbox[tx.id]?.unpaid?.let { tx.at + Chain.CALL_LIFE }
-
-    /** A failure in no block, because a node refused the transaction, may have gone in after all; one that expired cannot have. */
-    private fun mayHaveGoneIn(tx: SubmittedTx) = tx.state == TxState.Failed && tx.height == null && tx.problem != EXPIRED_WORDS
+    private fun mayHaveGoneIn(tx: SubmittedTx) = tx.state == TxState.Failed && tx.height == null
 
     /**
      * The active user's unsettled submissions and failures to show, newest
@@ -196,7 +192,8 @@ class Pending(
                 PendingItem(
                     tx = tx,
                     watch = watch,
-                    canRetry = tx.id in d.outbox,
+                    // One that expired keeps its bytes only to be found again: sent again, no block could take it.
+                    canRetry = tx.id in d.outbox && tx.problem != EXPIRED_WORDS,
                     canSpeedUp = canSpeedUp(tx, watch, d.outbox[tx.id], c),
                 )
             }
@@ -206,6 +203,7 @@ class Pending(
     /** Sends a failed or lost submission again, with the same bytes; null when it went, else why not. */
     suspend fun retry(id: String): String? {
         val kept = store.data.value.outbox[id] ?: return "the app no longer has this transaction"
+        if (store.data.value.submitted.firstOrNull { it.id == id }?.problem == EXPIRED_WORDS) return "it has expired: no block can take it any more"
         val refused = resend(chain.node, kept)
         if (refused == null) {
             store.updateSubmitted(id) { it.copy(state = TxState.Pending, problem = null, height = null) }

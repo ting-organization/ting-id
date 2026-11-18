@@ -207,6 +207,14 @@ class PoolTest {
         return e as E
     }
 
+    @Test
+    fun `keeps the time of the latest block header it checked`() = runBlocking {
+        val p = pool("a" to Fake())
+        assertEquals(0L, p.newestTime)
+        p.status()
+        assertEquals(fixtureTime, p.newestTime)
+    }
+
     // ---- Failover ------------------------------------------------------------------
 
     @Test

@@ -242,6 +242,12 @@ data class NonceNote(
     val prefix: String? = null,
     /** Seconds; null for a note of an earlier version, or for what carries no expiry. */
     val expires: Long? = null,
+    /**
+     * When the first of the actions this one queues behind expires (seconds):
+     * its own expiry when it queues behind none. Past it, nothing more is
+     * signed behind them (Chain, nextAfterNoted).
+     */
+    val first: Long? = null,
 )
 
 /**

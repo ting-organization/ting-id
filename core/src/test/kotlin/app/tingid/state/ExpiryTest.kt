@@ -98,7 +98,7 @@ class ExpiryTest {
         assertEquals(0L, r.u64())
         r.bytes()
         assertEquals(sent.expires, Coin.readAction(r).timing.validUntil)
-        assertEquals(NonceNote(0, sent.txId, app.clock, null, sent.expires), app.store.data.value.nonces.getValue(coinKey))
+        assertEquals(NonceNote(0, sent.txId, app.clock, null, sent.expires, sent.expires), app.store.data.value.nonces.getValue(coinKey))
         // An expiry the action brings is kept.
         val own = app.chain.submitCoinAction(chainId, coin, signer, pay.copy(timing = Coin.NO_TIMING.copy(validUntil = app.clock + 60)))
         assertEquals(app.clock + 60, own.expires)
@@ -112,10 +112,11 @@ class ExpiryTest {
         // Nothing is past its expiry by the clock: the chain's time is not asked.
         assertEquals(0, askedForTime())
 
-        // Past it by the clock, but the chain's time is a second short: a block could still be stamped early enough.
+        // Past it by the clock, but the chain's time is a second short: a block could still be stamped early
+        // enough, so its nonce is not free; and behind one past its expiry nothing more is signed.
         app.clock = first.expires + 1
         chainTime(110, first.expires - 1)
-        assertEquals(1L, app.chain.nextNonce(coin, signer.account))
+        assertTrue(runCatching { app.chain.nextNonce(coin, signer.account) }.exceptionOrNull() is StillExpiring)
         assertTrue(node.calls.contains("GET /v1/events?from=97&limit=11"))
 
         // The chain's time reaches it: the node still holds the transaction, but no block can take it, and the chain's nonce is next.
@@ -134,7 +135,8 @@ class ExpiryTest {
         val first = app.chain.submitCoinAction(chainId, coin, signer, pay)
         node.lookups[first.txId] = pendingLookup()
         app.clock = first.expires + LATE
-        assertEquals(1L, app.chain.nextNonce(coin, signer.account))
+        val held = runCatching { app.chain.nextNonce(coin, signer.account) }.exceptionOrNull() as StillExpiring
+        assertEquals("an earlier one from this account did not go in, and what was signed after it is still expiring: try again in about a minute", held.message)
         assertNull(app.chain.chainTime())
         app.clock = first.expires + LATE + 1
         assertEquals(0L, app.chain.nextNonce(coin, signer.account))
@@ -155,7 +157,7 @@ class ExpiryTest {
         val queued = app.chain.submitCoinAction(chainId, coin, signer, pay)
         assertEquals(5L, queued.nonce)
         assertEquals(app.clock + 3_600, queued.expires)
-        assertEquals(NonceNote(5, queued.txId, app.clock, null, dayAfter), app.store.data.value.nonces.getValue(coinKey))
+        assertEquals(NonceNote(5, queued.txId, app.clock, null, dayAfter, dayAfter), app.store.data.value.nonces.getValue(coinKey))
         // An hour later the new one has expired, but the old one may still go in, and then this nonce's turn comes.
         node.lookups[queued.txId] = pendingLookup()
         app.clock = queued.expires + 1
@@ -175,8 +177,8 @@ class ExpiryTest {
         val sent = app.chain.submitProgramCall(chainId, program, t, u64le(7), signer, coin to Coin.Effect.Burn(BigInteger.ONE), null, null)
         assertEquals(app.clock + 3_600, sent.expires)
         val notes = app.store.data.value.nonces
-        assertEquals(NonceNote(0, sent.txId, app.clock, null, sent.expires), notes.getValue("${program.hex()}:${signer.account.hex()}"))
-        assertEquals(NonceNote(0, sent.txId, app.clock, null, sent.expires), notes.getValue(coinKey))
+        assertEquals(NonceNote(0, sent.txId, app.clock, null, sent.expires, sent.expires), notes.getValue("${program.hex()}:${signer.account.hex()}"))
+        assertEquals(NonceNote(0, sent.txId, app.clock, null, sent.expires, sent.expires), notes.getValue(coinKey))
         // The next call queues behind it, until it has expired.
         node.lookups[sent.txId] = pendingLookup()
         assertEquals(1L, app.chain.nextCallNonce(program, signer.account))
@@ -204,6 +206,124 @@ class ExpiryTest {
         chainTime(110, app.clock)
         assertEquals(0L, app.chain.nextCallNonce(program, signer.account))
         assertEquals(0L, app.chain.nextNonce(coin, signer.account))
+    }
+
+    @Test
+    fun `a call of an earlier version whose fee went through a batch is freed after its hour too`() = runBlocking {
+        // As submitProgramCall left it then: the batch kept and paired with the call sent alone, which carries the mark; the note on the batch.
+        val program = filled(0x5a)
+        val batch = "cc".repeat(32)
+        val alone = "dd".repeat(32)
+        app.store.keepOutbox(batch, OutboxEntry("00", at = app.clock))
+        app.store.keepOutbox(alone, OutboxEntry("01", at = app.clock))
+        app.store.pairOutbox(batch, alone)
+        app.store.markProgramCall(alone, unpaid = true)
+        app.store.noteNonce("${program.hex()}:${signer.account.hex()}", NonceNote(44, batch, app.clock))
+        app.store.addSubmitted(SubmittedTx(batch, app.clock, "Program call", "u"))
+        node.lookups[batch] = pendingLookup()
+        assertEquals(45L, app.chain.nextCallNonce(program, signer.account))
+        app.clock += 3_601
+        chainTime(110, app.clock)
+        assertEquals(0L, app.chain.nextCallNonce(program, signer.account))
+        // And its submission is over.
+        assertEquals(Watch.Failed(EXPIRED_WORDS, null), items { it.singleOrNull()?.watch is Watch.Failed }.single().watch)
+    }
+
+    @Test
+    fun `nothing is signed behind one already past its expiry, until what queued behind it has run out`() = runBlocking {
+        val first = app.chain.submitCoinAction(chainId, coin, signer, pay)
+        node.lookups[first.txId] = pendingLookup()
+        assertEquals(NonceNote(0, first.txId, app.clock, null, first.expires, first.expires), app.store.data.value.nonces.getValue(coinKey))
+        // Half an hour on, a second one queues behind it, and remembers when the first expires.
+        app.clock += 1_800
+        val second = app.chain.submitCoinAction(chainId, coin, signer, pay)
+        node.lookups[second.txId] = pendingLookup()
+        assertEquals(1L, second.nonce)
+        assertEquals(NonceNote(1, second.txId, app.clock, null, second.expires, first.expires), app.store.data.value.nonces.getValue(coinKey))
+
+        // The first is past its expiry and no block took it: a third could not go in either, and is not signed.
+        app.clock = first.expires + 1
+        val held = runCatching { app.chain.submitCoinAction(chainId, coin, signer, pay) }.exceptionOrNull() as StillExpiring
+        assertEquals(second.expires, held.until)
+        assertEquals("an earlier one from this account did not go in, and what was signed after it is still expiring: try again in about 40 minutes", held.message)
+        assertEquals(2, node.posted.size)
+        // Nor a call's payment from the same account, and the note stands as it was.
+        assertTrue(runCatching { app.chain.nextNonce(coin, signer.account) }.exceptionOrNull() is StillExpiring)
+        assertEquals(1L, app.store.data.value.nonces.getValue(coinKey).nonce)
+
+        // Once the second has expired too, by the clock and the chain, the chain's nonce is next.
+        app.clock = second.expires + 1
+        tip(111)
+        chainTime(111, second.expires)
+        val third = app.chain.submitCoinAction(chainId, coin, signer, pay)
+        assertEquals(0L, third.nonce)
+        assertEquals(NonceNote(0, third.txId, app.clock, null, third.expires, third.expires), app.store.data.value.nonces.getValue(coinKey))
+    }
+
+    @Test
+    fun `one that went in holds nothing back`() = runBlocking {
+        val first = app.chain.submitCoinAction(chainId, coin, signer, pay)
+        node.lookups[first.txId] = includedLookup(109)
+        app.clock = first.expires + 10
+        val next = app.chain.submitCoinAction(chainId, coin, signer, pay)
+        assertEquals(next.expires, app.store.data.value.nonces.getValue(coinKey).first)
+    }
+
+    @Test
+    fun `a cancel is signed until the expiry its submission is told`() = runBlocking {
+        val until = app.clock + 1_234
+        app.chain.submitCoinCancel(chainId, coin, signer, listOf(7L), validUntil = until)
+        val r = Reader(decodeCall(unhex(node.posted.single().first))!!.input)
+        assertEquals(Coin.OP_CANCEL, r.u8())
+        r.u8()
+        r.array32()
+        r.bytes()
+        r.bytes()
+        assertEquals(until, Coin.readCancel(r).validUntil)
+    }
+
+    @Test
+    fun `forgetting what waits stops following payments and calls, frees their nonces, and leaves the rest`() {
+        val t = app.clock
+        val programKey = "${filled(0x5a).hex()}:${signer.account.hex()}"
+        fun keep(id: String, notBefore: Long? = null) = app.store.keepOutbox(id, OutboxEntry("00", notBefore = notBefore, at = t))
+        // A payment of this version, a program call of an earlier one, and a payment of an earlier one.
+        app.store.addSubmitted(SubmittedTx("p1", t, "Send 1 DLR", "u", coin = "c", account = "a", to = "b", sends = "1", expires = t + 3_600))
+        app.store.addSubmitted(SubmittedTx("c1", t, "Program call", "u"))
+        app.store.addSubmitted(SubmittedTx("p0", t, "Send 2 DLR", "u", coin = "c", account = "a", to = "b"))
+        // What is left alone: an identity's change, a payment the node holds for later, another user's, and one settled.
+        app.store.addSubmitted(SubmittedTx("g1", t, "Link a guardian", "u"))
+        app.store.addSubmitted(SubmittedTx("h1", t, "Send 3 DLR", "u", coin = "c", account = "a", expires = t + 3_600))
+        app.store.addSubmitted(SubmittedTx("o1", t, "Send 4 DLR", "v", coin = "c", account = "z", expires = t + 3_600))
+        app.store.addSubmitted(SubmittedTx("d1", t, "Send 5 DLR", "u", coin = "c", account = "a", expires = t + 3_600, state = TxState.Included))
+        listOf("p1", "c1", "p0", "g1", "o1", "d1").forEach { keep(it) }
+        keep("h1", notBefore = t + 9_000)
+        app.store.markProgramCall("c1", unpaid = false)
+        app.store.noteNonce(coinKey, NonceNote(3, "p1", t, null, t + 3_600))
+        app.store.noteNonce(programKey, NonceNote(1, "c1", t))
+        app.store.noteNonce("op:registry:identity", NonceNote(2, "g1", t))
+        app.store.noteNonce("other:account", NonceNote(9, "o1", t, null, t + 3_600))
+
+        val d = app.store.data.value
+        val waiting = waitingToForget(d, "u", app.chainHex, t)
+        assertEquals(setOf("p1", "c1", "p0"), waiting.map { it.id }.toSet())
+        // Until when each could still go in: its expiry, a call's hour, and the end of the day after for an old payment.
+        assertEquals(mapOf("p1" to t + 3_600, "c1" to t + 3_600, "p0" to (t / 86_400 + 2) * 86_400), waiting.associate { it.id to couldGoInUntil(it, d.outbox) })
+        assertNull(couldGoInUntil(d.submitted.first { it.id == "g1" }, d.outbox))
+
+        app.store.forgetWaiting("u", app.chainHex, t)
+        val after = app.store.data.value
+        assertEquals(
+            mapOf("p1" to TxState.Dismissed, "c1" to TxState.Dismissed, "p0" to TxState.Dismissed, "g1" to TxState.Pending, "h1" to TxState.Pending, "o1" to TxState.Pending, "d1" to TxState.Included),
+            after.submitted.associate { it.id to it.state },
+        )
+        assertEquals(setOf("g1", "h1", "o1", "d1"), after.outbox.keys)
+        // This user's coin and program nonces are the chain's again; the identity's own, and another user's, stay.
+        assertEquals(setOf("op:registry:identity", "other:account"), after.nonces.keys)
+        // Nothing left to forget, and asking again changes nothing.
+        assertTrue(waitingToForget(after, "u", app.chainHex, t).isEmpty())
+        app.store.forgetWaiting("u", app.chainHex, t)
+        assertEquals(after, app.store.data.value)
     }
 
     @Test
@@ -254,14 +374,25 @@ class ExpiryTest {
         tip(111)
         val item = items { it.singleOrNull()?.watch is Watch.Failed }.single()
         assertEquals(Watch.Failed(EXPIRED_WORDS, null), item.watch)
+        // Its bytes are kept, to find it again, but it is not offered to be sent again, and is refused if asked.
         assertFalse(item.canRetry)
+        assertTrue(id in app.store.data.value.outbox)
+        assertEquals("it has expired: no block can take it any more", runBlocking { pending.retry(id) })
+        val posted = node.posted.size
         val tx = app.store.data.value.submitted.single()
         assertEquals(TxState.Failed, tx.state)
         assertEquals(EXPIRED_WORDS, tx.problem)
         assertNull(tx.height)
-        assertFalse(id in app.store.data.value.outbox)
         // It takes nothing from what the account can send.
         assertEquals(OnTheWay(0, BigInteger.ZERO), onTheWay(listOf(item), "c", "a"))
+
+        // A block took it after all, as a reorganization deep enough could bring about: the block is believed.
+        node.lookups[id] = includedLookup(108)
+        val looking = testScope.launch { pending.items().collect {} }
+        runBlocking { until { app.store.data.value.submitted.single().state == TxState.Included } }
+        looking.cancel()
+        assertEquals(108L, app.store.data.value.submitted.single().height)
+        assertEquals(posted, node.posted.size)
     }
 
     @Test
