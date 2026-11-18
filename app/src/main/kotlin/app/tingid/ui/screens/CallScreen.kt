@@ -118,6 +118,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.math.BigInteger
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -271,6 +272,11 @@ private fun Review(request: CallRequest) {
         error = null
         ui.launch {
             val shown = try {
+                // Behind one already past its expiry nothing is signed (Chain, StillExpiring): said before the phone asks for its owner.
+                withContext(Dispatchers.IO) {
+                    services.chain.nextCallNonce(request.program, acting.account)
+                    payment?.let { services.chain.nextNonce(it.coin.id, acting.account) }
+                }
                 // The same call is still on its way: approved again, it runs a second time.
                 val again = repeat
                 if (again != null && !confirm.ask(

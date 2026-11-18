@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import app.tingid.chain.formatAmount
+import app.tingid.chain.unhex
 import app.tingid.state.PaymentDraft
 import app.tingid.state.paymentDrafts
 import app.tingid.text.lockOf
@@ -64,8 +65,10 @@ import app.tingid.ui.money.CoinMark
 import app.tingid.ui.sentence
 import app.tingid.ui.t
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.math.BigInteger
 
 @Composable
@@ -108,6 +111,8 @@ fun ReviewScreen() {
         error = null
         scope.launch {
             try {
+                // Behind one already past its expiry nothing is signed (Chain, StillExpiring): said before the phone asks for its owner.
+                withContext(Dispatchers.IO) { services.chain.nextNonce(payment.coin.id, unhex(payment.from.account)) }
                 // The same payment is still on its way: a second one is asked for in so many words.
                 val repeatOf = payment.repeatOf
                 if (repeatOf != null && !ask.ask(
