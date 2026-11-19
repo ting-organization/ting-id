@@ -99,6 +99,7 @@ import app.tingid.state.paymentDrafts
 import app.tingid.state.recipients
 import app.tingid.state.repeatOf
 import app.tingid.state.sent
+import app.tingid.state.stuckIn
 import app.tingid.state.stuckQueues
 import app.tingid.state.ungroupTyped
 import app.tingid.text.relativeDuration
@@ -415,9 +416,9 @@ fun SendScreen(route: SendTab) {
                 runFee = runFee,
                 total = needed,
                 available = check.availableNow,
-                // Behind a stuck payment of the account, and the same payment (coin, account, recipient, amount)
-                // still waiting: both asked about on Review.
-                stuck = stuckQueues(pending, store.data.value.outbox, nowSeconds())[coinQueue(c.hex, account.account.hex())],
+                // Behind a stuck payment of the account, or of the account paying its fee, and the same payment
+                // (coin, account, recipient, amount) still waiting: both asked about on Review.
+                stuck = stuckIn(stuckQueues(pending, store.data.value.outbox, nowSeconds()), listOf(coinQueue(c.hex, account.account.hex()), paying.payerQueue)),
                 repeat = repeatOf(pending, store.data.value.outbox, nowSeconds()) {
                     it.coin == c.hex && it.account == account.account.hex() && it.to == to && it.sends == amount.toString()
                 },

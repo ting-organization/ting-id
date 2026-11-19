@@ -279,9 +279,13 @@ class Chain(
         val note = store.data.value.nonces[key]
         // The earlier transaction is looked up before the nonce is read: if a block
         // takes it in between, the nonce read already counts it. One that cannot be
-        // looked up counts as waiting, so no nonce is ever signed twice.
+        // looked up counts as waiting, so no nonce is ever signed twice. So does one
+        // the node does not know: Pending sends it again until it is cleared. Only a
+        // note of an earlier version, signed until the end of the day after, is let go
+        // then, as before, so that no one waits that long on updating.
         val waiting = if (note == null) false else try {
-            node.transaction(note.txId)?.pending == true
+            val lookup = node.transaction(note.txId)
+            if (lookup == null) note.expires != null else lookup.occurrences.isEmpty()
         } catch (e: Exception) {
             true
         }
@@ -501,6 +505,9 @@ class Chain(
         fun mark(id: String) {
             if (own || payer == null) store.markProgramCall(id, unpaid = !own)
             else store.markProgramCall(store.data.value.outbox[id]?.twin ?: id, unpaid = true)
+            // A call that pays only its own fee takes the account's next nonce in the coin, though its
+            // submission names no coin: it waits in that queue as a payment would (stuckQueues).
+            if (payment == null) paid?.let { store.markFeeFrom(id, coinQueue(it.first.hex(), account.hex()), validUntil) }
         }
         val txId = try {
             submitWithFee(Contracts.canonical(chainId), chainId, BatchCall(program, input), if (own) null else payer, Budgets.BATCH)

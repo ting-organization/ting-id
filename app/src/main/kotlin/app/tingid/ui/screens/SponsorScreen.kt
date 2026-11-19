@@ -55,6 +55,7 @@ import app.tingid.state.repeatOf
 import app.tingid.state.sendAgainWords
 import app.tingid.state.sent
 import app.tingid.state.slotLabel
+import app.tingid.state.stuckIn
 import app.tingid.state.stuckQueues
 import app.tingid.text.relativeDuration
 import app.tingid.ui.Avatar
@@ -227,8 +228,16 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
         ui.launch {
             val shown = try {
                 val outbox = services.store.data.value.outbox
-                // Behind a stuck payment of this account, what is signed now waits too: waiting is offered first.
-                val stuck = stuckQueues(pending, outbox, nowSeconds())[coinQueue(coin.hex, account.account.hex())]
+                // Behind a stuck payment of this account, or of an account paying a fee here, what is signed now
+                // waits too: waiting is offered first.
+                val stuck = stuckIn(
+                    stuckQueues(pending, outbox, nowSeconds()),
+                    listOf(
+                        coinQueue(coin.hex, account.account.hex()),
+                        if (create) creationFee.payerQueue else null,
+                        if (sending.signum() > 0) paymentFee.payerQueue else null,
+                    ),
+                )
                 if (stuck != null && !confirm.ask(stuckQuestion(stuck))) {
                     going.set(false)
                     busy = false

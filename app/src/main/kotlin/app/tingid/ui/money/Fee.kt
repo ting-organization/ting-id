@@ -22,6 +22,7 @@ import app.tingid.state.PayerOption
 import app.tingid.state.UserAccount
 import app.tingid.state.WorkspaceState
 import app.tingid.state.canSignFor
+import app.tingid.state.coinQueue
 import app.tingid.state.feeCoinOf
 import app.tingid.state.feeCoins
 import app.tingid.state.instantAccounts
@@ -72,6 +73,13 @@ class FeeChoice internal constructor(
 
     /** The account that pays, one of [options]; null when none can. */
     val payer: PayerOption? get() = quote.payer
+
+    /**
+     * The queue of the account that pays, in its coin ([coinQueue]), when
+     * there is a fee: the fee payment takes that account's next nonce, so it
+     * waits behind whatever waits there. Null for no fee.
+     */
+    val payerQueue: String? get() = payer?.takeIf { fee.signum() > 0 }?.let { coinQueue(it.coin.hex, it.account.account.hex()) }
 
     fun choose(option: PayerOption) {
         // An amount typed for another coin means nothing in this one.

@@ -69,6 +69,7 @@ import app.tingid.state.coinQueue
 import app.tingid.state.readCallRequest
 import app.tingid.state.repeatOf
 import app.tingid.state.sent
+import app.tingid.state.stuckIn
 import app.tingid.state.stuckQueues
 import app.tingid.text.CallPart
 import app.tingid.text.Names
@@ -275,15 +276,18 @@ private fun Review(request: CallRequest) {
         ui.launch {
             val shown = try {
                 val outbox = services.store.data.value.outbox
-                // The call queues behind the account's calls to this program, and its payment or fee behind the
-                // account's payments in that coin: behind one that looks stuck, waiting is offered first.
-                val queues = listOfNotNull(
-                    callQueue(request.program, acting.account),
-                    payment?.let { coinQueue(it.coin.hex, acting.account.hex()) },
-                    request.feeCoin?.let { coinQueue(it.hex, acting.account.hex()) },
+                // The call queues behind the account's calls to this program, its payment or own fee behind the
+                // account's payments in that coin, and a fee another account pays behind that account's: behind
+                // one that looks stuck, waiting is offered first.
+                val stuck = stuckIn(
+                    stuckQueues(pending, outbox, nowSeconds()),
+                    listOf(
+                        callQueue(request.program, acting.account),
+                        payment?.let { coinQueue(it.coin.hex, acting.account.hex()) },
+                        request.feeCoin?.let { coinQueue(it.hex, acting.account.hex()) },
+                        fee.payerQueue,
+                    ),
                 )
-                val stuckNow = stuckQueues(pending, outbox, nowSeconds())
-                val stuck = queues.mapNotNull { stuckNow[it] }.maxByOrNull { it.clearsAt }
                 if (stuck != null && !confirm.ask(stuckQuestion(stuck))) {
                     going.set(false)
                     busy = false

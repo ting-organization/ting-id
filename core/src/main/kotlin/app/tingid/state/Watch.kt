@@ -232,6 +232,10 @@ fun stuckQueues(items: List<PendingItem>, outbox: Map<String, OutboxEntry>, now:
     return since.mapValues { (q, s) -> Stuck(s, clears.getValue(q)) }
 }
 
+/** The latest-clearing of `queues` that looks stuck in `stuck` ([stuckQueues]), or null when none does. */
+fun stuckIn(stuck: Map<String, Stuck>, queues: List<String?>): Stuck? =
+    queues.filterNotNull().mapNotNull { stuck[it] }.maxByOrNull { it.clearsAt }
+
 /** How long since `since`, at `now`, in words. */
 private fun waited(since: Long, now: Long): String {
     val minutes = maxOf(1L, (now - since) / 60)

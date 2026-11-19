@@ -218,6 +218,52 @@ class WaitingTest {
     }
 
     @Test
+    fun `a noted transaction the node does not know holds its nonce until it is cleared`() {
+        val node = FakeRestNode(filled(0x2b))
+        val app = TestApp(node, clock = t)
+        node.emptyState = true
+        runBlocking { app.chain.node.status() }
+        val coin = filled(0x44)
+        val account = filled(1)
+        val key = "${coin.hex()}:${account.hex()}"
+        // The node does not know it (a 404): Pending sends it again, so it still holds its nonce.
+        val lost = "bb".repeat(32)
+        app.store.noteNonce(key, NonceNote(0, lost, t, null, t + Chain.SIGNED_LIFE))
+        assertEquals(1L, runBlocking { app.chain.nextNonce(coin, account) })
+        app.clock = t + Chain.SIGNED_LIFE + LATE + 1
+        assertEquals(0L, runBlocking { app.chain.nextNonce(coin, account) })
+        // A note of an earlier version is let go at once, as before.
+        app.clock = t
+        app.store.noteNonce(key, NonceNote(0, lost, t))
+        assertEquals(0L, runBlocking { app.chain.nextNonce(coin, account) })
+        // One that failed in a block took no nonce, and holds none.
+        node.lookups[lost] = includedLookup(5, status = 3)
+        app.store.noteNonce(key, NonceNote(0, lost, t, null, t + Chain.SIGNED_LIFE))
+        assertEquals(0L, runBlocking { app.chain.nextNonce(coin, account) })
+    }
+
+    @Test
+    fun `a call paying only its own fee waits in its coin's queue`() = runBlocking {
+        val node = FakeRestNode(filled(0x2c))
+        val app = TestApp(node, clock = t)
+        node.emptyState = true
+        app.chain.node.status()
+        val c = Contracts.canonical(node.chainId)
+        val secret = filled(1)
+        val signer = Signer(MemoryKey(secret), null, c.policySecp256k1, publicKey(secret))
+        val coin = filled(0x44)
+        val payer = FeePayer(signer, coin, BigInteger.valueOf(1_000))
+        val call = app.chain.submitProgramCall(node.chainId, filled(0x5a), Tcr.templateHash("give(item:u64): Give item {item}"), u64le(7), signer, null, coin, payer)
+        val kept = app.store.data.value.outbox.getValue(call.txId)
+        assertEquals(coinQueue(coin.hex(), call.account.hex()), kept.feeFrom)
+        assertEquals(call.expires, kept.feeExpires)
+        // The stuck queue a question asks about is the one that clears last.
+        val stuck = mapOf("a" to Stuck(t, t + 10), "b" to Stuck(t, t + 20))
+        assertEquals(Stuck(t, t + 20), stuckIn(stuck, listOf("a", null, "b", "c")))
+        assertNull(stuckIn(stuck, listOf(null, "c")))
+    }
+
+    @Test
     fun `a block only one node shows sets no expiry`() = runBlocking {
         val node = FakeRestNode(filled(0x29))
         val app = TestApp(node, clock = t)
