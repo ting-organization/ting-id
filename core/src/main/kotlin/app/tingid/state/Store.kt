@@ -294,6 +294,30 @@ class Store(
     }
 
     fun forgetOutbox(id: String) = update { d -> if (id in d.outbox) d.copy(outbox = d.outbox - id) else d }
+
+    /**
+     * Forgets what `userId` has waiting on `chain` ([waitingToForget]): the
+     * app stops following those submissions and drops their bytes, so none is
+     * sent again, and drops the nonces noted for this user's transactions, so
+     * the next action takes the chain's nonce instead of queuing behind them.
+     * Nothing is cancelled by this: one that a block can still take may still
+     * go in, which is what the person is told before (Settings).
+     */
+    fun forgetWaiting(userId: String, chain: String?, now: Long) = update { d ->
+        val gone = waitingToForget(d, userId, chain, now).map { it.id }.toSet()
+        if (gone.isEmpty()) return@update d
+        // A nonce is noted with the id of the transaction that took it: any this user sent here, or its twin.
+        val mine = d.submitted.filter { it.userId == userId && (it.chain == null || it.chain == chain) }.map { it.id }
+        val noted = (mine + mine.mapNotNull { d.outbox[it]?.twin }).toSet()
+        val dropped = gone + gone.mapNotNull { d.outbox[it]?.twin }
+        d.copy(
+            submitted = d.submitted.map { if (it.id in gone) it.copy(state = TxState.Dismissed) else it },
+            outbox = d.outbox - dropped,
+            // An identity's own nonce (Registry, "op:…") is not a coin's or a program's: it stays.
+            nonces = d.nonces.filterNot { (key, note) -> !key.startsWith("op:") && note.txId in noted },
+        )
+    }
+
     fun noteNonce(key: String, note: NonceNote) = update { it.copy(nonces = it.nonces + (key to note)) }
 
     /** The first configuration read of a coin stays: it never changes. */

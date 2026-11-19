@@ -120,3 +120,68 @@ fun onTheWay(items: List<PendingItem>, coinHex: String, accountHex: String): OnT
     }
     return OnTheWay(count, amount)
 }
+
+// ---- Forgetting what waits (Settings) --------------------------------------------
+//
+// Every action of an account carries the next nonce, and a block takes them in
+// order, so one that never goes in keeps the account's later ones waiting
+// behind it. Forgetting lets the next one take the chain's nonce again; it
+// cancels nothing.
+
+/** How long past its expiry a signed action may still get into a block: a block's time may trail the clock. */
+private const val LATE = 3_600L
+
+/**
+ * Whether the transaction kept as `id` is a program's call (TCR-1), alone or in
+ * the batch that pays for it. The app marks the call's own bytes when it sends
+ * one (Store.markProgramCall), and a batch names the call sent alone as its twin.
+ */
+fun programCallKept(outbox: Map<String, OutboxEntry>, id: String): Boolean {
+    val kept = outbox[id] ?: return false
+    return kept.unpaid != null || kept.twin?.let { outbox[it]?.unpaid } != null
+}
+
+/**
+ * Until when a submission no block has could still get into one, as far as
+ * the app can tell: a program's call is signed for an hour ([Chain.CALL_LIFE]),
+ * a payment until the end of the day after ([Chain.signedExpiry]), both from
+ * no later than when the submission was noted. Null for what is neither, such
+ * as an identity's change.
+ */
+fun couldGoInUntil(tx: SubmittedTx, outbox: Map<String, OutboxEntry>): Long? = when {
+    programCallKept(outbox, tx.id) -> tx.at + Chain.CALL_LIFE
+    tx.coin != null -> (tx.at / 86_400 + 2) * 86_400
+    else -> null
+}
+
+/**
+ * What [Store.forgetWaiting] forgets for `userId` on `chain`: the payments and
+ * program calls no block has yet. Not what the node holds for a later time,
+ * such as the run of a scheduled payment, and not what is neither, such as an
+ * identity's change.
+ */
+fun waitingToForget(d: AppData, userId: String, chain: String?, now: Long): List<SubmittedTx> = d.submitted.filter {
+    it.userId == userId && (it.chain == null || it.chain == chain) && it.state == TxState.Pending &&
+        couldGoInUntil(it, d.outbox) != null && d.outbox[it.id]?.notBefore?.let { held -> held > now } != true
+}
+
+/**
+ * The question before `items` ([waitingToForget]) are forgotten at `now`: that
+ * this cancels nothing, until when one of them could still go through, and
+ * that the same payment sent again before then could be paid twice. Once a
+ * block's time can no longer trail the clock that far ([LATE]), none can.
+ * `time` writes a time.
+ */
+fun forgetWords(items: List<SubmittedTx>, outbox: Map<String, OutboxEntry>, now: Long, time: (Long) -> String): String {
+    val many = items.size > 1
+    val them = if (many) "them" else "it"
+    val last = (items.mapNotNull { couldGoInUntil(it, outbox) }.maxOrNull() ?: now) + LATE
+    val what = "Ting ID stops following ${if (many) "the ${items.size} transactions" else "the transaction"} that no block has taken yet, " +
+        "and your next one no longer waits behind $them."
+    return if (now > last) {
+        "$what ${if (many) "They have" else "It has"} expired, so nothing of $them can still go through."
+    } else {
+        "$what This cancels nothing: ${if (many) "any of them" else "it"} may still go through until about ${time(last)}. " +
+            "If you send the same payment again before then, it could be paid twice."
+    }
+}
