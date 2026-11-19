@@ -377,7 +377,11 @@ class Chain(
         } catch (e: Exception) {
             refused = e
         }
-        if (paid != null) noteNonce(payer.coinId, account, nonce, paid, validUntil, prefix)
+        if (paid != null) {
+            noteNonce(payer.coinId, account, nonce, paid, validUntil, prefix)
+            // The batch waits in the payer's queue as a payment would: a stuck one is seen there (stuckQueues).
+            store.markFeeFrom(paid, coinQueue(payer.coinId.hex(), account.hex()), validUntil)
+        }
         if (paid == null && required) throw refused!!
         var unpaid: String? = null
         try {

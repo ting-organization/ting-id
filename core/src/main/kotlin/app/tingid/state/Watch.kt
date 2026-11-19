@@ -201,21 +201,30 @@ data class Stuck(val since: Long, val clearsAt: Long)
 
 /**
  * The queues that look stuck at `now`, by [coinQueue] and [callQueue]:
- * something in them has waited [STUCK_AFTER] without a block. Each is cleared
- * once everything waiting in it is ([clearsAt]): then the next action takes
- * the chain's nonce again, and nothing of the old ones can go in after it.
- * What is signed into it before then waits behind the rest, and moves that
- * time on.
+ * something in them has waited [STUCK_AFTER] without a block. A batch whose
+ * fee payment comes from one of this device's accounts waits in that
+ * account's queue too ([OutboxEntry.feeFrom]), until its fee payment expires.
+ * Each queue is cleared once everything waiting in it is ([clearsAt]): then
+ * the next action takes the chain's nonce again, and nothing of the old ones
+ * can go in after it. What is signed into it before then waits behind the
+ * rest, and moves that time on.
  */
 fun stuckQueues(items: List<PendingItem>, outbox: Map<String, OutboxEntry>, now: Long): Map<String, Stuck> {
     val since = HashMap<String, Long>()
     val clears = HashMap<String, Long>()
     for (item in items) {
         val tx = item.tx
-        if (!item.onItsWay() || outbox[tx.id]?.notBefore?.let { it > now } == true) continue
-        val cleared = clearsAt(tx, outbox) ?: continue
-        if (now > cleared) continue
-        for (q in queuesOf(tx)) {
+        val kept = outbox[tx.id]
+        if (!item.onItsWay() || kept?.notBefore?.let { it > now } == true) continue
+        // Each queue it waits in, and when it is cleared there.
+        val waits = buildList {
+            clearsAt(tx, outbox)?.let { cleared -> queuesOf(tx).forEach { add(it to cleared) } }
+            val feeFrom = kept?.feeFrom
+            val feeExpires = kept?.feeExpires
+            if (feeFrom != null && feeExpires != null) add(feeFrom to feeExpires + LATE)
+        }
+        for ((q, cleared) in waits) {
+            if (now > cleared) continue
             clears[q] = maxOf(clears[q] ?: 0L, cleared)
             if (now - tx.at >= STUCK_AFTER) since[q] = minOf(since[q] ?: tx.at, tx.at)
         }

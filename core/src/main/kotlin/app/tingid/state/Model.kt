@@ -188,6 +188,15 @@ data class OutboxEntry(
      * app knew when it sent it. Null for anything else, read from its bytes.
      */
     val unpaid: Boolean? = null,
+    /**
+     * For a batch whose fee payment comes from one of this device's accounts:
+     * that account's queue in the coin ([coinQueue]). The payment takes the
+     * account's next nonce, so the batch waits in that queue as a payment
+     * would, though its submission names no coin ([stuckQueues]).
+     */
+    val feeFrom: String? = null,
+    /** When that fee payment expires (seconds), and with it the batch's place in the queue. */
+    val feeExpires: Long? = null,
 )
 
 @Serializable

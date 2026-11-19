@@ -69,6 +69,22 @@ class WaitingTest {
     }
 
     @Test
+    fun `a change whose fee Spending pays waits in Spending's queue until its fee payment expires`() {
+        val q = coinQueue("c", "a")
+        // An identity's change names no coin: alone it is in no queue.
+        val change = SubmittedTx("g1", t - 1_800, "Link a guardian", "u")
+        assertTrue(stuckQueues(listOf(item(change)), emptyMap(), t).isEmpty())
+        // Paid for from Spending through a batch, it holds Spending's next nonce.
+        val outbox = mapOf("g1" to OutboxEntry("00", at = t - 1_800, feeFrom = q, feeExpires = t - 1_800 + Chain.SIGNED_LIFE))
+        assertEquals(mapOf(q to Stuck(t - 1_800, t - 1_800 + Chain.SIGNED_LIFE + LATE)), stuckQueues(listOf(item(change)), outbox, t))
+        // So the first payment behind it is asked about, and clears with whichever of the two is later.
+        val behind = stuckQueues(listOf(item(change), item(payment("p1", 60))), outbox, t)[q]
+        assertEquals(Stuck(t - 1_800, t - 60 + Chain.SIGNED_LIFE + LATE), behind)
+        // Once its fee payment is cleared, it holds nothing there; the change alone may still go in.
+        assertTrue(stuckQueues(listOf(item(change)), outbox, t - 1_800 + Chain.SIGNED_LIFE + LATE + 1).isEmpty())
+    }
+
+    @Test
     fun `what it says while a queue looks stuck`() {
         assertEquals(
             "A transaction from this account has waited 25 minutes for a block. Anything you sign now waits behind it, and makes the wait longer. " +
