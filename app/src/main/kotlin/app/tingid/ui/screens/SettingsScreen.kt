@@ -415,11 +415,18 @@ private fun WaitingSection(data: AppData, user: User?, chainHex: String?, confir
             if (list.isEmpty()) return@launch
             val until = list.mapNotNull { couldGoInUntil(it, now.outbox) }.max()
             val many = list.size > 1
+            // Past its expiry by the clock, one can still go in until the chain's time has passed it too.
+            val over = withContext(Dispatchers.IO) { services.chain.gone(until) }
+            val still = "This cancels nothing: ${if (many) "any of them" else "it"} may still go through"
             val yes = confirm.ask(
                 ConfirmOptions(
                     title = "Forget waiting transactions?",
                     body = "Ting ID stops following ${if (many) "the ${list.size} transactions" else "the transaction"} that no block has taken yet, and your next one no longer waits behind ${if (many) "them" else "it"}. " +
-                        "This cancels nothing: ${if (many) "any of them" else "it"} may still go through until ${formatTime(until)}. If you send the same payment again before then, it could be paid twice.",
+                        when {
+                            over -> "${if (many) "They have" else "It has"} expired, so nothing of ${if (many) "them" else "it"} can still go through."
+                            until > nowSeconds() -> "$still until ${formatTime(until)}. If you send the same payment again before then, it could be paid twice."
+                            else -> "$still in the next few minutes. If you send the same payment again right away, it could be paid twice."
+                        },
                     confirm = if (many) "Forget them" else "Forget it",
                     back = if (many) "Keep them" else "Keep it",
                     danger = true,

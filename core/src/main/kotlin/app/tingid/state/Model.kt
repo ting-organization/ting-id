@@ -243,12 +243,16 @@ data class NonceNote(
     /** Seconds; null for a note of an earlier version, or for what carries no expiry. */
     val expires: Long? = null,
     /**
-     * When the first of the actions this one queues behind expires (seconds):
-     * its own expiry when it queues behind none. Past it, nothing more is
-     * signed behind them (Chain, nextAfterNoted).
+     * The actions this one was signed behind, which no block had taken then,
+     * lowest nonce first. They tell whose turn it is once a block has taken
+     * some of them (Chain, nextAfterNoted).
      */
-    val first: Long? = null,
+    val ahead: List<HeldNonce> = emptyList(),
 )
+
+/** An action that waits for a block: the nonce it holds, and when it expires (seconds). */
+@Serializable
+data class HeldNonce(val nonce: Long, val expires: Long)
 
 /**
  * Recovery phrase words in the vault that belong to no user any more:

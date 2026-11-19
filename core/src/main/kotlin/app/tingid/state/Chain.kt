@@ -283,8 +283,8 @@ class Chain(
     /** A nonce to sign with and, when it is the last fee payment's again, that payment's expiry. */
     private class Next(val nonce: Long, val expires: Long? = null)
 
-    /** A nonce given out behind actions still waiting: until when they hold it, and when the first of them expires. */
-    private class Queued(val nonce: Long, val until: Long, val first: Long)
+    /** A nonce given out behind actions still waiting, and those actions ([NonceNote.ahead]). */
+    private class Queued(val nonce: Long, val ahead: List<HeldNonce>)
 
     /** The nonce last given out behind waiting actions, by [nonceKey], for [noteNonce] to note what it queues behind. */
     private val queued = java.util.concurrent.ConcurrentHashMap<String, Queued>()
@@ -303,17 +303,19 @@ class Chain(
         }
         val current = read(node)
         if (note == null || !waiting || note.nonce < current) return Next(current)
-        // A node can hold a transaction long after it expired. Once the last one signed can no longer go
-        // in, none signed before it can either, as none outlives it: nothing waits, and the chain's nonce is next.
-        val until = note.until()
+        // What still holds a nonce: the last action and those it was signed behind, less the ones a block
+        // has taken since, which the chain's nonce is past. One that went in holds nothing back.
+        val held = (note.ahead + HeldNonce(note.nonce, note.until())).filter { it.nonce >= current }
+        // A node can hold a transaction long after it expired. Once none of them can go in any more,
+        // nothing waits, and the chain's nonce is next.
+        val until = held.maxOf { it.expires }
         if (gone(until)) return Next(current)
-        // The first of them is past its expiry and no block took it: what queues behind it cannot go in
+        // One of them is past its expiry and no block took it: what queues behind it cannot go in
         // either, and one more would only hold the nonce an hour longer. Nothing is signed until they are over.
-        val first = note.first ?: until
-        if (now() > first) throw StillExpiring(until, now())
+        if (held.any { now() > it.expires }) throw StillExpiring(until, now())
         val same = prefix != null && note.prefix == prefix
         val next = if (same) note.nonce else note.nonce + 1
-        queued[key] = Queued(next, until, first)
+        queued[key] = Queued(next, held.filter { it.nonce < next })
         return Next(next, if (same) note.expires?.takeIf { it > now() } else null)
     }
 
@@ -328,10 +330,9 @@ class Chain(
 
     private fun noteNonce(contract: ByteArray, account: ByteArray, nonce: Long, txId: String, expires: Long, prefix: String? = null) {
         val key = nonceKey(contract, account)
-        // Given out behind actions still waiting, it holds the nonce as long as the last of them does, which
-        // one of an earlier version can outlive it, and it remembers when the first of them expires.
-        val behind = queued.remove(key)?.takeIf { it.nonce == nonce }
-        store.noteNonce(key, NonceNote(nonce, txId, now(), prefix, maxOf(expires, behind?.until ?: 0), behind?.first ?: expires))
+        // Given out behind actions still waiting, it remembers them: each holds its nonce until its own expiry.
+        val ahead = queued.remove(key)?.takeIf { it.nonce == nonce }?.ahead ?: emptyList()
+        store.noteNonce(key, NonceNote(nonce, txId, now(), prefix, expires, ahead))
     }
 
     // ---- The chain's time ---------------------------------------------------------
@@ -434,7 +435,14 @@ class Chain(
         val alone = encodeCall(call.target, call.input, budget)
         val account = payer.signer.account
         val prefix = batchPrefix(listOf(call)).hex()
-        val next = nextPayment(payer.coinId, account, prefix)
+        val next = try {
+            nextPayment(payer.coinId, account, prefix)
+        } catch (e: StillExpiring) {
+            // The payer's own queue is held up, which holds nothing of the call's: it goes alone, unpaid,
+            // as when a node refuses the batch.
+            if (required) throw e
+            return node.submit(alone)
+        }
         val nonce = next.nonce
         val validUntil = next.expires ?: signedExpiry()
         // A transaction the node may have, its answer lost, counts as sent but not for sure.
@@ -682,9 +690,8 @@ class Chain(
 
         /**
          * How long a program's call may wait to get in (TCR-1: at most an hour).
-         * The same as [SIGNED_LIFE]: of two things signed for one account, the
-         * later never expires first, which is what lets the last one's expiry
-         * stand for all before it (nextAfterNoted).
+         * The same as [SIGNED_LIFE]: a call and a payment signed at the same
+         * time stop holding their account at the same time.
          */
         const val CALL_LIFE = SIGNED_LIFE
     }
@@ -704,7 +711,12 @@ class StillExpiring(val until: Long, now: Long) : IllegalStateException(
 
         fun inMinutes(until: Long, now: Long): String {
             val minutes = maxOf(1, (until - now + 59) / 60 + SETTLE_MINUTES)
-            return if (minutes == 1L) "a minute" else "$minutes minutes"
+            return when {
+                minutes == 1L -> "a minute"
+                minutes < 120 -> "$minutes minutes"
+                // Only behind a payment of an earlier version, which was signed until the end of the day after.
+                else -> "${(minutes + 59) / 60} hours"
+            }
         }
     }
 }

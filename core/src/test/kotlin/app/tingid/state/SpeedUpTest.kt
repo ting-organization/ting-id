@@ -153,7 +153,7 @@ class SpeedUpTest {
         // Kept with the call's id, and the payer's nonce noted for the batch.
         assertEquals(alone, app.store.data.value.outbox.getValue(batch).twin)
         val note = app.store.data.value.nonces.getValue("${dlr.hex}:${payer.signer.account.hex()}")
-        assertEquals(NonceNote(0, batch, app.clock, batchPrefix(listOf(apply)).hex(), app.chain.signedExpiry(), app.chain.signedExpiry()), note)
+        assertEquals(NonceNote(0, batch, app.clock, batchPrefix(listOf(apply)).hex(), app.chain.signedExpiry()), note)
     }
 
     @Test
