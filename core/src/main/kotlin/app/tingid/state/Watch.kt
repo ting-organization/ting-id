@@ -51,7 +51,7 @@ sealed class Decision {
     /** The node lost it: these bytes go out again. */
     data class Resend(val entries: List<OutboxEntry>) : Decision()
 
-    /** No block took it before what it signed expired, and none can now ([clearsAt]): nothing was paid or changed. */
+    /** No block took it before what it signed expired, and by the clock none can now ([clearsAt]). */
     data object Expired : Decision()
 
     /** Nothing to do but show where it stands. */
@@ -145,7 +145,7 @@ const val LATE = 3_600L
 const val STUCK_AFTER = 600L
 
 /** Why a submission that expired is over, as its problem. */
-const val EXPIRED_WORDS = "no block included it before it expired: nothing was paid or changed"
+const val EXPIRED_WORDS = "no block took it before it expired, so it should not go through"
 
 /**
  * Whether the transaction kept as `id` is a program's call (TCR-1), alone or in
