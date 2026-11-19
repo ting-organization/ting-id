@@ -62,7 +62,10 @@ import app.tingid.state.Acting
 import app.tingid.state.CallRequest
 import app.tingid.state.CoinInfo
 import app.tingid.state.SubmittedTx
+import app.tingid.state.approveAgainWords
+import app.tingid.state.callKey
 import app.tingid.state.readCallRequest
+import app.tingid.state.repeatOf
 import app.tingid.state.sent
 import app.tingid.text.CallPart
 import app.tingid.text.Names
@@ -79,6 +82,8 @@ import app.tingid.ui.ButtonKind
 import app.tingid.ui.Caption
 import app.tingid.ui.CallRoute
 import app.tingid.ui.Card
+import app.tingid.ui.ConfirmHost
+import app.tingid.ui.ConfirmOptions
 import app.tingid.ui.Detail
 import app.tingid.ui.DetailCard
 import app.tingid.ui.DetailValue
@@ -100,11 +105,13 @@ import app.tingid.ui.Type
 import app.tingid.ui.WalletTab
 import app.tingid.ui.confirmOwner
 import app.tingid.ui.formatTime
+import app.tingid.ui.formatWhen
 import app.tingid.ui.manropeStyle
 import app.tingid.ui.money.FeeRow
 import app.tingid.ui.money.rememberAccountViews
 import app.tingid.ui.money.rememberFee
 import app.tingid.ui.money.withFee
+import app.tingid.ui.rememberConfirm
 import app.tingid.ui.sentence
 import app.tingid.ui.t
 import kotlinx.coroutines.CancellationException
@@ -215,6 +222,10 @@ private fun Review(request: CallRequest) {
     val data by services.store.data.collectAsState()
     // Warned about the first time only (TCR-1): the program is still one Ting ID has no name for.
     val firstUse = request.program.hex() !in data.programsCalled
+    // This device's payments and calls still on their way: the same call approved again is asked about first.
+    val pendingItems = remember(services) { services.pending.items() }
+    val pending by pendingItems.collectAsState(initial = emptyList())
+    val confirm = rememberConfirm()
 
     var busy by remember { mutableStateOf(false) }
     HoldWhileBusy(busy)
@@ -256,8 +267,16 @@ private fun Review(request: CallRequest) {
         if (!going.compareAndSet(false, true)) return
         busy = true
         error = null
+        val callId = callKey(request.program, acting.account, link.template.hash, link.values)
         ui.launch {
             val shown = try {
+                // The same call could still go in: approved again, it could run twice. Any other call goes at once.
+                val before = repeatOf(pending, services.store.data.value, user.id, info.chainHex, nowSeconds()) { it.call == callId }
+                if (before != null && !confirm.ask(ConfirmOptions(title = "Approve it again?", body = approveAgainWords(before) { formatWhen(it) }, confirm = "Approve again"))) {
+                    going.set(false)
+                    busy = false
+                    return@launch
+                }
                 if (!confirmOwner(activity, services, ownerTitle, line)) {
                     going.set(false)
                     busy = false
@@ -281,6 +300,7 @@ private fun Review(request: CallRequest) {
                             account = payment?.let { acting.account.hex() },
                             amount = payment?.let { (it.amount + ownFee).toString() },
                             to = recipient,
+                            call = callId,
                         ),
                     )
                     r
@@ -398,6 +418,7 @@ private fun Review(request: CallRequest) {
         }
         Spacer(Modifier.height(Spacing.lg))
     }
+    ConfirmHost(confirm)
 }
 
 /** What leaves the account; in a coin the user does not follow, marked so. */

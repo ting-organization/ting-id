@@ -162,6 +162,16 @@ data class SubmittedTx(
     val amount: String? = null,
     /** For a payment: the account it goes to (hex). */
     val to: String? = null,
+    /** For a payment: what the recipient gets, in base units, so that the same payment made again is asked about. */
+    val sends: String? = null,
+    /** For a program's call (TCR-1): the program, the acting account and the operation's hash ([callKey]), so that the same call made again is asked about. */
+    val call: String? = null,
+    /**
+     * Put away by "Forget waiting transactions" (Store.forgetWaiting): until
+     * when it could still get into a block then (seconds), so that the same
+     * payment or call made again before that is asked about ([repeatOf]).
+     */
+    val forgottenUntil: Long? = null,
 )
 
 /** A submitted transaction's bytes, kept until a block includes it, to send again if the node loses it. */

@@ -32,6 +32,7 @@ import androidx.navigation.NavHostController
 import app.tingid.chain.formatAmount
 import app.tingid.state.PaymentDraft
 import app.tingid.state.paymentDrafts
+import app.tingid.state.sendAgainWords
 import app.tingid.text.lockOf
 import app.tingid.ui.AccountBox
 import app.tingid.ui.Banner
@@ -39,6 +40,8 @@ import app.tingid.ui.BannerTone
 import app.tingid.ui.Button
 import app.tingid.ui.ButtonKind
 import app.tingid.ui.Caption
+import app.tingid.ui.ConfirmHost
+import app.tingid.ui.ConfirmOptions
 import app.tingid.ui.Detail
 import app.tingid.ui.DetailCard
 import app.tingid.ui.DetailValue
@@ -56,8 +59,10 @@ import app.tingid.ui.TxRoute
 import app.tingid.ui.confirmOwner
 import app.tingid.ui.formatClock
 import app.tingid.ui.formatDay
+import app.tingid.ui.formatWhen
 import app.tingid.ui.manropeStyle
 import app.tingid.ui.money.CoinMark
+import app.tingid.ui.rememberConfirm
 import app.tingid.ui.sentence
 import app.tingid.ui.t
 import kotlinx.coroutines.CancellationException
@@ -78,6 +83,7 @@ fun ReviewScreen() {
     HoldWhileBusy(busy)
     var error by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    val ask = rememberConfirm()
 
     val d = draft
     if (d == null) {
@@ -104,6 +110,12 @@ fun ReviewScreen() {
         error = null
         scope.launch {
             try {
+                // The same payment could still go through: a second one is asked for in so many words. Any other goes at once.
+                val before = payment.repeat
+                if (before != null && !ask.ask(ConfirmOptions(title = "Send it again?", body = sendAgainWords(before) { formatWhen(it) }, confirm = "Send again"))) {
+                    busy = false
+                    return@launch
+                }
                 val title = if (runsAt != null) "Confirm the scheduled payment" else "Confirm the payment"
                 if (!confirmOwner(activity, services, title, "${amount(payment.amount)} to ${toName ?: (payment.to.account.take(10) + "…")}")) {
                     busy = false
@@ -178,6 +190,7 @@ fun ReviewScreen() {
         Button("Edit", onClick = { nav.edit() }, kind = ButtonKind.Ghost, enabled = !busy)
     }
     if (saving) SaveContactSheet(d.to.account, onClose = { saving = false })
+    ConfirmHost(ask)
 }
 
 /** Back to Send, with everything as entered; to a new Send when this page was opened on its own. */

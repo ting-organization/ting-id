@@ -2,7 +2,9 @@
 // the bytes the app kept (state/Pending follows them). Pure, for tests.
 package app.tingid.state
 
+import app.tingid.chain.Tcr
 import app.tingid.chain.TransactionLookup
+import app.tingid.chain.hex
 import java.math.BigInteger
 
 /** How long after its time a lost transaction is sent again: as long as a node keeps one in its pool. */
@@ -185,3 +187,52 @@ fun forgetWords(items: List<SubmittedTx>, outbox: Map<String, OutboxEntry>, now:
             "If you send the same payment again before then, it could be paid twice."
     }
 }
+
+// ---- The same payment or call again ---------------------------------------------
+
+/** A program's call as a submission notes it ([SubmittedTx.call]): the program, the acting account and the operation's hash (TCR-1), hex. */
+fun callKey(program: ByteArray, account: ByteArray, template: ByteArray, values: ByteArray): String =
+    "${program.hex()}:${account.hex()}:${Tcr.operationHash(template, values).hex()}"
+
+/** Whether no block has a submission yet: one in a block already shows in what the chain says. */
+private fun PendingItem.onItsWay() = tx.state == TxState.Pending && watch !is Watch.Failed && watch !is Watch.Confirming
+
+/**
+ * The submission of `userId` on `chain` that a new payment or call would
+ * repeat (`same` picks it out), the newest, while it could still get into a
+ * block at `now`: on its way (`items`, as Pending follows them), or forgotten
+ * in Settings ([Store.forgetWaiting]) with its time not yet run out, and as
+ * long again as a block's time may trail the clock ([LATE]). Null when there
+ * is none: any other payment or call goes without a question.
+ */
+fun repeatOf(items: List<PendingItem>, d: AppData, userId: String, chain: String?, now: Long, same: (SubmittedTx) -> Boolean): SubmittedTx? {
+    val waiting = items.filter { it.onItsWay() && it.tx.userId == userId }.map { it.tx }
+        .filter { tx -> couldGoInUntil(tx, d.outbox)?.let { now <= it + LATE } != false }
+    val forgotten = d.submitted.filter {
+        it.userId == userId && (it.chain == null || it.chain == chain) && it.state == TxState.Dismissed &&
+            it.forgottenUntil?.let { until -> now <= until + LATE } == true
+    }
+    return (waiting + forgotten).filter(same).maxByOrNull { it.at }
+}
+
+/** Where `before` ([repeatOf]) stands, for the question before it is repeated: `time` writes a time. */
+private fun standing(before: SubmittedTx, verb: String, time: (Long) -> String): String {
+    val until = before.forgottenUntil
+    return if (before.state == TxState.Dismissed && until != null) {
+        "You $verb this at ${time(before.at)} and forgot it in Settings, but it could still go through until about ${time(until + LATE)}."
+    } else {
+        "You $verb this at ${time(before.at)}, and it is still waiting for a block."
+    }
+}
+
+/**
+ * The question before the payment `before` ([repeatOf]) is sent again. The
+ * second queues behind the first, so both can go through, and a forgotten
+ * one may go through as well.
+ */
+fun sendAgainWords(before: SubmittedTx, time: (Long) -> String): String =
+    "${standing(before, "sent", time)} If you send it again, it could be paid twice."
+
+/** The question before the call `before` ([repeatOf]) is approved again: the second queues behind the first, so it can run twice. */
+fun approveAgainWords(before: SubmittedTx, time: (Long) -> String): String =
+    "${standing(before, "approved", time)} Approved again, it could run twice."

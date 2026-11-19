@@ -50,6 +50,8 @@ import app.tingid.state.SubmittedTx
 import app.tingid.state.USER_COLORS
 import app.tingid.state.fetchIdentity
 import app.tingid.state.readCreateLink
+import app.tingid.state.repeatOf
+import app.tingid.state.sendAgainWords
 import app.tingid.state.sent
 import app.tingid.state.slotLabel
 import app.tingid.text.relativeDuration
@@ -60,6 +62,8 @@ import app.tingid.ui.Button
 import app.tingid.ui.ButtonKind
 import app.tingid.ui.Caption
 import app.tingid.ui.Card
+import app.tingid.ui.ConfirmHost
+import app.tingid.ui.ConfirmOptions
 import app.tingid.ui.Detail
 import app.tingid.ui.DetailCard
 import app.tingid.ui.DetailValue
@@ -77,6 +81,7 @@ import app.tingid.ui.TxRoute
 import app.tingid.ui.Type
 import app.tingid.ui.WalletTab
 import app.tingid.ui.confirmOwner
+import app.tingid.ui.formatWhen
 import app.tingid.ui.manropeStyle
 import app.tingid.ui.money.CoinMark
 import app.tingid.ui.money.FeeRow
@@ -85,6 +90,7 @@ import app.tingid.ui.money.rememberAccountViews
 import app.tingid.ui.money.rememberFee
 import app.tingid.ui.money.rememberFeeCoin
 import app.tingid.ui.money.withFee
+import app.tingid.ui.rememberConfirm
 import app.tingid.ui.sentence
 import app.tingid.ui.t
 import kotlinx.coroutines.CancellationException
@@ -150,6 +156,10 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
     HoldWhileBusy(busy)
     val going = remember { AtomicBoolean(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // This device's payments still on their way: the same payment sent again is asked about first.
+    val pendingItems = remember(services) { services.pending.items() }
+    val pending by pendingItems.collectAsState(initial = emptyList())
+    val confirm = rememberConfirm()
     val creationFee = rememberFee(null)
     val paymentFee = rememberFee(if (c != null && from != null) Acting(c, from) else null)
 
@@ -213,6 +223,19 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
         error = null
         ui.launch {
             val shown = try {
+                // The same payment could still go through: sent again, both could. Any other payment goes at once.
+                val before = if (sending.signum() > 0) {
+                    repeatOf(pending, services.store.data.value, user.id, i.chainHex, nowSeconds()) {
+                        it.coin == coin.hex && it.account == account.account.hex() && it.to == to.hex() && it.sends == sending.toString()
+                    }
+                } else {
+                    null
+                }
+                if (before != null && !confirm.ask(ConfirmOptions(title = "Send it again?", body = sendAgainWords(before) { formatWhen(it) }, confirm = "Send again"))) {
+                    going.set(false)
+                    busy = false
+                    return@launch
+                }
                 if (!confirmOwner(activity, services, if (create) "Set up $who" else "Send to $who", if (sending.signum() > 0) "${formatAmount(sending, decimals)} $symbol" else null)) {
                     going.set(false)
                     busy = false
@@ -243,6 +266,7 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
                                 account = account.account.hex(),
                                 amount = (sending + ownFee).toString(),
                                 to = to.hex(),
+                                sends = sending.toString(),
                             ),
                         )
                         made = Sent(r.txId, r.unsure || made?.unsure == true)
@@ -340,6 +364,7 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
         Button(if (exists == null) "Looking it up…" else title, onClick = ::submit, large = true, loading = busy, enabled = ready)
         Spacer(Modifier.height(Spacing.lg))
     }
+    ConfirmHost(confirm)
 }
 
 /** Back to the screen before, or to the wallet when a link opened this one. */

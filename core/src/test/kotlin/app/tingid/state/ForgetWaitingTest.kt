@@ -111,4 +111,78 @@ class ForgetWaitingTest {
         assertFalse(over.contains("paid twice"))
         assertTrue(forgetWords(listOf(payment, call), outbox, last + 1, time).endsWith("They have expired, so nothing of them can still go through."))
     }
+
+    @Test
+    fun `forgetting notes until when each could still go in`() {
+        app.store.addSubmitted(SubmittedTx("p1", t, "Send 1 DLR", "u", coin = "c", account = "a", to = "b", sends = "1"))
+        keep("p1")
+        app.store.forgetWaiting("u", app.chainHex, t)
+        val p1 = app.store.data.value.submitted.single()
+        assertEquals(TxState.Dismissed, p1.state)
+        assertEquals(endOfNextDay(t), p1.forgottenUntil)
+    }
+
+    private fun item(tx: SubmittedTx, watch: Watch = Watch.Checking) = PendingItem(tx, watch, canRetry = true)
+
+    @Test
+    fun `only the same payment or call is a repeat, while it could still go in`() {
+        val pay = SubmittedTx("p1", t, "Send 1 DLR", "u", coin = "c", account = "a", to = "b", sends = "100")
+        val same = { tx: SubmittedTx -> tx.coin == "c" && tx.account == "a" && tx.to == "b" && tx.sends == "100" }
+        val d = app.store.data.value
+        assertEquals(pay, repeatOf(listOf(item(pay)), d, "u", app.chainHex, t, same))
+        // Another amount, another recipient, or one noted without what it sends: no question.
+        assertNull(repeatOf(listOf(item(pay.copy(sends = "101"))), d, "u", app.chainHex, t, same))
+        assertNull(repeatOf(listOf(item(pay.copy(to = "x"))), d, "u", app.chainHex, t, same))
+        assertNull(repeatOf(listOf(item(pay.copy(sends = null))), d, "u", app.chainHex, t, same))
+        // In a block already, or failed: no second one of it is waiting.
+        assertNull(repeatOf(listOf(item(pay, Watch.Confirming(5))), d, "u", app.chainHex, t, same))
+        assertNull(repeatOf(listOf(item(pay, Watch.Failed("no", 5))), d, "u", app.chainHex, t, same))
+        // Another user's.
+        assertNull(repeatOf(listOf(item(pay)), d, "v", app.chainHex, t, same))
+        // Past the end of the day after, and the hour a block's time may trail the clock, a payment can no longer go in.
+        val over = endOfNextDay(t) + 3_600
+        assertEquals(pay, repeatOf(listOf(item(pay)), d, "u", app.chainHex, over, same))
+        assertNull(repeatOf(listOf(item(pay)), d, "u", app.chainHex, over + 1, same))
+        // The newest is the one asked about.
+        val later = pay.copy(id = "p2", at = t + 60)
+        assertEquals(later, repeatOf(listOf(item(pay), item(later)), d, "u", app.chainHex, t + 60, same))
+
+        // A call: by its key.
+        val call = SubmittedTx("c1", t, "Program call", "u", call = "k1")
+        assertEquals(call, repeatOf(listOf(item(call)), d, "u", app.chainHex, t) { it.call == "k1" })
+        assertNull(repeatOf(listOf(item(call)), d, "u", app.chainHex, t) { it.call == "k2" })
+    }
+
+    @Test
+    fun `a forgotten payment counts until its time runs out, one put away by hand does not`() {
+        app.store.addSubmitted(SubmittedTx("p1", t, "Send 1 DLR", "u", coin = "c", account = "a", to = "b", sends = "100"))
+        keep("p1")
+        app.store.forgetWaiting("u", app.chainHex, t)
+        app.store.addSubmitted(SubmittedTx("p2", t + 1, "Send 1 DLR", "u", coin = "c", account = "a", to = "b", sends = "100", state = TxState.Dismissed))
+        val d = app.store.data.value
+        val same = { tx: SubmittedTx -> tx.sends == "100" }
+        assertEquals("p1", repeatOf(emptyList(), d, "u", app.chainHex, t, same)?.id)
+        assertEquals("p1", repeatOf(emptyList(), d, "u", app.chainHex, endOfNextDay(t) + 3_600, same)?.id)
+        assertNull(repeatOf(emptyList(), d, "u", app.chainHex, endOfNextDay(t) + 3_601, same))
+        assertNull(repeatOf(emptyList(), d, "v", app.chainHex, t, same))
+    }
+
+    @Test
+    fun `the questions say where the first one stands, and what a second one does`() {
+        val time = { at: Long -> "T$at" }
+        val waiting = SubmittedTx("p1", t, "Send 1 DLR", "u", coin = "c", account = "a", to = "b", sends = "100")
+        assertEquals(
+            "You sent this at T$t, and it is still waiting for a block. If you send it again, it could be paid twice.",
+            sendAgainWords(waiting, time),
+        )
+        val forgotten = waiting.copy(state = TxState.Dismissed, forgottenUntil = t + 100)
+        assertEquals(
+            "You sent this at T$t and forgot it in Settings, but it could still go through until about T${t + 100 + 3_600}. If you send it again, it could be paid twice.",
+            sendAgainWords(forgotten, time),
+        )
+        assertEquals(
+            "You approved this at T$t, and it is still waiting for a block. Approved again, it could run twice.",
+            approveAgainWords(SubmittedTx("c1", t, "Program call", "u", call = "k1"), time),
+        )
+    }
 }

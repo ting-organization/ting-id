@@ -304,14 +304,17 @@ class Store(
      * go in, which is what the person is told before (Settings).
      */
     fun forgetWaiting(userId: String, chain: String?, now: Long) = update { d ->
-        val gone = waitingToForget(d, userId, chain, now).map { it.id }.toSet()
-        if (gone.isEmpty()) return@update d
+        val waiting = waitingToForget(d, userId, chain, now)
+        if (waiting.isEmpty()) return@update d
+        val gone = waiting.map { it.id }.toSet()
+        // Until when each could still go in, read while its bytes are kept: the same one made again is asked about until then.
+        val until = waiting.associate { it.id to couldGoInUntil(it, d.outbox) }
         // A nonce is noted with the id of the transaction that took it: any this user sent here, or its twin.
         val mine = d.submitted.filter { it.userId == userId && (it.chain == null || it.chain == chain) }.map { it.id }
         val noted = (mine + mine.mapNotNull { d.outbox[it]?.twin }).toSet()
         val dropped = gone + gone.mapNotNull { d.outbox[it]?.twin }
         d.copy(
-            submitted = d.submitted.map { if (it.id in gone) it.copy(state = TxState.Dismissed) else it },
+            submitted = d.submitted.map { if (it.id in gone) it.copy(state = TxState.Dismissed, forgottenUntil = until[it.id]) else it },
             outbox = d.outbox - dropped,
             // An identity's own nonce (Registry, "op:…") is not a coin's or a program's: it stays.
             nonces = d.nonces.filterNot { (key, note) -> !key.startsWith("op:") && note.txId in noted },

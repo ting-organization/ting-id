@@ -96,6 +96,7 @@ import app.tingid.state.linkedDeviceKeys
 import app.tingid.state.onTheWay
 import app.tingid.state.paymentDrafts
 import app.tingid.state.recipients
+import app.tingid.state.repeatOf
 import app.tingid.state.sent
 import app.tingid.state.ungroupTyped
 import app.tingid.text.relativeDuration
@@ -412,6 +413,10 @@ fun SendScreen(route: SendTab) {
                 runFee = runFee,
                 total = needed,
                 available = check.availableNow,
+                // The same payment (coin, account, recipient, amount) that could still go through: asked about on Review.
+                repeat = repeatOf(pending, services.store.data.value, user.id, info.chainHex, nowSeconds()) {
+                    it.coin == c.hex && it.account == account.account.hex() && it.to == to && it.sends == amount.toString()
+                },
                 submit = {
                     if (!progress.compareAndSet(IDLE, SENDING)) {
                         throw IllegalStateException(if (progress.get() == SENT) "this payment was sent already" else "this payment is being sent")
@@ -449,6 +454,7 @@ fun SendScreen(route: SendTab) {
                                 account = account.account.hex(),
                                 amount = needed.toString(),
                                 to = to,
+                                sends = amount.toString(),
                             ),
                         )
                         // Sent: the form is empty for the next payment.
