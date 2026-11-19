@@ -62,8 +62,15 @@ import app.tingid.state.Acting
 import app.tingid.state.CallRequest
 import app.tingid.state.CoinInfo
 import app.tingid.state.SubmittedTx
+import app.tingid.state.approveAgainWords
+import app.tingid.state.callKey
+import app.tingid.state.callQueue
+import app.tingid.state.coinQueue
 import app.tingid.state.readCallRequest
+import app.tingid.state.repeatOf
 import app.tingid.state.sent
+import app.tingid.state.stuckIn
+import app.tingid.state.stuckQueues
 import app.tingid.text.CallPart
 import app.tingid.text.Names
 import app.tingid.text.callLine
@@ -79,6 +86,8 @@ import app.tingid.ui.ButtonKind
 import app.tingid.ui.Caption
 import app.tingid.ui.CallRoute
 import app.tingid.ui.Card
+import app.tingid.ui.ConfirmHost
+import app.tingid.ui.ConfirmOptions
 import app.tingid.ui.Detail
 import app.tingid.ui.DetailCard
 import app.tingid.ui.DetailValue
@@ -100,12 +109,15 @@ import app.tingid.ui.Type
 import app.tingid.ui.WalletTab
 import app.tingid.ui.confirmOwner
 import app.tingid.ui.formatTime
+import app.tingid.ui.formatWhen
 import app.tingid.ui.manropeStyle
 import app.tingid.ui.money.FeeRow
 import app.tingid.ui.money.rememberAccountViews
 import app.tingid.ui.money.rememberFee
 import app.tingid.ui.money.withFee
+import app.tingid.ui.rememberConfirm
 import app.tingid.ui.sentence
+import app.tingid.ui.stuckQuestion
 import app.tingid.ui.t
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -215,6 +227,10 @@ private fun Review(request: CallRequest) {
     val data by services.store.data.collectAsState()
     // Warned about the first time only (TCR-1): the program is still one Ting ID has no name for.
     val firstUse = request.program.hex() !in data.programsCalled
+    // This device's payments and calls still on their way: the same call approved again is asked about first.
+    val pendingItems = remember(services) { services.pending.items() }
+    val pending by pendingItems.collectAsState(initial = emptyList())
+    val confirm = rememberConfirm()
 
     var busy by remember { mutableStateOf(false) }
     HoldWhileBusy(busy)
@@ -256,8 +272,34 @@ private fun Review(request: CallRequest) {
         if (!going.compareAndSet(false, true)) return
         busy = true
         error = null
+        val callId = callKey(request.program, acting.account, link.template.hash, link.values)
         ui.launch {
             val shown = try {
+                val outbox = services.store.data.value.outbox
+                // The call queues behind the account's calls to this program, its payment or own fee behind the
+                // account's payments in that coin, and a fee another account pays behind that account's: behind
+                // one that looks stuck, waiting is offered first.
+                val stuck = stuckIn(
+                    stuckQueues(pending, outbox, nowSeconds()),
+                    listOf(
+                        callQueue(request.program, acting.account),
+                        payment?.let { coinQueue(it.coin.hex, acting.account.hex()) },
+                        request.feeCoin?.let { coinQueue(it.hex, acting.account.hex()) },
+                        fee.payerQueue,
+                    ),
+                )
+                if (stuck != null && !confirm.ask(stuckQuestion(stuck))) {
+                    going.set(false)
+                    busy = false
+                    return@launch
+                }
+                // The same call still waits: approved again, it could run twice. Any other call goes at once.
+                val before = repeatOf(pending, outbox, nowSeconds()) { it.call == callId }
+                if (before != null && !confirm.ask(ConfirmOptions(title = "Approve it again?", body = approveAgainWords(before) { formatWhen(it) }, confirm = "Approve again"))) {
+                    going.set(false)
+                    busy = false
+                    return@launch
+                }
                 if (!confirmOwner(activity, services, ownerTitle, line)) {
                     going.set(false)
                     busy = false
@@ -267,8 +309,10 @@ private fun Review(request: CallRequest) {
                 services.scope.async(Dispatchers.IO) {
                     val signer = services.chain.resolveSigner(user, acting.slot, info.canonical, now.keys, now.identity)
                     val pays = payment?.let { it.coin.id to it.effect }
+                    // Signed for an hour (TCR-1): past that no block can take it.
+                    val validUntil = services.chain.callExpiry()
                     val r = sent {
-                        services.chain.submitProgramCall(info.status.chainId, request.program, link.template.hash, link.values, signer, pays, request.feeCoin?.id, fee.resolve()).txId
+                        services.chain.submitProgramCall(info.status.chainId, request.program, link.template.hash, link.values, signer, pays, request.feeCoin?.id, fee.resolve(), validUntil).txId
                     }
                     services.store.noteProgramCalled(request.program.hex())
                     services.store.addSubmitted(
@@ -281,6 +325,8 @@ private fun Review(request: CallRequest) {
                             account = payment?.let { acting.account.hex() },
                             amount = payment?.let { (it.amount + ownFee).toString() },
                             to = recipient,
+                            call = callId,
+                            expires = validUntil,
                         ),
                     )
                     r
@@ -398,6 +444,7 @@ private fun Review(request: CallRequest) {
         }
         Spacer(Modifier.height(Spacing.lg))
     }
+    ConfirmHost(confirm)
 }
 
 /** What leaves the account; in a coin the user does not follow, marked so. */

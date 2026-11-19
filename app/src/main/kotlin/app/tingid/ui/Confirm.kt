@@ -21,6 +21,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import app.tingid.chain.nowSeconds
+import app.tingid.state.Stuck
+import app.tingid.state.waitWords
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -36,6 +39,19 @@ class ConfirmOptions(
     val danger: Boolean = false,
     /** For what cannot be undone: the person types this phrase before the confirming button, solid red, works. */
     val typeToConfirm: String? = null,
+)
+
+/**
+ * The question before something is signed into a queue that looks stuck
+ * (state/Watch.kt, stuckQueues). Waiting is what stepping back does, so a
+ * dismissed question signs nothing.
+ */
+fun stuckQuestion(stuck: Stuck): ConfirmOptions = ConfirmOptions(
+    title = "Transactions look stuck",
+    body = waitWords(stuck, nowSeconds()) { formatWhen(it) },
+    confirm = "Sign anyway",
+    back = "Wait",
+    danger = true,
 )
 
 class ConfirmState {

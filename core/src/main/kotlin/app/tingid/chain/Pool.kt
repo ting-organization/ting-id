@@ -153,6 +153,23 @@ class NodePool(
     /** Headers checked: block id → its state root (hex), height and time. */
     private val headers = remembering<String, KnownHeader>()
 
+    /** The highest block an answer was taken from ([newestTime]). */
+    @Volatile
+    private var newest: KnownHeader? = null
+
+    /**
+     * The timestamp of the highest block an answer was taken from, once the
+     * other nodes have it too, 0 before any: the chain's own word on the time,
+     * for what is signed to expire by block time on a device whose clock is
+     * behind (state/Chain, signedExpiry). A node's newest block alone does not
+     * count: one node can make up a block stamped any time it likes.
+     */
+    val newestTime: Long get() = newest?.timestamp ?: 0L
+
+    private fun checked(header: KnownHeader) {
+        if (newest.let { it == null || header.height > it.height }) newest = header
+    }
+
     /** The highest block two nodes have: no later answer may come from far below it. */
     private var seen = 0L
 
@@ -207,6 +224,7 @@ class NodePool(
     suspend fun reset() = withContext(confined) {
         for ((u, h) in health) if (h.state == NodeState.Distrusted || h.state == NodeState.Outdated) health[u] = h.copy(state = NodeState.Unknown, problem = null)
         headers.clear()
+        newest = null
         seen = 0
         aheadSince.clear()
         apart = false
@@ -503,6 +521,8 @@ class NodePool(
         if (!confirm(node, tip, known.height) && nodes.any { it != node && h(it).state == NodeState.Ok }) {
             throw Unconfirmed("no other node has block ${known.height}, which it answered from")
         }
+        // Only a block an answer is taken from, which the other nodes have too, says what time it is.
+        checked(known)
         val old = now() - known.timestamp > OLD_TIP
         val n = _notice.value
         if (old && n == null) _notice.value = PoolNotice.Old(known.timestamp)

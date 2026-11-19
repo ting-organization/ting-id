@@ -51,8 +51,10 @@ import app.tingid.chain.nowSeconds
 import app.tingid.chain.shortId
 import app.tingid.chain.unhex
 import app.tingid.state.ActivityItem
+import app.tingid.state.EXPIRED_WORDS
 import app.tingid.state.TxPayment
 import app.tingid.state.TxStage
+import app.tingid.state.TxState
 import app.tingid.state.isFeeEvent
 import app.tingid.state.lastOccurrence
 import app.tingid.state.paymentOf
@@ -139,7 +141,9 @@ fun TxScreen(route: TxRoute) {
     val scheduled = scheduledIn(events)
     val stage = txStage(lookup, missing, events)
     val runsAt = scheduled?.executeAt ?: 0L
-    val head = when (stage) {
+    // Over without a block: what it signed expired, though a node may still hold it for a while.
+    val expired = submitted?.state == TxState.Failed && submitted.problem == EXPIRED_WORDS && (stage == TxStage.Pending || stage == TxStage.Unknown)
+    val head = if (expired) Head(Icons.Outlined.Close, "Not included", Tone.Danger) else when (stage) {
         TxStage.Ok -> Head(Icons.Outlined.Check, "Confirmed", Tone.Success)
         TxStage.Scheduled -> Head(Icons.Outlined.CalendarMonth, if (runsAt > nowSeconds()) "Scheduled · runs ${formatTime(runsAt)}" else "Scheduled for ${formatTime(runsAt)}", Tone.Accent)
         TxStage.Failed -> Head(Icons.Outlined.Close, "Failed", Tone.Danger)
@@ -174,6 +178,7 @@ fun TxScreen(route: TxRoute) {
             )
         }
         error?.let { Banner(sentence(it), BannerTone.Danger) }
+        if (expired) Banner(sentence(EXPIRED_WORDS), BannerTone.Danger)
         if (stage == TxStage.Loading) Loading()
         if (stage == TxStage.Deferred && deferred != null) {
             val last = deferred.lastResult

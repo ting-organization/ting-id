@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.tingid.chain.Links
 import app.tingid.chain.hex
+import app.tingid.chain.nowSeconds
 import app.tingid.chain.shortAmount
 import app.tingid.state.AccountView
 import app.tingid.state.ActivityFilter
@@ -70,6 +71,8 @@ import app.tingid.state.coinGroups
 import app.tingid.state.hiddenScheduledOf
 import app.tingid.state.onTheWay
 import app.tingid.state.scheduledOf
+import app.tingid.state.stuckQueues
+import app.tingid.state.stuckWords
 import app.tingid.text.OTHER_CHAIN_USER
 import app.tingid.ui.Amount
 import app.tingid.ui.Banner
@@ -99,6 +102,7 @@ import app.tingid.ui.Sheet
 import app.tingid.ui.Spacing
 import app.tingid.ui.Type
 import app.tingid.ui.Welcome
+import app.tingid.ui.formatWhen
 import app.tingid.ui.identity.PendingChanges
 import app.tingid.ui.identity.rememberSending
 import app.tingid.ui.manropeStyle
@@ -213,6 +217,9 @@ fun WalletScreen() {
         if (user != null && user.kind == UserKind.Identity && info != null && !w.otherChain && w.identity == null && !w.identityLoading) {
             Banner("Waiting for the next block to create this identity.", BannerTone.Warning)
         }
+        // Payments that look stuck clear on their own; anything signed before then only makes that later.
+        val stuckUntil = stuckQueues(pending, data.outbox, nowSeconds()).values.maxOfOrNull { it.clearsAt }
+        if (user != null && stuckUntil != null) Banner(stuckWords(stuckUntil) { formatWhen(it) }, BannerTone.Warning)
         if (user == null) Welcome()
         if (startHere) FirstCoins(user, Links.netOf(info.status.chainId), w.coins.firstOrNull())
 
