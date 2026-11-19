@@ -153,14 +153,16 @@ class NodePool(
     /** Headers checked: block id → its state root (hex), height and time. */
     private val headers = remembering<String, KnownHeader>()
 
-    /** The highest block header checked so far ([newestTime]). */
+    /** The highest block an answer was taken from ([newestTime]). */
     @Volatile
     private var newest: KnownHeader? = null
 
     /**
-     * The timestamp of the highest block header checked so far, 0 before any:
-     * the chain's own word on the time, for what is signed to expire by block
-     * time on a device whose clock is behind (state/Chain, signedExpiry).
+     * The timestamp of the highest block an answer was taken from, once the
+     * other nodes have it too, 0 before any: the chain's own word on the time,
+     * for what is signed to expire by block time on a device whose clock is
+     * behind (state/Chain, signedExpiry). A node's newest block alone does not
+     * count: one node can make up a block stamped any time it likes.
      */
     val newestTime: Long get() = newest?.timestamp ?: 0L
 
@@ -328,7 +330,6 @@ class NodePool(
             if (header.chainId.hex() != chain) throw distrust(node, "its newest block is of another chain")
             known = KnownHeader(header.stateRoot.hex(), header.height, header.timestamp)
             headers[status.tip] = known
-            checked(known)
         }
         if (known.height != status.height) throw distrust(node, "it names another height than its newest block has")
     }
@@ -508,7 +509,6 @@ class NodePool(
             if (header.chainId.hex() != chain) throw distrust(node, "it read from a block of another chain")
             known = KnownHeader(header.stateRoot.hex(), header.height, header.timestamp)
             headers[tip] = known
-            checked(known)
         }
         if (known.root != root) throw distrust(node, "its values are not from the block it named")
         // An answer from far behind the newest block could hide what happened since, such as a
@@ -521,6 +521,8 @@ class NodePool(
         if (!confirm(node, tip, known.height) && nodes.any { it != node && h(it).state == NodeState.Ok }) {
             throw Unconfirmed("no other node has block ${known.height}, which it answered from")
         }
+        // Only a block an answer is taken from, which the other nodes have too, says what time it is.
+        checked(known)
         val old = now() - known.timestamp > OLD_TIP
         val n = _notice.value
         if (old && n == null) _notice.value = PoolNotice.Old(known.timestamp)

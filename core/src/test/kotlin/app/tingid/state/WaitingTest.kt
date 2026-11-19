@@ -3,16 +3,29 @@
 // stuck, and the same payment or call asked about (state/Watch.kt, Chain).
 package app.tingid.state
 
+import app.tingid.chain.Coin
+import app.tingid.chain.Contracts
+import app.tingid.chain.FeePayer
+import app.tingid.chain.HEADER_BYTES
+import app.tingid.chain.MemoryKey
 import app.tingid.chain.Occurrence
 import app.tingid.chain.Receipt
+import app.tingid.chain.Signer
+import app.tingid.chain.Tcr
 import app.tingid.chain.TransactionLookup
 import app.tingid.chain.filled
 import app.tingid.chain.hex
+import app.tingid.chain.publicKey
+import app.tingid.chain.taggedHash
+import app.tingid.chain.u64le
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.math.BigInteger
 
 class WaitingTest {
     private val t = 1_800_000_000L
@@ -172,5 +185,55 @@ class WaitingTest {
         assertEquals(1L, runBlocking { app.chain.nextNonce(coin, account) })
         app.clock += 1
         assertEquals(0L, runBlocking { app.chain.nextNonce(coin, account) })
+    }
+
+    @Test
+    fun `a call's hour signed behind a payment's three hours frees nothing early`() = runBlocking {
+        val node = FakeRestNode(filled(0x28))
+        val app = TestApp(node, clock = t)
+        node.emptyState = true
+        app.chain.node.status()
+        val c = Contracts.canonical(node.chainId)
+        val secret = filled(1)
+        val signer = Signer(MemoryKey(secret), null, c.policySecp256k1, publicKey(secret))
+        val coin = filled(0x44)
+        val payer = FeePayer(signer, coin, BigInteger.valueOf(1_000))
+        // A payment at nonce 0, signed for three hours, that no block takes.
+        val pay = app.chain.submitCoinAction(node.chainId, coin, signer, Coin.Action(Coin.Effect.Transfer(filled(0x7f), BigInteger.ONE), Coin.NO_TIMING), payer = payer)
+        node.lookups[pay.txId] = pendingLookup()
+        assertEquals(0L, pay.nonce)
+        assertEquals(t + Chain.SIGNED_LIFE, pay.expires)
+        // A minute later, a call paying from the same account: its payment queues at nonce 1, signed for an hour.
+        app.clock = t + 60
+        val template = Tcr.templateHash("give(item:u64): Give item {item}")
+        val call = app.chain.submitProgramCall(node.chainId, filled(0x5a), template, u64le(7), signer, coin to Coin.Effect.Burn(BigInteger.ONE), null, payer)
+        node.lookups[call.txId] = pendingLookup()
+        assertEquals(2L, app.chain.nextNonce(coin, pay.account))
+        // The call is cleared, the payment ahead of it is not: the next payment still queues behind both.
+        app.clock = t + 60 + Chain.CALL_LIFE + LATE + 1
+        assertEquals(2L, app.chain.nextNonce(coin, pay.account))
+        // Once the payment is cleared too, the chain's nonce is free again.
+        app.clock = t + Chain.SIGNED_LIFE + LATE + 1
+        assertEquals(0L, app.chain.nextNonce(coin, pay.account))
+    }
+
+    @Test
+    fun `a block only one node shows sets no expiry`() = runBlocking {
+        val node = FakeRestNode(filled(0x29))
+        val app = TestApp(node, clock = t)
+        val year2100 = 4_102_444_800L
+        val header = ByteArray(HEADER_BYTES).also { h ->
+            h[0] = 1
+            node.chainId.copyInto(h, 2)
+            u64le(1).copyInto(h, 34)
+            u64le(year2100).copyInto(h, 74)
+            h.fill(0xff.toByte(), 82, 114)
+        }
+        val tip = taggedHash("block", header).hex()
+        node.other["/v1/status"] = { jsonResponse(buildJsonObject { put("chain_id", node.chainId.hex()); put("height", 1); put("tip", tip); put("work", "1") }) }
+        node.other["/v1/blocks/$tip/raw?offset=0&length=$HEADER_BYTES"] = { jsonResponse(buildJsonObject { put("hex", header.hex()) }) }
+        app.chain.node.status()
+        // Its newest block says 2100: that is the node's word alone, and no answer was taken from it.
+        assertEquals(t + Chain.SIGNED_LIFE, app.chain.signedExpiry())
     }
 }

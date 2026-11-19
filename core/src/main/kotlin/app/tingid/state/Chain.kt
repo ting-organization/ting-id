@@ -286,18 +286,25 @@ class Chain(
             true
         }
         val current = read(node)
-        // The note is the last action signed, so the one that expires last: once it is cleared (past its
-        // expiry, and as long again as a block's time may trail the clock), none of those before it can go
-        // in either, and the chain's nonce is free again.
-        if (note == null || !waiting || note.nonce < current || now() > note.until() + LATE) return current
+        // Once the note is cleared (past the latest expiry of what it ends, and as long again as a block's
+        // time may trail the clock), none of those actions can go in, and the chain's nonce is free again.
+        if (note == null || !waiting || note.nonce < current || now() > note.held() + LATE) return current
         return if (prefix != null && note.prefix == prefix) note.nonce else note.nonce + 1
     }
 
     /** Until when what a note was signed for could go in: its expiry, or for a note of an earlier version, which says none, the end of the day after. */
     private fun NonceNote.until(): Long = expires ?: ((at / 86_400 + 2) * 86_400)
 
-    private fun noteNonce(contract: ByteArray, account: ByteArray, nonce: Long, txId: String, expires: Long, prefix: String? = null) =
-        store.noteNonce(nonceKey(contract, account), NonceNote(nonce, txId, now(), prefix, expires))
+    /** Until when the queue a note ends is held: the latest expiry of its action and those signed before it ([NonceNote.holds]). */
+    private fun NonceNote.held(): Long = maxOf(until(), holds ?: 0L)
+
+    private fun noteNonce(contract: ByteArray, account: ByteArray, nonce: Long, txId: String, expires: Long, prefix: String? = null) {
+        val key = nonceKey(contract, account)
+        // Signed behind the action it replaces, the queue holds until the later of the two: a call's hour
+        // signed behind a payment's three hours must not free the payment's nonce while it can still go in.
+        val holds = store.data.value.nonces[key]?.takeIf { it.nonce <= nonce }?.held()?.takeIf { it > expires }
+        store.noteNonce(key, NonceNote(nonce, txId, now(), prefix, expires, holds))
+    }
 
     /**
      * When a payment this app signs now expires unless included: [SIGNED_LIFE]
@@ -311,11 +318,14 @@ class Chain(
 
     /**
      * The time an expiry is counted from: the clock, or the newest block the
-     * nodes have shown when that is later. An expiry is held against block
-     * time, so a phone whose clock runs hours behind, as one set by hand in the
-     * wrong time zone does, would otherwise sign what has expired on arrival.
+     * nodes agree on when that is later. An expiry is held against block time,
+     * so a phone whose clock runs hours behind, as one set by hand in the wrong
+     * time zone does, would otherwise sign what has expired on arrival. A block
+     * is believed up to [BLOCK_AHEAD] past the clock, no further: nodes take no
+     * block stamped far ahead of their own clocks, so more than that is a
+     * phone set days back, or nodes making the time up.
      */
-    private fun signingTime(): Long = maxOf(now(), pool.value.newestTime)
+    private fun signingTime(): Long = maxOf(now(), minOf(pool.value.newestTime, now() + BLOCK_AHEAD))
 
     // ---- Submitting ----------------------------------------------------------------
 
@@ -610,6 +620,9 @@ class Chain(
 
         /** How long a program's call may wait to get in (TCR-1: at most an hour). */
         const val CALL_LIFE = 3_600L
+
+        /** How far ahead of the phone's clock a block's time is believed when an expiry is counted ([signingTime]): a day. */
+        const val BLOCK_AHEAD = 86_400L
     }
 }
 

@@ -251,6 +251,13 @@ data class NonceNote(
     val prefix: String? = null,
     /** Seconds; null for a note of an earlier version. */
     val expires: Long? = null,
+    /**
+     * When an action signed before it, still ahead in the queue, expires later
+     * than it does: that time (seconds). The queue the note ends holds until
+     * the later of the two, so a call's hour behind a payment's three hours
+     * frees nothing early.
+     */
+    val holds: Long? = null,
 )
 
 /**
