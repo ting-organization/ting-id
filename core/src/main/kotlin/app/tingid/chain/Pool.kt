@@ -153,6 +153,21 @@ class NodePool(
     /** Headers checked: block id → its state root (hex), height and time. */
     private val headers = remembering<String, KnownHeader>()
 
+    /** The highest block header checked so far ([newestTime]). */
+    @Volatile
+    private var newest: KnownHeader? = null
+
+    /**
+     * The timestamp of the highest block header checked so far, 0 before any:
+     * the chain's own word on the time, for what is signed to expire by block
+     * time on a device whose clock is behind (state/Chain, signedExpiry).
+     */
+    val newestTime: Long get() = newest?.timestamp ?: 0L
+
+    private fun checked(header: KnownHeader) {
+        if (newest.let { it == null || header.height > it.height }) newest = header
+    }
+
     /** The highest block two nodes have: no later answer may come from far below it. */
     private var seen = 0L
 
@@ -207,6 +222,7 @@ class NodePool(
     suspend fun reset() = withContext(confined) {
         for ((u, h) in health) if (h.state == NodeState.Distrusted || h.state == NodeState.Outdated) health[u] = h.copy(state = NodeState.Unknown, problem = null)
         headers.clear()
+        newest = null
         seen = 0
         aheadSince.clear()
         apart = false
@@ -312,6 +328,7 @@ class NodePool(
             if (header.chainId.hex() != chain) throw distrust(node, "its newest block is of another chain")
             known = KnownHeader(header.stateRoot.hex(), header.height, header.timestamp)
             headers[status.tip] = known
+            checked(known)
         }
         if (known.height != status.height) throw distrust(node, "it names another height than its newest block has")
     }
@@ -491,6 +508,7 @@ class NodePool(
             if (header.chainId.hex() != chain) throw distrust(node, "it read from a block of another chain")
             known = KnownHeader(header.stateRoot.hex(), header.height, header.timestamp)
             headers[tip] = known
+            checked(known)
         }
         if (known.root != root) throw distrust(node, "its values are not from the block it named")
         // An answer from far behind the newest block could hide what happened since, such as a

@@ -90,6 +90,7 @@ import app.tingid.state.UserKind
 import app.tingid.state.When
 import app.tingid.state.checkPayment
 import app.tingid.state.coinGroups
+import app.tingid.state.coinQueue
 import app.tingid.state.fetchIdentity
 import app.tingid.state.groupTyped
 import app.tingid.state.linkedDeviceKeys
@@ -98,6 +99,7 @@ import app.tingid.state.paymentDrafts
 import app.tingid.state.recipients
 import app.tingid.state.repeatOf
 import app.tingid.state.sent
+import app.tingid.state.stuckQueues
 import app.tingid.state.ungroupTyped
 import app.tingid.text.relativeDuration
 import app.tingid.ui.AccountBox
@@ -413,8 +415,10 @@ fun SendScreen(route: SendTab) {
                 runFee = runFee,
                 total = needed,
                 available = check.availableNow,
-                // The same payment (coin, account, recipient, amount) that could still go through: asked about on Review.
-                repeat = repeatOf(pending, services.store.data.value, user.id, info.chainHex, nowSeconds()) {
+                // Behind a stuck payment of the account, and the same payment (coin, account, recipient, amount)
+                // still waiting: both asked about on Review.
+                stuck = stuckQueues(pending, store.data.value.outbox, nowSeconds())[coinQueue(c.hex, account.account.hex())],
+                repeat = repeatOf(pending, store.data.value.outbox, nowSeconds()) {
                     it.coin == c.hex && it.account == account.account.hex() && it.to == to && it.sends == amount.toString()
                 },
                 submit = {
@@ -424,7 +428,9 @@ fun SendScreen(route: SendTab) {
                     try {
                         if (chosenAt != null && chosenAt <= nowSeconds() + 60) throw IllegalStateException("the chosen time has passed: go back and choose a later one")
                         val signer = chain.resolveSigner(user, account.slot, info.canonical, keys, identity)
-                        val action = Coin.Action(Coin.Effect.Transfer(unhex(to), amount), Coin.Timing(tip = runFee, notBefore = chosenAt ?: 0L))
+                        // Signed for three hours (Chain.SIGNED_LIFE): past that no block can take it.
+                        val validUntil = chain.signedExpiry()
+                        val action = Coin.Action(Coin.Effect.Transfer(unhex(to), amount), Coin.Timing(tip = runFee, notBefore = chosenAt ?: 0L, validUntil = validUntil))
                         val payer = paying.resolve()
                         var done: Chain.Submitted? = null
                         // With its answer lost, the payment may be in the node: it is followed as sent, never signed again.
@@ -455,6 +461,7 @@ fun SendScreen(route: SendTab) {
                                 amount = needed.toString(),
                                 to = to,
                                 sends = amount.toString(),
+                                expires = validUntil,
                             ),
                         )
                         // Sent: the form is empty for the next payment.

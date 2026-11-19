@@ -167,11 +167,12 @@ data class SubmittedTx(
     /** For a program's call (TCR-1): the program, the acting account and the operation's hash ([callKey]), so that the same call made again is asked about. */
     val call: String? = null,
     /**
-     * Put away by "Forget waiting transactions" (Store.forgetWaiting): until
-     * when it could still get into a block then (seconds), so that the same
-     * payment or call made again before that is asked about ([repeatOf]).
+     * When what it signed stops being valid (seconds), for a payment or a
+     * program's call: past it, and as long again as a block's time may trail
+     * the clock, no block can take it ([clearsAt]). Null for what carries no
+     * expiry, and for submissions of earlier versions.
      */
-    val forgottenUntil: Long? = null,
+    val expires: Long? = null,
 )
 
 /** A submitted transaction's bytes, kept until a block includes it, to send again if the node loses it. */
@@ -227,9 +228,10 @@ data class SignatureNote(
 )
 
 /**
- * The last action this device signed for a coin account: its nonce and
- * transaction, when it was signed, and for a fee payment bound to a batch the
- * prefix it commits to.
+ * The last action this device signed for a coin account, or the last call for
+ * a program's: its nonce and transaction, when it was signed, for a fee
+ * payment bound to a batch the prefix it commits to, and when what was signed
+ * expires.
  */
 @Serializable
 data class NonceNote(
@@ -238,6 +240,8 @@ data class NonceNote(
     /** Seconds. */
     val at: Long,
     val prefix: String? = null,
+    /** Seconds; null for a note of an earlier version. */
+    val expires: Long? = null,
 )
 
 /**

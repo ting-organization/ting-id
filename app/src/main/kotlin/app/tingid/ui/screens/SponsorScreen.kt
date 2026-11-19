@@ -50,10 +50,12 @@ import app.tingid.state.SubmittedTx
 import app.tingid.state.USER_COLORS
 import app.tingid.state.fetchIdentity
 import app.tingid.state.readCreateLink
+import app.tingid.state.coinQueue
 import app.tingid.state.repeatOf
 import app.tingid.state.sendAgainWords
 import app.tingid.state.sent
 import app.tingid.state.slotLabel
+import app.tingid.state.stuckQueues
 import app.tingid.text.relativeDuration
 import app.tingid.ui.Avatar
 import app.tingid.ui.Banner
@@ -92,6 +94,7 @@ import app.tingid.ui.money.rememberFeeCoin
 import app.tingid.ui.money.withFee
 import app.tingid.ui.rememberConfirm
 import app.tingid.ui.sentence
+import app.tingid.ui.stuckQuestion
 import app.tingid.ui.t
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -223,9 +226,17 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
         error = null
         ui.launch {
             val shown = try {
-                // The same payment could still go through: sent again, both could. Any other payment goes at once.
+                val outbox = services.store.data.value.outbox
+                // Behind a stuck payment of this account, what is signed now waits too: waiting is offered first.
+                val stuck = stuckQueues(pending, outbox, nowSeconds())[coinQueue(coin.hex, account.account.hex())]
+                if (stuck != null && !confirm.ask(stuckQuestion(stuck))) {
+                    going.set(false)
+                    busy = false
+                    return@launch
+                }
+                // The same payment still waits: sent again, both could go through. Any other payment goes at once.
                 val before = if (sending.signum() > 0) {
-                    repeatOf(pending, services.store.data.value, user.id, i.chainHex, nowSeconds()) {
+                    repeatOf(pending, outbox, nowSeconds()) {
                         it.coin == coin.hex && it.account == account.account.hex() && it.to == to.hex() && it.sends == sending.toString()
                     }
                 } else {
@@ -253,7 +264,9 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
                     }
                     if (sending.signum() > 0) {
                         val signer = services.chain.resolveSigner(user, account.slot, canon, now.keys, now.identity)
-                        val action = Coin.Action(Coin.Effect.Transfer(to, sending), Coin.NO_TIMING)
+                        // Signed for three hours (Chain.SIGNED_LIFE): past that no block can take it.
+                        val validUntil = services.chain.signedExpiry()
+                        val action = Coin.Action(Coin.Effect.Transfer(to, sending), Coin.NO_TIMING.copy(validUntil = validUntil))
                         val payer = paymentFee.resolve()
                         val r = sent { services.chain.submitCoinAction(chainId, coin.id, signer, action, payer = payer).txId }
                         services.store.addSubmitted(
@@ -267,6 +280,7 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
                                 amount = (sending + ownFee).toString(),
                                 to = to.hex(),
                                 sends = sending.toString(),
+                                expires = validUntil,
                             ),
                         )
                         made = Sent(r.txId, r.unsure || made?.unsure == true)

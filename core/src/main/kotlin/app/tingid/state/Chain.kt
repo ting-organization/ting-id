@@ -286,21 +286,36 @@ class Chain(
             true
         }
         val current = read(node)
-        // Past its expiry the noted transaction can never go in, so its nonce is free again.
-        if (note == null || !waiting || note.nonce < current || now() - note.at > SIGNED_LIFE) return current
+        // The note is the last action signed, so the one that expires last: once it is cleared (past its
+        // expiry, and as long again as a block's time may trail the clock), none of those before it can go
+        // in either, and the chain's nonce is free again.
+        if (note == null || !waiting || note.nonce < current || now() > note.until() + LATE) return current
         return if (prefix != null && note.prefix == prefix) note.nonce else note.nonce + 1
     }
 
-    private fun noteNonce(contract: ByteArray, account: ByteArray, nonce: Long, txId: String, prefix: String? = null) =
-        store.noteNonce(nonceKey(contract, account), NonceNote(nonce, txId, now(), prefix))
+    /** Until when what a note was signed for could go in: its expiry, or for a note of an earlier version, which says none, the end of the day after. */
+    private fun NonceNote.until(): Long = expires ?: ((at / 86_400 + 2) * 86_400)
+
+    private fun noteNonce(contract: ByteArray, account: ByteArray, nonce: Long, txId: String, expires: Long, prefix: String? = null) =
+        store.noteNonce(nonceKey(contract, account), NonceNote(nonce, txId, now(), prefix, expires))
 
     /**
-     * When what this app signs expires unless included: the end of the next day
-     * (UTC), so the same action signed again that day is the same transaction. A
-     * signed action that never went in cannot be used later (wiki: programs/coin,
-     * expiry); one already scheduled still runs when due.
+     * When a payment this app signs now expires unless included: [SIGNED_LIFE]
+     * on. A signed action that never went in cannot be used later (wiki:
+     * programs/coin, expiry); one already scheduled still runs when due.
      */
-    fun signedExpiry(): Long = (now() / 86_400 + 2) * 86_400
+    fun signedExpiry(): Long = signingTime() + SIGNED_LIFE
+
+    /** When a program's call signed now expires ([CALL_LIFE]). */
+    fun callExpiry(): Long = signingTime() + CALL_LIFE
+
+    /**
+     * The time an expiry is counted from: the clock, or the newest block the
+     * nodes have shown when that is later. An expiry is held against block
+     * time, so a phone whose clock runs hours behind, as one set by hand in the
+     * wrong time zone does, would otherwise sign what has expired on arrival.
+     */
+    private fun signingTime(): Long = maxOf(now(), pool.value.newestTime)
 
     // ---- Submitting ----------------------------------------------------------------
 
@@ -346,19 +361,23 @@ class Chain(
         val account = payer.signer.account
         val prefix = batchPrefix(listOf(call)).hex()
         val nonce = nextNonce(payer.coinId, account, prefix)
+        // The same fee payment again, at the same nonce, keeps the expiry it was signed with while that
+        // lasts: then it is the same transaction, not a second one competing with it.
+        val validUntil = store.data.value.nonces[nonceKey(payer.coinId, account)]
+            ?.takeIf { it.prefix == prefix && it.nonce == nonce }?.expires?.takeIf { it > now() } ?: signedExpiry()
         // A transaction the node may have, its answer lost, counts as sent but not for sure.
         var paid: String? = null
         var sure = false
         var refused: Exception? = null
         try {
-            paid = node.submit(sponsoredCall(chainId, c, listOf(call), payer, nonce, signedExpiry()))
+            paid = node.submit(sponsoredCall(chainId, c, listOf(call), payer, nonce, validUntil))
             sure = true
         } catch (e: MaybeSent) {
             paid = e.txId
         } catch (e: Exception) {
             refused = e
         }
-        if (paid != null) noteNonce(payer.coinId, account, nonce, paid, prefix)
+        if (paid != null) noteNonce(payer.coinId, account, nonce, paid, validUntil, prefix)
         if (paid == null && required) throw refused!!
         var unpaid: String? = null
         try {
@@ -375,7 +394,8 @@ class Chain(
         return id
     }
 
-    class Submitted(val txId: String, val account: ByteArray, val nonce: Long)
+    /** What was sent: its transaction, the acting account and its nonce, and when what was signed expires. */
+    class Submitted(val txId: String, val account: ByteArray, val nonce: Long, val expires: Long)
 
     /**
      * Signs a coin action for the signer's account and submits it. A delayed
@@ -395,11 +415,11 @@ class Chain(
             submitWithFee(Contracts.canonical(chainId), chainId, BatchCall(coinId, input), if (own) null else payer, Budgets.EXECUTE)
         } catch (e: MaybeSent) {
             // Its nonce is taken all the same, so nothing is ever signed again with it.
-            noteNonce(coinId, account, nonce, e.txId)
+            noteNonce(coinId, account, nonce, e.txId, timing.validUntil)
             throw MaybeSent(e.txId, account to nonce)
         }
-        noteNonce(coinId, account, nonce, txId)
-        return Submitted(txId, account, nonce)
+        noteNonce(coinId, account, nonce, txId, timing.validUntil)
+        return Submitted(txId, account, nonce, timing.validUntil)
     }
 
     /**
@@ -427,7 +447,8 @@ class Chain(
      * payment, a payer that is the acting account in `feeCoin`, the coin the
      * program takes fee payments in, pays with a fee payment, which is the
      * approval as well. Otherwise the account signs the call itself and `payer`
-     * pays for it through a batch, or no one does.
+     * pays for it through a batch, or no one does. The call, and its payment,
+     * are valid until `validUntil` ([callExpiry]).
      */
     suspend fun submitProgramCall(
         chainId: ByteArray,
@@ -438,12 +459,12 @@ class Chain(
         payment: Pair<ByteArray, Coin.Effect>?,
         feeCoin: ByteArray?,
         payer: FeePayer?,
+        validUntil: Long = callExpiry(),
     ): Submitted {
         val account = signer.account
         // A fee payment: nothing to the program's own account, with the fee.
         val pays = payment ?: feeCoin?.takeIf { paysOwnFee(payer, it, account) }?.let { it to Tcr.feeEffect(program) }
         val nonce = nextCallNonce(program, account)
-        val validUntil = now() + CALL_LIFE
         val message = Tcr.message(chainId, program, account, nonce, validUntil, Tcr.operationHash(template, values))
         var paid: Pair<ByteArray, Long>? = null
         var own = false
@@ -471,15 +492,15 @@ class Chain(
             submitWithFee(Contracts.canonical(chainId), chainId, BatchCall(program, input), if (own) null else payer, Budgets.BATCH)
         } catch (e: MaybeSent) {
             // Its nonces are taken all the same, so nothing is ever signed again with them.
-            noteNonce(program, account, nonce, e.txId)
-            paid?.let { noteNonce(it.first, account, it.second, e.txId) }
+            noteNonce(program, account, nonce, e.txId, validUntil)
+            paid?.let { noteNonce(it.first, account, it.second, e.txId, validUntil) }
             mark(e.txId)
             throw MaybeSent(e.txId)
         }
-        noteNonce(program, account, nonce, txId)
-        paid?.let { noteNonce(it.first, account, it.second, txId) }
+        noteNonce(program, account, nonce, txId, validUntil)
+        paid?.let { noteNonce(it.first, account, it.second, txId, validUntil) }
         mark(txId)
-        return Submitted(txId, account, nonce)
+        return Submitted(txId, account, nonce, validUntil)
     }
 
     /**
@@ -576,8 +597,12 @@ class Chain(
         /** The cache key of the last status, so the app starts with it. */
         const val STATUS_KEY = "status"
 
-        /** The longest a signed action stays valid: [signedExpiry] is at most two days after signing. */
-        const val SIGNED_LIFE = 2 * 86_400L
+        /**
+         * How long a payment this app signs stays valid ([signedExpiry]): three
+         * hours. Short, so that one that never goes in, and what queues behind
+         * it, are cleared the same day (state/Watch.kt, stuckQueues).
+         */
+        const val SIGNED_LIFE = 3 * 3_600L
 
         /** How long a program's call may wait to get in (TCR-1: at most an hour). */
         const val CALL_LIFE = 3_600L

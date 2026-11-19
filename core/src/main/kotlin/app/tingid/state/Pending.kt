@@ -79,6 +79,13 @@ class Pending(
                     }
                     null
                 }
+                is Decision.Expired -> {
+                    // Over without a block: nothing to send again, and it no longer holds up what comes after it.
+                    store.forgetOutbox(tx.id)
+                    kept?.twin?.let { store.forgetOutbox(it) }
+                    store.updateSubmitted(tx.id) { it.copy(state = TxState.Failed, problem = EXPIRED_WORDS) }
+                    null
+                }
                 is Decision.Follow -> d.watch
             }
         } catch (e: Exception) {

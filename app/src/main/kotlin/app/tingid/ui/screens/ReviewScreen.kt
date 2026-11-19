@@ -33,6 +33,7 @@ import app.tingid.chain.formatAmount
 import app.tingid.state.PaymentDraft
 import app.tingid.state.paymentDrafts
 import app.tingid.state.sendAgainWords
+import app.tingid.ui.stuckQuestion
 import app.tingid.text.lockOf
 import app.tingid.ui.AccountBox
 import app.tingid.ui.Banner
@@ -110,7 +111,13 @@ fun ReviewScreen() {
         error = null
         scope.launch {
             try {
-                // The same payment could still go through: a second one is asked for in so many words. Any other goes at once.
+                // Behind a stuck payment, this one waits too and moves on when the account clears: waiting is offered first.
+                val stuck = payment.stuck
+                if (stuck != null && !ask.ask(stuckQuestion(stuck))) {
+                    busy = false
+                    return@launch
+                }
+                // The same payment still waits: a second one is asked for in so many words. Any other goes at once.
                 val before = payment.repeat
                 if (before != null && !ask.ask(ConfirmOptions(title = "Send it again?", body = sendAgainWords(before) { formatWhen(it) }, confirm = "Send again"))) {
                     busy = false

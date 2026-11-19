@@ -51,6 +51,9 @@ sealed class Decision {
     /** The node lost it: these bytes go out again. */
     data class Resend(val entries: List<OutboxEntry>) : Decision()
 
+    /** No block took it before what it signed expired, and none can now ([clearsAt]): nothing was paid or changed. */
+    data object Expired : Decision()
+
     /** Nothing to do but show where it stands. */
     data class Follow(val watch: Watch) : Decision()
 }
@@ -100,8 +103,12 @@ fun decide(
     val other = twin?.let { decideOne(tx.at, it.lookup, it.kept, now, statusWords) }
     val included = listOfNotNull(own, other).filterIsInstance<Decision.Included>().firstOrNull()
     if (included != null) return if (tip >= included.height + SETTLE_DEPTH) included else Decision.Follow(Watch.Confirming(included.height))
-    // The batch failed, but the operation alone may still go in.
-    if (own is Decision.Settle && other != null && other !is Decision.Settle) return other
+    // Cleared ([clearsAt]): no block can take it any more, though a node may still hold it. The operation
+    // carries that expiry alone and in its batch.
+    val cleared = tx.expires?.let { now > it + LATE } == true
+    // The batch failed, but the operation alone may still go in, until it is cleared.
+    if (own is Decision.Settle && other != null && other !is Decision.Settle) return if (cleared) Decision.Expired else other
+    if (cleared && (own is Decision.Resend || own is Decision.Follow)) return Decision.Expired
     if (own is Decision.Resend) return Decision.Resend(own.entries + ((other as? Decision.Resend)?.entries ?: emptyList()))
     // A failure in a block settles as deep as an inclusion does: a reorganization can take that block out too.
     if (own is Decision.Failed && tip < own.height + SETTLE_DEPTH) return Decision.Follow(Watch.Failed(own.reason, own.height))
@@ -123,15 +130,22 @@ fun onTheWay(items: List<PendingItem>, coinHex: String, accountHex: String): OnT
     return OnTheWay(count, amount)
 }
 
-// ---- Forgetting what waits (Settings) --------------------------------------------
+// ---- Waiting, stuck and cleared ------------------------------------------------------
 //
 // Every action of an account carries the next nonce, and a block takes them in
 // order, so one that never goes in keeps the account's later ones waiting
-// behind it. Forgetting lets the next one take the chain's nonce again; it
-// cancels nothing.
+// behind it until they have all expired. Anything signed meanwhile queues
+// behind them and moves that time on, so the app asks people to wait instead.
+// It never refuses.
 
 /** How long past its expiry a signed action may still get into a block: a block's time may trail the clock. */
-private const val LATE = 3_600L
+const val LATE = 3_600L
+
+/** How long a submission waits for a block before it looks stuck: blocks come about once a minute. */
+const val STUCK_AFTER = 600L
+
+/** Why a submission that expired is over, as its problem. */
+const val EXPIRED_WORDS = "no block included it before it expired: nothing was paid or changed"
 
 /**
  * Whether the transaction kept as `id` is a program's call (TCR-1), alone or in
@@ -145,48 +159,84 @@ fun programCallKept(outbox: Map<String, OutboxEntry>, id: String): Boolean {
 
 /**
  * Until when a submission no block has could still get into one, as far as
- * the app can tell: a program's call is signed for an hour ([Chain.CALL_LIFE]),
- * a payment until the end of the day after ([Chain.signedExpiry]), both from
- * no later than when the submission was noted. Null for what is neither, such
- * as an identity's change.
+ * the app can tell: what it signed says ([SubmittedTx.expires]). One of an
+ * earlier version does not say: a program's call was signed for an hour then
+ * too ([Chain.CALL_LIFE]), a payment until the end of the day after, both from
+ * no later than when the submission was noted. Null for what carries no
+ * expiry, such as an identity's change.
  */
 fun couldGoInUntil(tx: SubmittedTx, outbox: Map<String, OutboxEntry>): Long? = when {
+    tx.expires != null -> tx.expires
     programCallKept(outbox, tx.id) -> tx.at + Chain.CALL_LIFE
     tx.coin != null -> (tx.at / 86_400 + 2) * 86_400
     else -> null
 }
 
 /**
- * What [Store.forgetWaiting] forgets for `userId` on `chain`: the payments and
- * program calls no block has yet. Not what the node holds for a later time,
- * such as the run of a scheduled payment, and not what is neither, such as an
- * identity's change.
+ * When a submission is cleared: past its expiry, and as long again as a
+ * block's time may trail the clock, no block can take it any more. The app
+ * then settles it as not included ([decide]), and the next action no longer
+ * queues behind it (Chain.nextNonce).
  */
-fun waitingToForget(d: AppData, userId: String, chain: String?, now: Long): List<SubmittedTx> = d.submitted.filter {
-    it.userId == userId && (it.chain == null || it.chain == chain) && it.state == TxState.Pending &&
-        couldGoInUntil(it, d.outbox) != null && d.outbox[it.id]?.notBefore?.let { held -> held > now } != true
-}
+fun clearsAt(tx: SubmittedTx, outbox: Map<String, OutboxEntry>): Long? = couldGoInUntil(tx, outbox)?.plus(LATE)
+
+/** Whether no block has a submission yet, nor a node holds it for a later time: one in a block already shows in what the chain says. */
+private fun PendingItem.onItsWay() =
+    tx.state == TxState.Pending && watch !is Watch.Failed && watch !is Watch.Confirming && watch !is Watch.Scheduled
+
+/** The queue of the account `accountHex` in the coin `coinHex`: its actions go in one after the other. */
+fun coinQueue(coinHex: String, accountHex: String) = "$coinHex:$accountHex"
+
+/** The queue of the account's calls to a program (TCR-1), which go in one after the other too. */
+fun callQueue(program: ByteArray, account: ByteArray) = "call:${program.hex()}:${account.hex()}"
+
+/** The queues a submission waits in: its account's in its coin, and for a program's call that account's calls to the program. */
+private fun queuesOf(tx: SubmittedTx): List<String> = listOfNotNull(
+    if (tx.coin != null && tx.account != null) coinQueue(tx.coin, tx.account) else null,
+    tx.call?.substringBeforeLast(':')?.let { "call:$it" },
+)
+
+/** A queue that looks stuck: since when something in it waits (seconds), and when everything waiting in it is cleared. */
+data class Stuck(val since: Long, val clearsAt: Long)
 
 /**
- * The question before `items` ([waitingToForget]) are forgotten at `now`: that
- * this cancels nothing, until when one of them could still go through, and
- * that the same payment sent again before then could be paid twice. Once a
- * block's time can no longer trail the clock that far ([LATE]), none can.
- * `time` writes a time.
+ * The queues that look stuck at `now`, by [coinQueue] and [callQueue]:
+ * something in them has waited [STUCK_AFTER] without a block. Each is cleared
+ * once everything waiting in it is ([clearsAt]): then the next action takes
+ * the chain's nonce again, and nothing of the old ones can go in after it.
+ * What is signed into it before then waits behind the rest, and moves that
+ * time on.
  */
-fun forgetWords(items: List<SubmittedTx>, outbox: Map<String, OutboxEntry>, now: Long, time: (Long) -> String): String {
-    val many = items.size > 1
-    val them = if (many) "them" else "it"
-    val last = (items.mapNotNull { couldGoInUntil(it, outbox) }.maxOrNull() ?: now) + LATE
-    val what = "Ting ID stops following ${if (many) "the ${items.size} transactions" else "the transaction"} that no block has taken yet, " +
-        "and your next one no longer waits behind $them."
-    return if (now > last) {
-        "$what ${if (many) "They have" else "It has"} expired, so nothing of $them can still go through."
-    } else {
-        "$what This cancels nothing: ${if (many) "any of them" else "it"} may still go through until about ${time(last)}. " +
-            "If you send the same payment again before then, it could be paid twice."
+fun stuckQueues(items: List<PendingItem>, outbox: Map<String, OutboxEntry>, now: Long): Map<String, Stuck> {
+    val since = HashMap<String, Long>()
+    val clears = HashMap<String, Long>()
+    for (item in items) {
+        val tx = item.tx
+        if (!item.onItsWay() || outbox[tx.id]?.notBefore?.let { it > now } == true) continue
+        val cleared = clearsAt(tx, outbox) ?: continue
+        if (now > cleared) continue
+        for (q in queuesOf(tx)) {
+            clears[q] = maxOf(clears[q] ?: 0L, cleared)
+            if (now - tx.at >= STUCK_AFTER) since[q] = minOf(since[q] ?: tx.at, tx.at)
+        }
     }
+    return since.mapValues { (q, s) -> Stuck(s, clears.getValue(q)) }
 }
+
+/** How long since `since`, at `now`, in words. */
+private fun waited(since: Long, now: Long): String {
+    val minutes = maxOf(1L, (now - since) / 60)
+    return if (minutes < 120) "$minutes minutes" else "${minutes / 60} hours"
+}
+
+/** The question before something is signed into a stuck queue (`stuck`, from [stuckQueues]), at `now`; `time` writes a time. */
+fun waitWords(stuck: Stuck, now: Long, time: (Long) -> String): String =
+    "A transaction from this account has waited ${waited(stuck.since, now)} for a block. Anything you sign now waits behind it, " +
+        "and makes the wait longer. Everything waiting should be cleared by about ${time(stuck.clearsAt)}."
+
+/** The note on the wallet while something looks stuck: `clearsAt` is the latest of the stuck queues'. */
+fun stuckWords(clearsAt: Long, time: (Long) -> String): String =
+    "Some transactions look stuck. Wait until about ${time(clearsAt)}, when they are cleared. Signing more before then makes the wait longer."
 
 // ---- The same payment or call again ---------------------------------------------
 
@@ -194,45 +244,22 @@ fun forgetWords(items: List<SubmittedTx>, outbox: Map<String, OutboxEntry>, now:
 fun callKey(program: ByteArray, account: ByteArray, template: ByteArray, values: ByteArray): String =
     "${program.hex()}:${account.hex()}:${Tcr.operationHash(template, values).hex()}"
 
-/** Whether no block has a submission yet: one in a block already shows in what the chain says. */
-private fun PendingItem.onItsWay() = tx.state == TxState.Pending && watch !is Watch.Failed && watch !is Watch.Confirming
-
 /**
- * The submission of `userId` on `chain` that a new payment or call would
- * repeat (`same` picks it out), the newest, while it could still get into a
- * block at `now`: on its way (`items`, as Pending follows them), or forgotten
- * in Settings ([Store.forgetWaiting]) with its time not yet run out, and as
- * long again as a block's time may trail the clock ([LATE]). Null when there
- * is none: any other payment or call goes without a question.
+ * The submission a new payment or call would repeat (`same` picks it out),
+ * the newest, while it still waits for a block at `now` (`items`, as Pending
+ * follows them) and is not cleared ([clearsAt]). Null when there is none: any
+ * other payment or call goes without a question.
  */
-fun repeatOf(items: List<PendingItem>, d: AppData, userId: String, chain: String?, now: Long, same: (SubmittedTx) -> Boolean): SubmittedTx? {
-    val waiting = items.filter { it.onItsWay() && it.tx.userId == userId }.map { it.tx }
-        .filter { tx -> couldGoInUntil(tx, d.outbox)?.let { now <= it + LATE } != false }
-    val forgotten = d.submitted.filter {
-        it.userId == userId && (it.chain == null || it.chain == chain) && it.state == TxState.Dismissed &&
-            it.forgottenUntil?.let { until -> now <= until + LATE } == true
-    }
-    return (waiting + forgotten).filter(same).maxByOrNull { it.at }
-}
-
-/** Where `before` ([repeatOf]) stands, for the question before it is repeated: `time` writes a time. */
-private fun standing(before: SubmittedTx, verb: String, time: (Long) -> String): String {
-    val until = before.forgottenUntil
-    return if (before.state == TxState.Dismissed && until != null) {
-        "You $verb this at ${time(before.at)} and forgot it in Settings, but it could still go through until about ${time(until + LATE)}."
-    } else {
-        "You $verb this at ${time(before.at)}, and it is still waiting for a block."
-    }
-}
+fun repeatOf(items: List<PendingItem>, outbox: Map<String, OutboxEntry>, now: Long, same: (SubmittedTx) -> Boolean): SubmittedTx? =
+    items.filter { it.onItsWay() && clearsAt(it.tx, outbox)?.let { c -> now <= c } != false }.map { it.tx }.filter(same).maxByOrNull { it.at }
 
 /**
  * The question before the payment `before` ([repeatOf]) is sent again. The
- * second queues behind the first, so both can go through, and a forgotten
- * one may go through as well.
+ * second queues behind the first, so both can go through.
  */
 fun sendAgainWords(before: SubmittedTx, time: (Long) -> String): String =
-    "${standing(before, "sent", time)} If you send it again, it could be paid twice."
+    "You sent this at ${time(before.at)}, and it is still waiting for a block. If you send it again, it could be paid twice."
 
 /** The question before the call `before` ([repeatOf]) is approved again: the second queues behind the first, so it can run twice. */
 fun approveAgainWords(before: SubmittedTx, time: (Long) -> String): String =
-    "${standing(before, "approved", time)} Approved again, it could run twice."
+    "You approved this at ${time(before.at)}, and it is still waiting for a block. Approved again, it could run twice."

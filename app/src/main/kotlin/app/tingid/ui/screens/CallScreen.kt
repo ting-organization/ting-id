@@ -64,9 +64,12 @@ import app.tingid.state.CoinInfo
 import app.tingid.state.SubmittedTx
 import app.tingid.state.approveAgainWords
 import app.tingid.state.callKey
+import app.tingid.state.callQueue
+import app.tingid.state.coinQueue
 import app.tingid.state.readCallRequest
 import app.tingid.state.repeatOf
 import app.tingid.state.sent
+import app.tingid.state.stuckQueues
 import app.tingid.text.CallPart
 import app.tingid.text.Names
 import app.tingid.text.callLine
@@ -113,6 +116,7 @@ import app.tingid.ui.money.rememberFee
 import app.tingid.ui.money.withFee
 import app.tingid.ui.rememberConfirm
 import app.tingid.ui.sentence
+import app.tingid.ui.stuckQuestion
 import app.tingid.ui.t
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -270,8 +274,23 @@ private fun Review(request: CallRequest) {
         val callId = callKey(request.program, acting.account, link.template.hash, link.values)
         ui.launch {
             val shown = try {
-                // The same call could still go in: approved again, it could run twice. Any other call goes at once.
-                val before = repeatOf(pending, services.store.data.value, user.id, info.chainHex, nowSeconds()) { it.call == callId }
+                val outbox = services.store.data.value.outbox
+                // The call queues behind the account's calls to this program, and its payment or fee behind the
+                // account's payments in that coin: behind one that looks stuck, waiting is offered first.
+                val queues = listOfNotNull(
+                    callQueue(request.program, acting.account),
+                    payment?.let { coinQueue(it.coin.hex, acting.account.hex()) },
+                    request.feeCoin?.let { coinQueue(it.hex, acting.account.hex()) },
+                )
+                val stuckNow = stuckQueues(pending, outbox, nowSeconds())
+                val stuck = queues.mapNotNull { stuckNow[it] }.maxByOrNull { it.clearsAt }
+                if (stuck != null && !confirm.ask(stuckQuestion(stuck))) {
+                    going.set(false)
+                    busy = false
+                    return@launch
+                }
+                // The same call still waits: approved again, it could run twice. Any other call goes at once.
+                val before = repeatOf(pending, outbox, nowSeconds()) { it.call == callId }
                 if (before != null && !confirm.ask(ConfirmOptions(title = "Approve it again?", body = approveAgainWords(before) { formatWhen(it) }, confirm = "Approve again"))) {
                     going.set(false)
                     busy = false
@@ -286,8 +305,10 @@ private fun Review(request: CallRequest) {
                 services.scope.async(Dispatchers.IO) {
                     val signer = services.chain.resolveSigner(user, acting.slot, info.canonical, now.keys, now.identity)
                     val pays = payment?.let { it.coin.id to it.effect }
+                    // Signed for an hour (TCR-1): past that no block can take it.
+                    val validUntil = services.chain.callExpiry()
                     val r = sent {
-                        services.chain.submitProgramCall(info.status.chainId, request.program, link.template.hash, link.values, signer, pays, request.feeCoin?.id, fee.resolve()).txId
+                        services.chain.submitProgramCall(info.status.chainId, request.program, link.template.hash, link.values, signer, pays, request.feeCoin?.id, fee.resolve(), validUntil).txId
                     }
                     services.store.noteProgramCalled(request.program.hex())
                     services.store.addSubmitted(
@@ -301,6 +322,7 @@ private fun Review(request: CallRequest) {
                             amount = payment?.let { (it.amount + ownFee).toString() },
                             to = recipient,
                             call = callId,
+                            expires = validUntil,
                         ),
                     )
                     r
