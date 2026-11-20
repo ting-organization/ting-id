@@ -7,6 +7,7 @@
 package app.tingid.state
 
 import app.tingid.chain.BatchCall
+import app.tingid.chain.Canonical
 import app.tingid.chain.ChainApi
 import app.tingid.chain.Contracts
 import app.tingid.chain.MaybeSent
@@ -50,13 +51,15 @@ class Pending(
     /** Only what was sent to this chain: another chain's nodes would not know it, and sending it there again is no use. */
     private fun here(t: SubmittedTx, userId: String?, chainHex: String?) = t.userId == userId && (t.chain == null || t.chain == chainHex)
 
-    private suspend fun check(node: ChainApi, tx: SubmittedTx, tip: Long): Watch? {
+    private suspend fun check(node: ChainApi, tx: SubmittedTx, tip: Long, c: Canonical?): Watch? {
         if (!busy.add(tx.id)) return null
         try {
-            val kept = store.data.value.outbox[tx.id]
+            val outbox = store.data.value.outbox
+            val kept = outbox[tx.id]
             val lookup = node.transaction(tx.id)
-            val twin = kept?.twin?.let { Twin(node.transaction(it), store.data.value.outbox[it]) }
-            return when (val d = decide(tx, lookup, kept, now(), tip, twin, statusWords)) {
+            val twin = kept?.twin?.let { Twin(node.transaction(it), outbox[it]) }
+            val until = couldGoInUntil(tx, readSubmission(c, outbox, tx.id))
+            return when (val d = decide(tx, lookup, kept, now(), tip, twin, statusWords, until)) {
                 is Decision.Settle -> {
                     // The bytes go first, so a submission never shows settled with them still kept.
                     store.forgetOutbox(tx.id)
@@ -135,8 +138,9 @@ class Pending(
     private suspend fun round(r: Round) = coroutineScope {
         val mine = store.data.value.submitted.filter { here(it, r.userId, r.chainHex) }
         val tip = r.height ?: 0
+        val c = r.chainHex?.let { Contracts.canonical(unhex(it)) }
         mine.filter { it.state == TxState.Failed && it.height == null }.map { async { recheck(r.node, it, tip) } }.awaitAll()
-        val found = mine.filter { it.state == TxState.Pending }.map { async { it.id to check(r.node, it, tip) } }.awaitAll()
+        val found = mine.filter { it.state == TxState.Pending }.map { async { it.id to check(r.node, it, tip, c) } }.awaitAll()
         watches.update { w -> w + found.mapNotNull { (id, watch) -> watch?.let { id to it } } }
     }
 
@@ -182,6 +186,7 @@ class Pending(
                     watch = watch,
                     canRetry = tx.id in d.outbox,
                     canSpeedUp = canSpeedUp(tx, watch, d.outbox[tx.id], c),
+                    signed = readSubmission(c, d.outbox, tx.id),
                 )
             }
         }.distinctUntilChanged().collect { send(it) }
@@ -235,8 +240,10 @@ class Pending(
 
     /** Puts a submission away: the app stops following it. */
     fun dismiss(id: String) {
+        val twin = store.data.value.outbox[id]?.twin
         store.updateSubmitted(id) { it.copy(state = TxState.Dismissed) }
         store.forgetOutbox(id)
+        twin?.let { store.forgetOutbox(it) }
     }
 
     companion object {

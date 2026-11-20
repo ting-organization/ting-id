@@ -275,12 +275,11 @@ private fun Review(request: CallRequest) {
         val callId = callKey(request.program, acting.account, link.template.hash, link.values)
         ui.launch {
             val shown = try {
-                val outbox = services.store.data.value.outbox
                 // The call queues behind the account's calls to this program, its payment or own fee behind the
                 // account's payments in that coin, and a fee another account pays behind that account's: behind
                 // one that looks stuck, waiting is offered first.
                 val stuck = stuckIn(
-                    stuckQueues(pending, outbox, nowSeconds()),
+                    stuckQueues(pending, services.store.data.value, nowSeconds()),
                     listOf(
                         callQueue(request.program, acting.account),
                         payment?.let { coinQueue(it.coin.hex, acting.account.hex()) },
@@ -294,7 +293,7 @@ private fun Review(request: CallRequest) {
                     return@launch
                 }
                 // The same call still waits: approved again, it could run twice. Any other call goes at once.
-                val before = repeatOf(pending, outbox, nowSeconds()) { it.call == callId }
+                val before = repeatOf(pending, nowSeconds()) { it.call == callId }
                 if (before != null && !confirm.ask(ConfirmOptions(title = "Approve it again?", body = approveAgainWords(before) { formatWhen(it) }, confirm = "Approve again"))) {
                     going.set(false)
                     busy = false

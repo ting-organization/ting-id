@@ -261,53 +261,72 @@ class Chain(
     private fun nonceKey(contract: ByteArray, account: ByteArray) = "${contract.hex()}:${account.hex()}"
 
     /**
-     * The nonce for the next action of a coin account. While this device's last
-     * action of the account still waits in the node, the next one takes the nonce
-     * after it and so queues behind it instead of competing for the same nonce.
-     * `prefix`: a fee payment for the same calls as the last one reuses its nonce,
-     * so the transaction is the same.
+     * The nonce for the next action of a coin account on the chain `chainId`:
+     * after the last one this device's transactions still hold
+     * ([nextAfterHeld]), so the next queues behind them instead of competing
+     * for the same nonce. `prefix`: a fee payment for the same calls as the
+     * last one reuses its nonce, so the transaction is the same.
      */
-    suspend fun nextNonce(coinId: ByteArray, account: ByteArray, prefix: String? = null): Long =
-        nextAfterNoted(nonceKey(coinId, account), prefix) { fetchAccount(it, coinId, account).nonce }
+    suspend fun nextNonce(chainId: ByteArray, coinId: ByteArray, account: ByteArray, prefix: String? = null): Long =
+        nextAfterHeld(chainId, coinQueue(coinId.hex(), account.hex()), nonceKey(coinId, account), prefix) { fetchAccount(it, coinId, account).nonce }
 
-    /** The nonce for the next call of `account` to `program` (TCR-1), queued behind this device's last as for a coin. */
-    suspend fun nextCallNonce(program: ByteArray, account: ByteArray): Long =
-        nextAfterNoted(nonceKey(program, account), null) { fetchCallNonce(it, program, account) }
+    /** The nonce for the next call of `account` to `program` (TCR-1), queued behind this device's as for a coin. */
+    suspend fun nextCallNonce(chainId: ByteArray, program: ByteArray, account: ByteArray): Long =
+        nextAfterHeld(chainId, callQueue(program, account), nonceKey(program, account), null) { fetchCallNonce(it, program, account) }
 
-    private suspend fun nextAfterNoted(key: String, prefix: String?, read: suspend (ChainApi) -> Long): Long {
+    /**
+     * The nonce after the last one held in `queue` by what this device follows
+     * and no block has, or the chain's when nothing holds one. What a
+     * submission holds is [holdsOf]'s answer, the same the stuck warning gives
+     * (state/Watch.kt, stuckQueues): a new action never waits behind anything
+     * the warning would not show. What the app no longer follows, put away or
+     * failed, holds nothing: an action signed with its nonce replaces it, and
+     * at most one of the two goes in.
+     */
+    private suspend fun nextAfterHeld(chainId: ByteArray, queue: String, noteKey: String, prefix: String?, read: suspend (ChainApi) -> Long): Long {
         val node = this.node
-        val note = store.data.value.nonces[key]
-        // The earlier transaction is looked up before the nonce is read: if a block
-        // takes it in between, the nonce read already counts it. One that cannot be
-        // looked up counts as waiting, so no nonce is ever signed twice. So does one
-        // the node does not know: Pending sends it again until it is cleared. Only a
-        // note of an earlier version, signed until the end of the day after, is let go
-        // then, as before, so that no one waits that long on updating.
-        val waiting = if (note == null) false else try {
-            val lookup = node.transaction(note.txId)
-            if (lookup == null) note.expires != null else lookup.occurrences.isEmpty()
-        } catch (e: Exception) {
-            true
+        val now = now()
+        val d = store.data.value
+        val c = Contracts.canonical(chainId)
+        val chainHex = chainId.hex()
+        val note = d.nonces[noteKey]
+        // Each nonce held in the queue, and the submissions holding it.
+        val held = java.util.TreeMap<Long, MutableList<SubmittedTx>>()
+        for (s in d.submitted) {
+            if (s.state != TxState.Pending || (s.chain != null && s.chain != chainHex)) continue
+            for (h in holdsOf(s, readSubmission(c, d.outbox, s.id), d.outbox[s.id]?.twin, d.nonces)) {
+                if (h.queue != queue || now > h.clearsAt) continue
+                held.getOrPut(h.nonce ?: continue) { ArrayList() }.add(s)
+            }
+        }
+        // The highest nonce held by a submission no block has: one in a block is counted in the chain's
+        // nonce, or failed there and took none. They are looked up before the nonce is read, so a block that
+        // takes one in between is counted. One that cannot be looked up holds, so no nonce is signed twice;
+        // so does one the node does not know, which Pending sends again until it is cleared.
+        var top: Long? = null
+        for ((nonce, subs) in held.descendingMap()) {
+            if (subs.any { s -> !inBlock(node, s.id) && d.outbox[s.id]?.twin?.let { !inBlock(node, it) } != false }) {
+                top = nonce
+                break
+            }
         }
         val current = read(node)
-        // Once the note is cleared (past the latest expiry of what it ends, and as long again as a block's
-        // time may trail the clock), none of those actions can go in, and the chain's nonce is free again.
-        if (note == null || !waiting || note.nonce < current || now() > note.held() + LATE) return current
-        return if (prefix != null && note.prefix == prefix) note.nonce else note.nonce + 1
+        if (top == null || top < current) return current
+        // The same fee payment again, for the same calls, is the same transaction.
+        if (prefix != null && note != null && note.prefix == prefix && note.nonce == top && held[top]?.any { it.id == note.txId } == true) return top
+        return top + 1
     }
 
-    /** Until when what a note was signed for could go in: its expiry, or for a note of an earlier version, which says none, the end of the day after. */
-    private fun NonceNote.until(): Long = expires ?: ((at / 86_400 + 2) * 86_400)
-
-    /** Until when the queue a note ends is held: the latest expiry of its action and those signed before it ([NonceNote.holds]). */
-    private fun NonceNote.held(): Long = maxOf(until(), holds ?: 0L)
+    /** Whether a block has the transaction `id`; not when it cannot be looked up. */
+    private suspend fun inBlock(node: ChainApi, id: String): Boolean = try {
+        node.transaction(id)?.occurrences?.isNotEmpty() == true
+    } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        false
+    }
 
     private fun noteNonce(contract: ByteArray, account: ByteArray, nonce: Long, txId: String, expires: Long, prefix: String? = null) {
-        val key = nonceKey(contract, account)
-        // Signed behind the action it replaces, the queue holds until the later of the two: a call's hour
-        // signed behind a payment's three hours must not free the payment's nonce while it can still go in.
-        val holds = store.data.value.nonces[key]?.takeIf { it.nonce <= nonce }?.held()?.takeIf { it > expires }
-        store.noteNonce(key, NonceNote(nonce, txId, now(), prefix, expires, holds))
+        store.noteNonce(nonceKey(contract, account), NonceNote(nonce, txId, now(), prefix, expires))
     }
 
     /**
@@ -374,7 +393,7 @@ class Chain(
         val alone = encodeCall(call.target, call.input, budget)
         val account = payer.signer.account
         val prefix = batchPrefix(listOf(call)).hex()
-        val nonce = nextNonce(payer.coinId, account, prefix)
+        val nonce = nextNonce(chainId, payer.coinId, account, prefix)
         // The same fee payment again, at the same nonce, keeps the expiry it was signed with while that
         // lasts: then it is the same transaction, not a second one competing with it.
         val validUntil = store.data.value.nonces[nonceKey(payer.coinId, account)]
@@ -391,11 +410,8 @@ class Chain(
         } catch (e: Exception) {
             refused = e
         }
-        if (paid != null) {
-            noteNonce(payer.coinId, account, nonce, paid, validUntil, prefix)
-            // The batch waits in the payer's queue as a payment would: a stuck one is seen there (stuckQueues).
-            store.markFeeFrom(paid, coinQueue(payer.coinId.hex(), account.hex()), validUntil)
-        }
+        // The batch waits in the payer's queue as a payment would, as its bytes say (readSigned).
+        if (paid != null) noteNonce(payer.coinId, account, nonce, paid, validUntil, prefix)
         if (paid == null && required) throw refused!!
         var unpaid: String? = null
         try {
@@ -423,7 +439,7 @@ class Chain(
      */
     suspend fun submitCoinAction(chainId: ByteArray, coinId: ByteArray, signer: Signer, action: Coin.Action, nonceOverride: Long? = null, payer: FeePayer? = null): Submitted {
         val account = policyAccount(signer.policy, signer.params)
-        val nonce = nonceOverride ?: nextNonce(coinId, account)
+        val nonce = nonceOverride ?: nextNonce(chainId, coinId, account)
         val own = paysOwnFee(payer, coinId, account)
         val timing = action.timing.copy(validUntil = action.timing.validUntil.takeIf { it != 0L } ?: signedExpiry())
         val signed = action.copy(timing = if (own) timing.copy(fee = timing.fee + payer!!.fee) else timing)
@@ -482,7 +498,7 @@ class Chain(
         val account = signer.account
         // A fee payment: nothing to the program's own account, with the fee.
         val pays = payment ?: feeCoin?.takeIf { paysOwnFee(payer, it, account) }?.let { it to Tcr.feeEffect(program) }
-        val nonce = nextCallNonce(program, account)
+        val nonce = nextCallNonce(chainId, program, account)
         val message = Tcr.message(chainId, program, account, nonce, validUntil, Tcr.operationHash(template, values))
         var paid: Pair<ByteArray, Long>? = null
         var own = false
@@ -491,7 +507,7 @@ class Chain(
         } else {
             val (coinId, effect) = pays
             own = paysOwnFee(payer, coinId, account)
-            val coinNonce = nextNonce(coinId, account)
+            val coinNonce = nextNonce(chainId, coinId, account)
             val timing = Coin.Timing(fee = if (own) payer!!.fee else BigInteger.ZERO, validUntil = validUntil, within = Coin.Within(program, signingDigest(message)))
             val action = Coin.Action(effect, timing)
             val coinMessage = Coin.message(chainId, coinId, account, coinNonce, action)
@@ -505,9 +521,6 @@ class Chain(
         fun mark(id: String) {
             if (own || payer == null) store.markProgramCall(id, unpaid = !own)
             else store.markProgramCall(store.data.value.outbox[id]?.twin ?: id, unpaid = true)
-            // A call that pays only its own fee takes the account's next nonce in the coin, though its
-            // submission names no coin: it waits in that queue as a payment would (stuckQueues).
-            if (payment == null) paid?.let { store.markFeeFrom(id, coinQueue(it.first.hex(), account.hex()), validUntil) }
         }
         val txId = try {
             submitWithFee(Contracts.canonical(chainId), chainId, BatchCall(program, input), if (own) null else payer, Budgets.BATCH)

@@ -154,10 +154,9 @@ class SpeedUpTest {
         assertEquals(alone, app.store.data.value.outbox.getValue(batch).twin)
         val note = app.store.data.value.nonces.getValue("${dlr.hex}:${payer.signer.account.hex()}")
         assertEquals(NonceNote(0, batch, app.clock, batchPrefix(listOf(apply)).hex(), app.chain.signedExpiry()), note)
-        // The batch waits in the payer's queue until its fee payment expires (stuckQueues).
+        // The batch waits in the payer's queue until its fee payment expires, as its bytes say (stuckQueues).
         val kept = app.store.data.value.outbox.getValue(batch)
-        assertEquals("${dlr.hex}:${payer.signer.account.hex()}", kept.feeFrom)
-        assertEquals(app.chain.signedExpiry(), kept.feeExpires)
+        assertEquals(Signed(listOf(Taken("${dlr.hex}:${payer.signer.account.hex()}", 0)), app.chain.signedExpiry()), readSigned(c, kept.raw))
     }
 
     @Test

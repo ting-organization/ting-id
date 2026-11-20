@@ -168,9 +168,9 @@ data class SubmittedTx(
     val call: String? = null,
     /**
      * When what it signed stops being valid (seconds), for a payment or a
-     * program's call: past it, and as long again as a block's time may trail
-     * the clock, no block can take it ([clearsAt]). Null for what carries no
-     * expiry, and for submissions of earlier versions.
+     * program's call, as noted when it was signed. What its bytes say goes
+     * first ([couldGoInUntil]); this is for bytes the app cannot read. Null
+     * for what carries no expiry, and for submissions of earlier versions.
      */
     val expires: Long? = null,
 )
@@ -188,15 +188,6 @@ data class OutboxEntry(
      * app knew when it sent it. Null for anything else, read from its bytes.
      */
     val unpaid: Boolean? = null,
-    /**
-     * For a batch whose fee payment comes from one of this device's accounts:
-     * that account's queue in the coin ([coinQueue]). The payment takes the
-     * account's next nonce, so the batch waits in that queue as a payment
-     * would, though its submission names no coin ([stuckQueues]).
-     */
-    val feeFrom: String? = null,
-    /** When that fee payment expires (seconds), and with it the batch's place in the queue. */
-    val feeExpires: Long? = null,
 )
 
 @Serializable
@@ -240,7 +231,9 @@ data class SignatureNote(
  * The last action this device signed for a coin account, or the last call for
  * a program's: its nonce and transaction, when it was signed, for a fee
  * payment bound to a batch the prefix it commits to, and when what was signed
- * expires.
+ * expires. Which nonces are held is what the transactions' bytes say
+ * (Chain.nextNonce); the note says which is the same fee payment again, and
+ * stands in for bytes the app cannot read.
  */
 @Serializable
 data class NonceNote(
@@ -251,13 +244,6 @@ data class NonceNote(
     val prefix: String? = null,
     /** Seconds; null for a note of an earlier version. */
     val expires: Long? = null,
-    /**
-     * When an action signed before it, still ahead in the queue, expires later
-     * than it does: that time (seconds). The queue the note ends holds until
-     * the later of the two, so a call's hour behind a payment's three hours
-     * frees nothing early.
-     */
-    val holds: Long? = null,
 )
 
 /**

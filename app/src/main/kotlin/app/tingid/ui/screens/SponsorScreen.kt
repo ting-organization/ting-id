@@ -227,11 +227,10 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
         error = null
         ui.launch {
             val shown = try {
-                val outbox = services.store.data.value.outbox
                 // Behind a stuck payment of this account, or of an account paying a fee here, what is signed now
                 // waits too: waiting is offered first.
                 val stuck = stuckIn(
-                    stuckQueues(pending, outbox, nowSeconds()),
+                    stuckQueues(pending, services.store.data.value, nowSeconds()),
                     listOf(
                         coinQueue(coin.hex, account.account.hex()),
                         if (create) creationFee.payerQueue else null,
@@ -245,7 +244,7 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
                 }
                 // The same payment still waits: sent again, both could go through. Any other payment goes at once.
                 val before = if (sending.signum() > 0) {
-                    repeatOf(pending, outbox, nowSeconds()) {
+                    repeatOf(pending, nowSeconds()) {
                         it.coin == coin.hex && it.account == account.account.hex() && it.to == to.hex() && it.sends == sending.toString()
                     }
                 } else {
