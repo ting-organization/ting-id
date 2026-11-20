@@ -36,6 +36,11 @@ data class PendingItem(
     val canRetry: Boolean,
     /** Whether a fee can pay for it now ([canSpeedUp]). */
     val canSpeedUp: Boolean = false,
+    /**
+     * What it signed, from its bytes ([readSubmission]): the nonces it takes
+     * and when it expires. Null when the app has not got them or cannot read them.
+     */
+    val signed: List<Signed>? = null,
 )
 
 /** What to do about a submission. */
@@ -51,7 +56,7 @@ sealed class Decision {
     /** The node lost it: these bytes go out again. */
     data class Resend(val entries: List<OutboxEntry>) : Decision()
 
-    /** No block took it before what it signed expired, and by the clock none can now ([clearsAt]). */
+    /** No block took it before what it signed expired, and by the clock none can now ([couldGoInUntil]). */
     data object Expired : Decision()
 
     /** Nothing to do but show where it stands. */
@@ -88,7 +93,8 @@ private fun decideOne(sentAt: Long, lookup: TransactionLookup?, kept: OutboxEntr
  * the app kept; for a batch that pays for an operation, also from the answer
  * about the operation sent alone (`twin`): whichever goes in settles it. A
  * transaction settles once [SETTLE_DEPTH] blocks follow the one that included
- * it, at chain height `tip`, and so does one that failed in a block.
+ * it, at chain height `tip`, and so does one that failed in a block. `until`:
+ * until when a block could take it ([couldGoInUntil]).
  */
 fun decide(
     tx: SubmittedTx,
@@ -98,14 +104,15 @@ fun decide(
     tip: Long,
     twin: Twin? = null,
     statusWords: (String) -> String,
+    until: Long? = tx.expires,
 ): Decision {
     val own = decideOne(tx.at, lookup, kept, now, statusWords)
     val other = twin?.let { decideOne(tx.at, it.lookup, it.kept, now, statusWords) }
     val included = listOfNotNull(own, other).filterIsInstance<Decision.Included>().firstOrNull()
     if (included != null) return if (tip >= included.height + SETTLE_DEPTH) included else Decision.Follow(Watch.Confirming(included.height))
-    // Cleared ([clearsAt]): no block can take it any more, though a node may still hold it. The operation
-    // carries that expiry alone and in its batch.
-    val cleared = tx.expires?.let { now > it + LATE } == true
+    // Cleared: past its expiry, and as long again as a block's time may trail the clock, no block can take
+    // it any more, though a node may still hold it.
+    val cleared = until?.let { now > it + LATE } == true
     // The batch failed, but the operation alone may still go in, until it is cleared.
     if (own is Decision.Settle && other != null && other !is Decision.Settle) return if (cleared) Decision.Expired else other
     if (cleared && (own is Decision.Resend || own is Decision.Follow)) return Decision.Expired
@@ -137,6 +144,13 @@ fun onTheWay(items: List<PendingItem>, coinHex: String, accountHex: String): OnT
 // behind it until they have all expired. Anything signed meanwhile queues
 // behind them and moves that time on, so the app asks people to wait instead.
 // It never refuses.
+//
+// What waits where, and until when, is what each transaction's own bytes say
+// (state/Signed.kt), for what this version sent and what an earlier one did:
+// a transaction is cleared once its expiry is past, and as long again as a
+// block's time may trail the clock. The pending list settles it then
+// ([decide]), the next nonce no longer queues behind it (Chain.nextNonce), and
+// its queue no longer looks stuck ([stuckQueues]).
 
 /** How long past its expiry a signed action may still get into a block: a block's time may trail the clock. */
 const val LATE = 3_600L
@@ -148,37 +162,12 @@ const val STUCK_AFTER = 600L
 const val EXPIRED_WORDS = "no block took it before it expired, so it should not go through"
 
 /**
- * Whether the transaction kept as `id` is a program's call (TCR-1), alone or in
- * the batch that pays for it. The app marks the call's own bytes when it sends
- * one (Store.markProgramCall), and a batch names the call sent alone as its twin.
+ * Until when a block could take a submission: as what it signed says
+ * (`signed`, [readSubmission]), or, when its bytes cannot be read, as was
+ * noted when it was signed ([SubmittedTx.expires]). Null when nothing in it
+ * expires, such as an identity's change.
  */
-fun programCallKept(outbox: Map<String, OutboxEntry>, id: String): Boolean {
-    val kept = outbox[id] ?: return false
-    return kept.unpaid != null || kept.twin?.let { outbox[it]?.unpaid } != null
-}
-
-/**
- * Until when a submission no block has could still get into one, as far as
- * the app can tell: what it signed says ([SubmittedTx.expires]). One of an
- * earlier version does not say: a program's call was signed for an hour then
- * too ([Chain.CALL_LIFE]), a payment until the end of the day after, both from
- * no later than when the submission was noted. Null for what carries no
- * expiry, such as an identity's change.
- */
-fun couldGoInUntil(tx: SubmittedTx, outbox: Map<String, OutboxEntry>): Long? = when {
-    tx.expires != null -> tx.expires
-    programCallKept(outbox, tx.id) -> tx.at + Chain.CALL_LIFE
-    tx.coin != null -> (tx.at / 86_400 + 2) * 86_400
-    else -> null
-}
-
-/**
- * When a submission is cleared: past its expiry, and as long again as a
- * block's time may trail the clock, no block can take it any more. The app
- * then settles it as not included ([decide]), and the next action no longer
- * queues behind it (Chain.nextNonce).
- */
-fun clearsAt(tx: SubmittedTx, outbox: Map<String, OutboxEntry>): Long? = couldGoInUntil(tx, outbox)?.plus(LATE)
+fun couldGoInUntil(tx: SubmittedTx, signed: List<Signed>?): Long? = if (signed != null) expiryOf(signed) else tx.expires
 
 /** Whether no block has a submission yet, nor a node holds it for a later time: one in a block already shows in what the chain says. */
 private fun PendingItem.onItsWay() =
@@ -201,13 +190,13 @@ data class Stuck(val since: Long, val clearsAt: Long)
 
 /**
  * The queues that look stuck at `now`, by [coinQueue] and [callQueue]:
- * something in them has waited [STUCK_AFTER] without a block. A batch whose
- * fee payment comes from one of this device's accounts waits in that
- * account's queue too ([OutboxEntry.feeFrom]), until its fee payment expires.
- * Each queue is cleared once everything waiting in it is ([clearsAt]): then
- * the next action takes the chain's nonce again, and nothing of the old ones
- * can go in after it. What is signed into it before then waits behind the
- * rest, and moves that time on.
+ * something in them has waited [STUCK_AFTER] without a block. A submission
+ * waits in every queue its bytes take a nonce in ([PendingItem.signed]): a
+ * batch also in the queue of the account its fee payment comes from. Each
+ * queue is cleared once everything waiting in it is: then the next action
+ * takes the chain's nonce again (Chain.nextNonce, by the same reading), and
+ * nothing of the old ones can go in after it. What is signed into it before
+ * then waits behind the rest, and moves that time on.
  */
 fun stuckQueues(items: List<PendingItem>, outbox: Map<String, OutboxEntry>, now: Long): Map<String, Stuck> {
     val since = HashMap<String, Long>()
@@ -216,13 +205,9 @@ fun stuckQueues(items: List<PendingItem>, outbox: Map<String, OutboxEntry>, now:
         val tx = item.tx
         val kept = outbox[tx.id]
         if (!item.onItsWay() || kept?.notBefore?.let { it > now } == true) continue
-        // Each queue it waits in, and when it is cleared there.
-        val waits = buildList {
-            clearsAt(tx, outbox)?.let { cleared -> queuesOf(tx).forEach { add(it to cleared) } }
-            val feeFrom = kept?.feeFrom
-            val feeExpires = kept?.feeExpires
-            if (feeFrom != null && feeExpires != null) add(feeFrom to feeExpires + LATE)
-        }
+        // Each queue it waits in, and when it is cleared there: as its bytes say, or as noted when they cannot be read.
+        val waits = item.signed?.flatMap { part -> part.expires?.let { e -> part.takes.map { it.queue to e + LATE } }.orEmpty() }
+            ?: tx.expires?.let { e -> queuesOf(tx).map { it to e + LATE } }.orEmpty()
         for ((q, cleared) in waits) {
             if (now > cleared) continue
             clears[q] = maxOf(clears[q] ?: 0L, cleared)
@@ -260,11 +245,11 @@ fun callKey(program: ByteArray, account: ByteArray, template: ByteArray, values:
 /**
  * The submission a new payment or call would repeat (`same` picks it out),
  * the newest, while it still waits for a block at `now` (`items`, as Pending
- * follows them) and is not cleared ([clearsAt]). Null when there is none: any
- * other payment or call goes without a question.
+ * follows them) and is not cleared ([couldGoInUntil]). Null when there is
+ * none: any other payment or call goes without a question.
  */
-fun repeatOf(items: List<PendingItem>, outbox: Map<String, OutboxEntry>, now: Long, same: (SubmittedTx) -> Boolean): SubmittedTx? =
-    items.filter { it.onItsWay() && clearsAt(it.tx, outbox)?.let { c -> now <= c } != false }.map { it.tx }.filter(same).maxByOrNull { it.at }
+fun repeatOf(items: List<PendingItem>, now: Long, same: (SubmittedTx) -> Boolean): SubmittedTx? =
+    items.filter { it.onItsWay() && couldGoInUntil(it.tx, it.signed)?.let { c -> now <= c + LATE } != false }.map { it.tx }.filter(same).maxByOrNull { it.at }
 
 /**
  * The question before the payment `before` ([repeatOf]) is sent again. The

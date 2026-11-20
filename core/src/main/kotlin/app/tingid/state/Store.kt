@@ -275,19 +275,8 @@ class Store(
     fun keepOutbox(id: String, entry: OutboxEntry) = update { d ->
         val old = d.outbox[id]
         // What the app noted of it stays when it is kept again, as when it is sent again.
-        val kept = entry.copy(
-            twin = old?.twin,
-            unpaid = entry.unpaid ?: old?.unpaid,
-            feeFrom = entry.feeFrom ?: old?.feeFrom,
-            feeExpires = entry.feeExpires ?: old?.feeExpires,
-        )
+        val kept = entry.copy(twin = old?.twin, unpaid = entry.unpaid ?: old?.unpaid)
         d.copy(outbox = d.outbox + (id to kept))
-    }
-
-    /** Notes that the batch kept as `id` pays its fee from the account whose queue is `queue`, until `expires` ([OutboxEntry.feeFrom]). */
-    fun markFeeFrom(id: String, queue: String, expires: Long) = update { d ->
-        val e = d.outbox[id] ?: return@update d
-        d.copy(outbox = d.outbox + (id to e.copy(feeFrom = queue, feeExpires = expires)))
     }
 
     /** Notes whether the program call kept as `id` pays no fee itself. */

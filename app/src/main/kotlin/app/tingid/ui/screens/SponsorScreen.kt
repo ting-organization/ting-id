@@ -245,7 +245,7 @@ private fun Sponsor(ok: CreateLinkReading.Ok) {
                 }
                 // The same payment still waits: sent again, both could go through. Any other payment goes at once.
                 val before = if (sending.signum() > 0) {
-                    repeatOf(pending, outbox, nowSeconds()) {
+                    repeatOf(pending, nowSeconds()) {
                         it.coin == coin.hex && it.account == account.account.hex() && it.to == to.hex() && it.sends == sending.toString()
                     }
                 } else {

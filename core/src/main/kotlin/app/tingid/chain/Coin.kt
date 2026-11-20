@@ -26,8 +26,8 @@ object Coin {
     const val OP_EXECUTE = 0x10
     const val OP_CANCEL = 0x11
 
-    private const val AUTH_POLICY = 0
-    private const val AUTH_CONTRACT = 1
+    const val AUTH_POLICY = 0
+    const val AUTH_CONTRACT = 1
     private const val ACT_TRANSFER = 1
     private const val ACT_BURN = 2
     private const val ACT_MINT = 3

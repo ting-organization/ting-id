@@ -294,7 +294,7 @@ private fun Review(request: CallRequest) {
                     return@launch
                 }
                 // The same call still waits: approved again, it could run twice. Any other call goes at once.
-                val before = repeatOf(pending, outbox, nowSeconds()) { it.call == callId }
+                val before = repeatOf(pending, nowSeconds()) { it.call == callId }
                 if (before != null && !confirm.ask(ConfirmOptions(title = "Approve it again?", body = approveAgainWords(before) { formatWhen(it) }, confirm = "Approve again"))) {
                     going.set(false)
                     busy = false
