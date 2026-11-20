@@ -240,8 +240,10 @@ class Pending(
 
     /** Puts a submission away: the app stops following it. */
     fun dismiss(id: String) {
+        val twin = store.data.value.outbox[id]?.twin
         store.updateSubmitted(id) { it.copy(state = TxState.Dismissed) }
         store.forgetOutbox(id)
+        twin?.let { store.forgetOutbox(it) }
     }
 
     companion object {

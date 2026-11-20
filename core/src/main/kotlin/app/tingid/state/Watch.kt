@@ -179,11 +179,29 @@ fun coinQueue(coinHex: String, accountHex: String) = "$coinHex:$accountHex"
 /** The queue of the account's calls to a program (TCR-1), which go in one after the other too. */
 fun callQueue(program: ByteArray, account: ByteArray) = "call:${program.hex()}:${account.hex()}"
 
-/** The queues a submission waits in: its account's in its coin, and for a program's call that account's calls to the program. */
+/** The queues a submission was noted to wait in: its account's in its coin, and for a program's call that account's calls to the program. */
 private fun queuesOf(tx: SubmittedTx): List<String> = listOfNotNull(
     if (tx.coin != null && tx.account != null) coinQueue(tx.coin, tx.account) else null,
     tx.call?.substringBeforeLast(':')?.let { "call:$it" },
 )
+
+/** A nonce a submission holds in a queue ([coinQueue], [callQueue]), and when it is cleared there; null `nonce` when its bytes cannot be read. */
+data class Hold(val queue: String, val nonce: Long?, val clearsAt: Long)
+
+/**
+ * What a submission holds up while no block has it: each nonce its bytes take
+ * (`signed`, [readSubmission]), until an hour past its expiry; when they cannot
+ * be read, the queues and expiry noted when it was signed. What expires never
+ * holds anything. The stuck warning ([stuckQueues]) and the next nonce
+ * (Chain.nextNonce) both go by this alone, so what a new action would wait
+ * behind is what the warning shows.
+ */
+fun holdsOf(tx: SubmittedTx, signed: List<Signed>?): List<Hold> =
+    if (signed != null) {
+        signed.flatMap { part -> part.expires?.let { e -> part.takes.map { Hold(it.queue, it.nonce, e + LATE) } }.orEmpty() }
+    } else {
+        tx.expires?.let { e -> queuesOf(tx).map { Hold(it, null, e + LATE) } }.orEmpty()
+    }
 
 /** A queue that looks stuck: since when something in it waits (seconds), and when everything waiting in it is cleared. */
 data class Stuck(val since: Long, val clearsAt: Long)
@@ -205,10 +223,8 @@ fun stuckQueues(items: List<PendingItem>, outbox: Map<String, OutboxEntry>, now:
         val tx = item.tx
         val kept = outbox[tx.id]
         if (!item.onItsWay() || kept?.notBefore?.let { it > now } == true) continue
-        // Each queue it waits in, and when it is cleared there: as its bytes say, or as noted when they cannot be read.
-        val waits = item.signed?.flatMap { part -> part.expires?.let { e -> part.takes.map { it.queue to e + LATE } }.orEmpty() }
-            ?: tx.expires?.let { e -> queuesOf(tx).map { it to e + LATE } }.orEmpty()
-        for ((q, cleared) in waits) {
+        // Each queue it holds up, and when it is cleared there ([holdsOf]).
+        for ((q, _, cleared) in holdsOf(tx, item.signed)) {
             if (now > cleared) continue
             clears[q] = maxOf(clears[q] ?: 0L, cleared)
             if (now - tx.at >= STUCK_AFTER) since[q] = minOf(since[q] ?: tx.at, tx.at)

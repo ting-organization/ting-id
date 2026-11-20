@@ -275,43 +275,40 @@ class Chain(
         nextAfterHeld(chainId, callQueue(program, account), nonceKey(program, account), null) { fetchCallNonce(it, program, account) }
 
     /**
-     * The nonce after the last one this device's transactions hold in `queue`,
-     * or the chain's when they hold none. A transaction holds the nonces its
-     * bytes take ([readSigned]) from when it is sent until a block has it, or
-     * until it is cleared: past its expiry, and as long again as a block's time
-     * may trail the clock ([LATE]), no block can take it. This is the reading
-     * the pending list and the stuck warning go by too (state/Watch.kt).
+     * The nonce after the last one held in `queue` by what this device follows
+     * and no block has, or the chain's when nothing holds one. What a
+     * submission holds is [holdsOf]'s answer, the same the stuck warning gives
+     * (state/Watch.kt, stuckQueues): a new action never waits behind anything
+     * the warning would not show. What the app no longer follows, put away or
+     * failed, holds nothing: an action signed with its nonce replaces it, and
+     * at most one of the two goes in.
      */
     private suspend fun nextAfterHeld(chainId: ByteArray, queue: String, noteKey: String, prefix: String?, read: suspend (ChainApi) -> Long): Long {
         val node = this.node
         val now = now()
         val d = store.data.value
         val c = Contracts.canonical(chainId)
+        val chainHex = chainId.hex()
         val note = d.nonces[noteKey]
-        // Each nonce held in the queue, and the transactions holding it.
-        val held = java.util.TreeMap<Long, MutableList<String>>()
-        for ((id, kept) in d.outbox) {
-            val signed = readSigned(c, kept.raw)
-            if (signed == null) {
-                // Bytes the app cannot read hold what was noted when they were signed, while that lasts.
-                val until = note?.takeIf { it.txId == id }?.let { it.expires ?: ((it.at / 86_400 + 2) * 86_400) }
-                if (until != null && now <= until + LATE) held.getOrPut(note.nonce) { ArrayList() }.add(id)
-                continue
+        // Each nonce held in the queue, and the submissions holding it.
+        val held = java.util.TreeMap<Long, MutableList<SubmittedTx>>()
+        for (s in d.submitted) {
+            if (s.state != TxState.Pending || (s.chain != null && s.chain != chainHex)) continue
+            val twin = d.outbox[s.id]?.twin
+            for (h in holdsOf(s, readSubmission(c, d.outbox, s.id))) {
+                if (h.queue != queue || now > h.clearsAt) continue
+                // Bytes the app cannot read name no nonce; the note does, for the last one signed.
+                val nonce = h.nonce ?: note?.takeIf { it.txId == s.id || it.txId == twin }?.nonce ?: continue
+                held.getOrPut(nonce) { ArrayList() }.add(s)
             }
-            if (signed.expires != null && now > signed.expires + LATE) continue
-            for (t in signed.takes) if (t.queue == queue) held.getOrPut(t.nonce) { ArrayList() }.add(id)
         }
-        // One put away before it expired, its bytes gone, holds as noted until then: it may still go in.
-        if (note != null && note.txId !in d.outbox && note.expires != null && now <= note.expires + LATE) {
-            held.getOrPut(note.nonce) { ArrayList() }.add(note.txId)
-        }
-        // The highest nonce held by a transaction no block has: one in a block is counted in the chain's
+        // The highest nonce held by a submission no block has: one in a block is counted in the chain's
         // nonce, or failed there and took none. They are looked up before the nonce is read, so a block that
         // takes one in between is counted. One that cannot be looked up holds, so no nonce is signed twice;
         // so does one the node does not know, which Pending sends again until it is cleared.
         var top: Long? = null
-        for ((nonce, ids) in held.descendingMap()) {
-            if (ids.any { !inBlock(node, it) }) {
+        for ((nonce, subs) in held.descendingMap()) {
+            if (subs.any { s -> !inBlock(node, s.id) && d.outbox[s.id]?.twin?.let { !inBlock(node, it) } != false }) {
                 top = nonce
                 break
             }
@@ -319,7 +316,7 @@ class Chain(
         val current = read(node)
         if (top == null || top < current) return current
         // The same fee payment again, for the same calls, is the same transaction.
-        if (prefix != null && note != null && note.prefix == prefix && note.nonce == top && held[top]?.contains(note.txId) == true) return top
+        if (prefix != null && note != null && note.prefix == prefix && note.nonce == top && held[top]?.any { it.id == note.txId } == true) return top
         return top + 1
     }
 

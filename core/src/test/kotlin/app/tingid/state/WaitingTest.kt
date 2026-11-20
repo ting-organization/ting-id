@@ -205,19 +205,48 @@ class WaitingTest {
             runBlocking { app.chain.node.status() }
         }
 
+        /** A payment, followed as the send screen follows one. */
         suspend fun pay(): Chain.Submitted =
             app.chain.submitCoinAction(node.chainId, coin, signer, Coin.Action(Coin.Effect.Transfer(filled(0x7f), BigInteger.ONE), Coin.NO_TIMING), payer = payer)
+                .also { app.store.addSubmitted(SubmittedTx(it.txId, app.clock, "Send", "u", coin = coin.hex(), account = it.account.hex(), expires = it.expires)) }
 
-        /** A call paying only its own fee, as a withdrawal from a listing does. */
+        /** A call paying only its own fee, as a withdrawal from a listing does, followed as the call screen follows one. */
         suspend fun call(item: Long): Chain.Submitted =
             app.chain.submitProgramCall(node.chainId, program, template, u64le(item), signer, null, coin, payer)
+                .also { app.store.addSubmitted(SubmittedTx(it.txId, app.clock, "Withdraw", "u", call = "${program.hex()}:${it.account.hex()}:$item", expires = it.expires)) }
 
         suspend fun nextPayment() = app.chain.nextNonce(node.chainId, coin, signer.account)
         suspend fun nextCall() = app.chain.nextCallNonce(node.chainId, program, signer.account)
+
+        /** The pending list as Pending gives it: what is followed, each with what its bytes say. */
+        fun items(): List<PendingItem> {
+            val d = app.store.data.value
+            return d.submitted.filter { it.state == TxState.Pending }.map { PendingItem(it, Watch.Waiting, true, signed = readSubmission(c, d.outbox, it.id)) }
+        }
+
+        /**
+         * The rule: whatever a new payment or call would wait behind, once it
+         * has waited ten minutes, the warning shows; and the warning shows
+         * nothing a new one would not wait behind.
+         */
+        suspend fun assertWarningMatchesQueue() {
+            val now = app.clock
+            val items = items()
+            val stuck = stuckQueues(items, app.store.data.value.outbox, now)
+            for ((queue, next) in listOf(coinQueue(coin.hex(), signer.account.hex()) to nextPayment(), callQueue(program, signer.account) to nextCall())) {
+                // The chain's nonce is 0 here: a higher one waits behind something.
+                val behind = next > 0
+                // Something the pending list still shows in the queue, sent ten minutes ago or more, whatever its expiry.
+                val inQueue = { item: PendingItem -> item.signed?.any { s -> s.takes.any { it.queue == queue } } ?: holdsOf(item.tx, null).any { it.queue == queue } }
+                val waited = items.any { now - it.tx.at >= STUCK_AFTER && inQueue(it) }
+                if (behind && waited) assertTrue("$queue at $now: a new one waits behind, and the warning says nothing", queue in stuck)
+                if (queue in stuck) assertTrue("$queue at $now: the warning shows what a new one would not wait behind", behind)
+            }
+        }
     }
 
     @Test
-    fun `the next nonce waits behind what was sent until it is cleared`() = runBlocking {
+    fun `the next nonce waits behind what was sent until it is cleared, and the warning says so`() = runBlocking {
         val s = Setup(0x2a, t)
         val pay = s.pay()
         s.node.lookups[pay.txId] = pendingLookup()
@@ -225,11 +254,18 @@ class WaitingTest {
         assertEquals(t + Chain.SIGNED_LIFE, s.app.chain.signedExpiry())
         assertEquals(t + Chain.SIGNED_LIFE, pay.expires)
         assertEquals(1L, s.nextPayment())
+        s.assertWarningMatchesQueue()
+        // Ten minutes without a block: the warning shows what the next payment waits behind.
+        s.app.clock = t + STUCK_AFTER
+        assertTrue(coinQueue(s.coin.hex(), pay.account.hex()) in stuckQueues(s.items(), s.app.store.data.value.outbox, s.app.clock))
+        s.assertWarningMatchesQueue()
         s.app.clock = t + Chain.SIGNED_LIFE + LATE
         assertEquals(1L, s.nextPayment())
-        // Cleared: the chain's nonce is next, though a node still holds it.
+        s.assertWarningMatchesQueue()
+        // Cleared: the chain's nonce is next, though a node still holds it, and the warning is gone.
         s.app.clock = t + Chain.SIGNED_LIFE + LATE + 1
         assertEquals(0L, s.nextPayment())
+        s.assertWarningMatchesQueue()
     }
 
     @Test
@@ -244,10 +280,15 @@ class WaitingTest {
         val call = s.call(7)
         s.node.lookups[call.txId] = pendingLookup()
         assertEquals(2L, s.nextPayment())
+        for (at in listOf(t + 60, t + 60 + STUCK_AFTER, t + 60 + Chain.CALL_LIFE + LATE, t + 60 + Chain.CALL_LIFE + LATE + 1, t + Chain.SIGNED_LIFE + LATE + 1)) {
+            s.app.clock = at
+            s.assertWarningMatchesQueue()
+        }
         // The call is cleared and can never take nonce 1; the payment ahead of it still can take 0.
         // The next payment takes 1, behind the payment, instead of waiting behind what cannot go in.
         s.app.clock = t + 60 + Chain.CALL_LIFE + LATE + 1
         assertEquals(1L, s.nextPayment())
+        assertEquals(0L, s.nextCall())
         // Once the payment is cleared too, the chain's nonce is free again.
         s.app.clock = t + Chain.SIGNED_LIFE + LATE + 1
         assertEquals(0L, s.nextPayment())
@@ -271,15 +312,23 @@ class WaitingTest {
     }
 
     @Test
-    fun `one put away before it expired holds its nonce until then, as noted`() = runBlocking {
+    fun `what the app no longer follows holds nothing, so nothing waits where the warning cannot see`() = runBlocking {
         val s = Setup(0x2f, t)
         val pay = s.pay()
         s.node.lookups[pay.txId] = pendingLookup()
-        // Dismissed: its bytes are gone, but a node may still have it.
-        s.app.store.forgetOutbox(pay.txId)
         assertEquals(1L, s.nextPayment())
-        s.app.clock = t + Chain.SIGNED_LIFE + LATE + 1
+        // Put away: the warning no longer shows it, and the next payment takes its nonce instead of waiting behind it.
+        s.app.store.updateSubmitted(pay.txId) { it.copy(state = TxState.Dismissed) }
+        s.app.store.forgetOutbox(pay.txId)
+        s.app.clock = t + STUCK_AFTER
         assertEquals(0L, s.nextPayment())
+        assertTrue(stuckQueues(s.items(), s.app.store.data.value.outbox, s.app.clock).isEmpty())
+        // Failed, as when the node refused it sent again: the same.
+        val again = s.pay()
+        s.node.lookups[again.txId] = pendingLookup()
+        s.app.store.updateSubmitted(again.txId) { it.copy(state = TxState.Failed, problem = "refused") }
+        assertEquals(0L, s.nextPayment())
+        s.assertWarningMatchesQueue()
     }
 
     @Test
@@ -301,7 +350,7 @@ class WaitingTest {
      * Withdrawals from listings, sent by Ting ID 1.6.0, which noted no expiry
      * for them; the first can never go in, so all wait behind it in the node.
      * After updating, each is over an hour after its own expiry, as its bytes
-     * say, not at the end of the next day.
+     * say, not at the end of the next day, and the warning shows them until then.
      */
     @Test
     fun `what an earlier version left waiting is cleared by its own expiry`() = runBlocking {
@@ -312,12 +361,13 @@ class WaitingTest {
         }
         assertEquals((0L until 25).toList(), sent.map { it.nonce })
         val last = sent.last()
-        // As 1.6.0 left it: nothing noted of when any of it expires.
-        for (r in sent) s.app.store.addSubmitted(SubmittedTx(r.txId, r.expires - Chain.CALL_LIFE, "Withdraw", "u"))
+        // As 1.6.0 left it: nothing noted of when any of it expires, nor which call it is.
+        for (r in sent) s.app.store.updateSubmitted(r.txId) { it.copy(expires = null, call = null) }
         s.app.store.noteNonce("${s.program.hex()}:${last.account.hex()}", NonceNote(last.nonce, last.txId, last.expires - Chain.CALL_LIFE))
         s.app.store.noteNonce("${s.coin.hex()}:${last.account.hex()}", NonceNote(last.nonce, last.txId, last.expires - Chain.CALL_LIFE))
         val outbox = s.app.store.data.value.outbox
-        val items = s.app.store.data.value.submitted.map { PendingItem(it, Watch.Waiting, true, signed = readSubmission(s.c, outbox, it.id)) }
+        val items = s.items()
+        assertEquals(25, items.size)
 
         // While they can still go in, the next call and the next payment queue behind them, and the queues look stuck.
         s.app.clock = last.expires
@@ -326,10 +376,15 @@ class WaitingTest {
         val stuck = stuckQueues(items, outbox, s.app.clock)
         assertEquals(Stuck(t, last.expires + LATE), stuck[callQueue(s.program, last.account)])
         assertEquals(Stuck(t, last.expires + LATE), stuck[coinQueue(s.coin.hex(), last.account.hex())])
+        for (at in listOf(t + STUCK_AFTER, sent[10].expires + LATE + 1, last.expires, last.expires + LATE)) {
+            s.app.clock = at
+            s.assertWarningMatchesQueue()
+        }
 
         // An hour after the last one's expiry, well before the end of the next day, all of it is over.
         s.app.clock = last.expires + LATE + 1
         assertTrue(s.app.clock < (t / 86_400 + 2) * 86_400)
+        s.assertWarningMatchesQueue()
         assertEquals(0L, s.nextCall())
         assertEquals(0L, s.nextPayment())
         assertTrue(stuckQueues(items, outbox, s.app.clock).isEmpty())
@@ -339,14 +394,20 @@ class WaitingTest {
     }
 
     @Test
-    fun `bytes the app cannot read hold what was noted when they were signed`() = runBlocking {
+    fun `bytes the app cannot read hold what was noted when they were signed, and the warning shows it`() = runBlocking {
         val s = Setup(0x2e, t)
         val account = s.signer.account
-        s.app.store.keepSubmission("cc".repeat(32), byteArrayOf(9, 9, 9), null)
-        s.app.store.noteNonce("${s.program.hex()}:${account.hex()}", NonceNote(4, "cc".repeat(32), t, null, t + Chain.CALL_LIFE))
+        val id = "cc".repeat(32)
+        s.app.store.keepSubmission(id, byteArrayOf(9, 9, 9), null)
+        s.app.store.addSubmitted(SubmittedTx(id, t, "Program call", "u", call = "${s.program.hex()}:${account.hex()}:h", expires = t + Chain.CALL_LIFE))
+        s.app.store.noteNonce("${s.program.hex()}:${account.hex()}", NonceNote(4, id, t, null, t + Chain.CALL_LIFE))
         assertEquals(5L, s.nextCall())
+        s.app.clock = t + STUCK_AFTER
+        assertTrue(callQueue(s.program, account) in stuckQueues(s.items(), s.app.store.data.value.outbox, s.app.clock))
+        s.assertWarningMatchesQueue()
         s.app.clock = t + Chain.CALL_LIFE + LATE + 1
         assertEquals(0L, s.nextCall())
+        s.assertWarningMatchesQueue()
     }
 
     @Test
