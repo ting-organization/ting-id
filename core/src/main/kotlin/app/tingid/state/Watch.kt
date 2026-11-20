@@ -185,23 +185,31 @@ private fun queuesOf(tx: SubmittedTx): List<String> = listOfNotNull(
     tx.call?.substringBeforeLast(':')?.let { "call:$it" },
 )
 
-/** A nonce a submission holds in a queue ([coinQueue], [callQueue]), and when it is cleared there; null `nonce` when its bytes cannot be read. */
+/** A nonce a submission holds in a queue ([coinQueue], [callQueue]), and when it is cleared there; null `nonce` when nothing says which. */
 data class Hold(val queue: String, val nonce: Long?, val clearsAt: Long)
 
 /**
  * What a submission holds up while no block has it: each nonce its bytes take
- * (`signed`, [readSubmission]), until an hour past its expiry; when they cannot
- * be read, the queues and expiry noted when it was signed. What expires never
- * holds anything. The stuck warning ([stuckQueues]) and the next nonce
+ * (`signed`, [readSubmission]), until an hour past its expiry. When they
+ * cannot be read: the nonces noted for it, or for the call sent beside it
+ * (`twin`), when they were signed (`notes`, [AppData.nonces]), and the other
+ * queues noted for it, until what was noted. What expires never holds
+ * anything. The stuck warning ([stuckQueues]) and the next nonce
  * (Chain.nextNonce) both go by this alone, so what a new action would wait
  * behind is what the warning shows.
  */
-fun holdsOf(tx: SubmittedTx, signed: List<Signed>?): List<Hold> =
-    if (signed != null) {
-        signed.flatMap { part -> part.expires?.let { e -> part.takes.map { Hold(it.queue, it.nonce, e + LATE) } }.orEmpty() }
-    } else {
-        tx.expires?.let { e -> queuesOf(tx).map { Hold(it, null, e + LATE) } }.orEmpty()
+fun holdsOf(tx: SubmittedTx, signed: List<Signed>?, twin: String?, notes: Map<String, NonceNote>): List<Hold> {
+    if (signed != null) return signed.flatMap { part -> part.expires?.let { e -> part.takes.map { Hold(it.queue, it.nonce, e + LATE) } }.orEmpty() }
+    val queues = queuesOf(tx)
+    // A note is kept by coin and account, or by program and account, as the program's call queue is without its prefix.
+    val noted = notes.mapNotNull { (key, note) ->
+        if (note.txId != tx.id && note.txId != twin) return@mapNotNull null
+        val until = note.expires ?: tx.expires ?: return@mapNotNull null
+        Hold(if ("call:$key" in queues) "call:$key" else key, note.nonce, until + LATE)
     }
+    val rest = tx.expires?.let { e -> queues.filter { q -> noted.none { it.queue == q } }.map { Hold(it, null, e + LATE) } }.orEmpty()
+    return noted + rest
+}
 
 /** A queue that looks stuck: since when something in it waits (seconds), and when everything waiting in it is cleared. */
 data class Stuck(val since: Long, val clearsAt: Long)
@@ -216,15 +224,15 @@ data class Stuck(val since: Long, val clearsAt: Long)
  * nothing of the old ones can go in after it. What is signed into it before
  * then waits behind the rest, and moves that time on.
  */
-fun stuckQueues(items: List<PendingItem>, outbox: Map<String, OutboxEntry>, now: Long): Map<String, Stuck> {
+fun stuckQueues(items: List<PendingItem>, data: AppData, now: Long): Map<String, Stuck> {
     val since = HashMap<String, Long>()
     val clears = HashMap<String, Long>()
     for (item in items) {
         val tx = item.tx
-        val kept = outbox[tx.id]
+        val kept = data.outbox[tx.id]
         if (!item.onItsWay() || kept?.notBefore?.let { it > now } == true) continue
         // Each queue it holds up, and when it is cleared there ([holdsOf]).
-        for ((q, _, cleared) in holdsOf(tx, item.signed)) {
+        for ((q, _, cleared) in holdsOf(tx, item.signed, kept?.twin, data.nonces)) {
             if (now > cleared) continue
             clears[q] = maxOf(clears[q] ?: 0L, cleared)
             if (now - tx.at >= STUCK_AFTER) since[q] = minOf(since[q] ?: tx.at, tx.at)

@@ -168,14 +168,28 @@ private fun readProgram(c: Canonical, program: ByteArray, input: ByteArray): Lis
         r.end()
         listOf(Part(null, validUntil))
     }
+    val policies = listOf(c.policySecp256k1, c.policyP256, c.multisig, c.registry, c.policyWebauthn)
     var found: List<Part>? = null
     for (k in 32 until input.size) {
-        if (input[k].toInt() != 0) continue
+        // An approval starts only where a 00 is followed by one of the chain's policies, looked for in
+        // place: values of zeros, up to the link's 64 KiB, cost a pass, not a copy of the rest at each byte.
+        if (input[k].toInt() != 0 || !policyAt(policies, input, k + 1)) continue
         val parts = readApproval(c, program, input.copyOfRange(k, input.size)) ?: continue
         if (found != null) return null
         found = parts
     }
     return found
+}
+
+/** Whether `input` holds one of `policies` (32 bytes each) at `at`. */
+private fun policyAt(policies: List<ByteArray>, input: ByteArray, at: Int): Boolean {
+    if (at + 32 > input.size) return false
+    for (p in policies) {
+        var i = 0
+        while (i < 32 && input[at + i] == p[i]) i++
+        if (i == 32) return true
+    }
+    return false
 }
 
 /**

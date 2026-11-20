@@ -20,6 +20,7 @@ import app.tingid.chain.sponsoredCall
 import app.tingid.chain.u64le
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigInteger
 
@@ -91,6 +92,16 @@ class SignedTest {
         assertNull(read(encodeCall(program, Tcr.callInput(template, forged(c.registry), auth, null), Budgets.BATCH)))
         // By a policy that is none of the chain's, it is no approval this app signs, and the true one is read.
         assertEquals(Signed(listOf(Taken(callQ, 4)), t), read(encodeCall(program, Tcr.callInput(template, forged(filled(9)), auth, null), Budgets.BATCH)))
+    }
+
+    @Test
+    fun `a call whose values unpack to 64 KiB of zeros is read in one pass`() {
+        // Forty calls, each another nonce, so none is a reading kept from before.
+        val txs = (0L until 40).map { n -> n to encodeCall(program, Tcr.callInput(template, ByteArray(65_536), Tcr.Auth(me.policy, me.params, n, t, witness), null), Budgets.BATCH).hex() }
+        val started = System.nanoTime()
+        for ((n, tx) in txs) assertEquals(Signed(listOf(Taken(callQ, n)), t), readSigned(c, tx))
+        // Copying the rest at each zero, as it once did, took a fifth of a second a reading on a desktop.
+        assertTrue("40 readings took ${(System.nanoTime() - started) / 1_000_000} ms", System.nanoTime() - started < 2_000_000_000L)
     }
 
     @Test

@@ -34,6 +34,9 @@ class WaitingTest {
     private val words = { status: String -> "it failed ($status)" }
     private val q = coinQueue("c", "a")
 
+    /** What the app saved, with these bytes kept. */
+    private fun data(outbox: Map<String, OutboxEntry> = emptyMap()) = AppData(Settings(emptyList()), outbox = outbox)
+
     /** A payment from account `a` in coin `c`, sent `ago` seconds before `t`, signed for three hours. */
     private fun payment(id: String, ago: Long, account: String = "a") =
         SubmittedTx(id, t - ago, "Send 1 DLR", "u", coin = "c", account = account, to = "b", sends = "100", expires = t - ago + Chain.SIGNED_LIFE)
@@ -67,29 +70,29 @@ class WaitingTest {
 
     @Test
     fun `a queue looks stuck after ten minutes without a block, and clears with the last in it`() {
-        assertTrue(stuckQueues(listOf(item(payment("p1", 60))), emptyMap(), t).isEmpty())
-        assertTrue(stuckQueues(listOf(item(payment("p1", STUCK_AFTER - 1))), emptyMap(), t).isEmpty())
-        assertEquals(Stuck(t - STUCK_AFTER, t - STUCK_AFTER + Chain.SIGNED_LIFE + LATE), stuckQueues(listOf(item(payment("p1", STUCK_AFTER))), emptyMap(), t)[q])
+        assertTrue(stuckQueues(listOf(item(payment("p1", 60))), data(), t).isEmpty())
+        assertTrue(stuckQueues(listOf(item(payment("p1", STUCK_AFTER - 1))), data(), t).isEmpty())
+        assertEquals(Stuck(t - STUCK_AFTER, t - STUCK_AFTER + Chain.SIGNED_LIFE + LATE), stuckQueues(listOf(item(payment("p1", STUCK_AFTER))), data(), t)[q])
 
         // What was signed behind the stuck one moves the time on.
         val queue = listOf(item(payment("p1", 1_800)), item(payment("p2", 900)), item(payment("p3", 30)))
-        assertEquals(Stuck(t - 1_800, t - 30 + Chain.SIGNED_LIFE + LATE), stuckQueues(queue, emptyMap(), t)[q])
+        assertEquals(Stuck(t - 1_800, t - 30 + Chain.SIGNED_LIFE + LATE), stuckQueues(queue, data(), t)[q])
 
         // Only what still waits counts: not one in a block, failed, held for later, or cleared.
-        assertTrue(stuckQueues(listOf(item(payment("p1", 1_800), Watch.Confirming(5))), emptyMap(), t).isEmpty())
-        assertTrue(stuckQueues(listOf(item(payment("p1", 1_800), Watch.Failed("no", 5))), emptyMap(), t).isEmpty())
-        assertTrue(stuckQueues(listOf(item(payment("p1", 1_800), Watch.Scheduled(t + 600, null))), emptyMap(), t).isEmpty())
-        assertTrue(stuckQueues(listOf(item(payment("p1", 1_800).copy(state = TxState.Failed))), emptyMap(), t).isEmpty())
-        assertTrue(stuckQueues(listOf(item(payment("p1", 1_800))), mapOf("p1" to OutboxEntry("00", notBefore = t + 600, at = t)), t).isEmpty())
-        assertTrue(stuckQueues(listOf(item(payment("p1", Chain.SIGNED_LIFE + LATE + 1))), emptyMap(), t).isEmpty())
+        assertTrue(stuckQueues(listOf(item(payment("p1", 1_800), Watch.Confirming(5))), data(), t).isEmpty())
+        assertTrue(stuckQueues(listOf(item(payment("p1", 1_800), Watch.Failed("no", 5))), data(), t).isEmpty())
+        assertTrue(stuckQueues(listOf(item(payment("p1", 1_800), Watch.Scheduled(t + 600, null))), data(), t).isEmpty())
+        assertTrue(stuckQueues(listOf(item(payment("p1", 1_800).copy(state = TxState.Failed))), data(), t).isEmpty())
+        assertTrue(stuckQueues(listOf(item(payment("p1", 1_800))), data(mapOf("p1" to OutboxEntry("00", notBefore = t + 600, at = t))), t).isEmpty())
+        assertTrue(stuckQueues(listOf(item(payment("p1", Chain.SIGNED_LIFE + LATE + 1))), data(), t).isEmpty())
 
         // Each account in each coin is a queue of its own, and an account's calls to a program another.
-        val two = stuckQueues(listOf(item(payment("p1", 1_800)), item(payment("p2", 30, account = "z"))), emptyMap(), t)
+        val two = stuckQueues(listOf(item(payment("p1", 1_800)), item(payment("p2", 30, account = "z"))), data(), t)
         assertEquals(setOf(q), two.keys)
         val call = SubmittedTx("c1", t - 1_800, "Program call", "u")
         val callQ = callQueue(filled(5), filled(6))
         val paidCall = Signed(listOf(Taken(callQ, 4), Taken(q, 9)), t + 1_800)
-        assertEquals(setOf(q, callQ), stuckQueues(listOf(PendingItem(call, Watch.Waiting, true, signed = listOf(paidCall))), emptyMap(), t).keys)
+        assertEquals(setOf(q, callQ), stuckQueues(listOf(PendingItem(call, Watch.Waiting, true, signed = listOf(paidCall))), data(), t).keys)
     }
 
     @Test
@@ -97,11 +100,11 @@ class WaitingTest {
         // Noted as a payment from `a`, signed with a nonce of `z`'s: the bytes say where it waits, and until when.
         val pay = payment("p1", 1_800)
         val bytes = listOf(takes(0, t + 60, coinQueue("c", "z")))
-        assertEquals(mapOf(coinQueue("c", "z") to Stuck(t - 1_800, t + 60 + LATE)), stuckQueues(listOf(item(pay, signed = bytes)), emptyMap(), t))
+        assertEquals(mapOf(coinQueue("c", "z") to Stuck(t - 1_800, t + 60 + LATE)), stuckQueues(listOf(item(pay, signed = bytes)), data(), t))
         // Unreadable bytes: as noted.
-        assertEquals(mapOf(q to Stuck(t - 1_800, pay.expires!! + LATE)), stuckQueues(listOf(item(pay, signed = null)), emptyMap(), t))
+        assertEquals(mapOf(q to Stuck(t - 1_800, pay.expires!! + LATE)), stuckQueues(listOf(item(pay, signed = null)), data(), t))
         // Nothing noted either: no queue to tell of.
-        assertTrue(stuckQueues(listOf(item(pay.copy(expires = null), signed = null)), emptyMap(), t).isEmpty())
+        assertTrue(stuckQueues(listOf(item(pay.copy(expires = null), signed = null)), data(), t).isEmpty())
     }
 
     @Test
@@ -109,15 +112,15 @@ class WaitingTest {
         // An identity's change names no coin, and its bytes take no nonce of one: alone it is in no queue.
         val change = SubmittedTx("g1", t - 1_800, "Link a guardian", "u")
         val alone = Signed(emptyList(), null)
-        assertTrue(stuckQueues(listOf(PendingItem(change, Watch.Waiting, true, signed = listOf(alone))), emptyMap(), t).isEmpty())
+        assertTrue(stuckQueues(listOf(PendingItem(change, Watch.Waiting, true, signed = listOf(alone))), data(), t).isEmpty())
         // Paid for from Spending through a batch, it holds Spending's next nonce until the batch expires.
         val batch = takes(3, t - 1_800 + Chain.SIGNED_LIFE)
         val paid = PendingItem(change, Watch.Waiting, true, signed = listOf(batch, alone))
-        assertEquals(mapOf(q to Stuck(t - 1_800, t - 1_800 + Chain.SIGNED_LIFE + LATE)), stuckQueues(listOf(paid), emptyMap(), t))
+        assertEquals(mapOf(q to Stuck(t - 1_800, t - 1_800 + Chain.SIGNED_LIFE + LATE)), stuckQueues(listOf(paid), data(), t))
         // So the first payment behind it is asked about, and clears with whichever of the two is later.
-        assertEquals(Stuck(t - 1_800, t - 60 + Chain.SIGNED_LIFE + LATE), stuckQueues(listOf(paid, item(payment("p1", 60))), emptyMap(), t)[q])
+        assertEquals(Stuck(t - 1_800, t - 60 + Chain.SIGNED_LIFE + LATE), stuckQueues(listOf(paid, item(payment("p1", 60))), data(), t)[q])
         // Once the batch is cleared, it holds nothing there; the change alone may still go in.
-        assertTrue(stuckQueues(listOf(paid), emptyMap(), t - 1_800 + Chain.SIGNED_LIFE + LATE + 1).isEmpty())
+        assertTrue(stuckQueues(listOf(paid), data(), t - 1_800 + Chain.SIGNED_LIFE + LATE + 1).isEmpty())
         assertNull(couldGoInUntil(change, paid.signed))
     }
 
@@ -232,12 +235,12 @@ class WaitingTest {
         suspend fun assertWarningMatchesQueue() {
             val now = app.clock
             val items = items()
-            val stuck = stuckQueues(items, app.store.data.value.outbox, now)
+            val stuck = stuckQueues(items, app.store.data.value, now)
             for ((queue, next) in listOf(coinQueue(coin.hex(), signer.account.hex()) to nextPayment(), callQueue(program, signer.account) to nextCall())) {
                 // The chain's nonce is 0 here: a higher one waits behind something.
                 val behind = next > 0
                 // Something the pending list still shows in the queue, sent ten minutes ago or more, whatever its expiry.
-                val inQueue = { item: PendingItem -> item.signed?.any { s -> s.takes.any { it.queue == queue } } ?: holdsOf(item.tx, null).any { it.queue == queue } }
+                val inQueue = { item: PendingItem -> item.signed?.any { s -> s.takes.any { it.queue == queue } } ?: holdsOf(item.tx, null, app.store.data.value.outbox[item.tx.id]?.twin, app.store.data.value.nonces).any { it.queue == queue } }
                 val waited = items.any { now - it.tx.at >= STUCK_AFTER && inQueue(it) }
                 if (behind && waited) assertTrue("$queue at $now: a new one waits behind, and the warning says nothing", queue in stuck)
                 if (queue in stuck) assertTrue("$queue at $now: the warning shows what a new one would not wait behind", behind)
@@ -257,7 +260,7 @@ class WaitingTest {
         s.assertWarningMatchesQueue()
         // Ten minutes without a block: the warning shows what the next payment waits behind.
         s.app.clock = t + STUCK_AFTER
-        assertTrue(coinQueue(s.coin.hex(), pay.account.hex()) in stuckQueues(s.items(), s.app.store.data.value.outbox, s.app.clock))
+        assertTrue(coinQueue(s.coin.hex(), pay.account.hex()) in stuckQueues(s.items(), s.app.store.data.value, s.app.clock))
         s.assertWarningMatchesQueue()
         s.app.clock = t + Chain.SIGNED_LIFE + LATE
         assertEquals(1L, s.nextPayment())
@@ -322,7 +325,7 @@ class WaitingTest {
         s.app.store.forgetOutbox(pay.txId)
         s.app.clock = t + STUCK_AFTER
         assertEquals(0L, s.nextPayment())
-        assertTrue(stuckQueues(s.items(), s.app.store.data.value.outbox, s.app.clock).isEmpty())
+        assertTrue(stuckQueues(s.items(), s.app.store.data.value, s.app.clock).isEmpty())
         // Failed, as when the node refused it sent again: the same.
         val again = s.pay()
         s.node.lookups[again.txId] = pendingLookup()
@@ -373,7 +376,7 @@ class WaitingTest {
         s.app.clock = last.expires
         assertEquals(25L, s.nextCall())
         assertEquals(25L, s.nextPayment())
-        val stuck = stuckQueues(items, outbox, s.app.clock)
+        val stuck = stuckQueues(items, s.app.store.data.value, s.app.clock)
         assertEquals(Stuck(t, last.expires + LATE), stuck[callQueue(s.program, last.account)])
         assertEquals(Stuck(t, last.expires + LATE), stuck[coinQueue(s.coin.hex(), last.account.hex())])
         for (at in listOf(t + STUCK_AFTER, sent[10].expires + LATE + 1, last.expires, last.expires + LATE)) {
@@ -387,7 +390,7 @@ class WaitingTest {
         s.assertWarningMatchesQueue()
         assertEquals(0L, s.nextCall())
         assertEquals(0L, s.nextPayment())
-        assertTrue(stuckQueues(items, outbox, s.app.clock).isEmpty())
+        assertTrue(stuckQueues(items, s.app.store.data.value, s.app.clock).isEmpty())
         assertNull(repeatOf(items, s.app.clock) { true })
         val held = TransactionLookup(true, null, emptyList())
         for (it in items) assertEquals(Decision.Expired, decide(it.tx, held, outbox[it.tx.id], s.app.clock, 1, null, words, couldGoInUntil(it.tx, it.signed)))
@@ -403,10 +406,31 @@ class WaitingTest {
         s.app.store.noteNonce("${s.program.hex()}:${account.hex()}", NonceNote(4, id, t, null, t + Chain.CALL_LIFE))
         assertEquals(5L, s.nextCall())
         s.app.clock = t + STUCK_AFTER
-        assertTrue(callQueue(s.program, account) in stuckQueues(s.items(), s.app.store.data.value.outbox, s.app.clock))
+        assertTrue(callQueue(s.program, account) in stuckQueues(s.items(), s.app.store.data.value, s.app.clock))
         s.assertWarningMatchesQueue()
         s.app.clock = t + Chain.CALL_LIFE + LATE + 1
         assertEquals(0L, s.nextCall())
+        s.assertWarningMatchesQueue()
+    }
+
+    @Test
+    fun `unreadable bytes of a call paying only its own fee hold its coin's nonce too, as noted`() = runBlocking {
+        val s = Setup(0x30, t)
+        val account = s.signer.account
+        val id = "dd".repeat(32)
+        s.app.store.keepSubmission(id, byteArrayOf(9, 9, 9), null)
+        // Its submission names no coin: the fee payment's nonce is only in the coin's note.
+        s.app.store.addSubmitted(SubmittedTx(id, t, "Withdraw", "u", call = "${s.program.hex()}:${account.hex()}:h", expires = t + Chain.CALL_LIFE))
+        s.app.store.noteNonce("${s.program.hex()}:${account.hex()}", NonceNote(4, id, t, null, t + Chain.CALL_LIFE))
+        s.app.store.noteNonce("${s.coin.hex()}:${account.hex()}", NonceNote(7, id, t, null, t + Chain.CALL_LIFE))
+        assertEquals(5L, s.nextCall())
+        assertEquals(8L, s.nextPayment())
+        s.app.clock = t + STUCK_AFTER
+        assertEquals(setOf(callQueue(s.program, account), coinQueue(s.coin.hex(), account.hex())), stuckQueues(s.items(), s.app.store.data.value, s.app.clock).keys)
+        s.assertWarningMatchesQueue()
+        s.app.clock = t + Chain.CALL_LIFE + LATE + 1
+        assertEquals(0L, s.nextCall())
+        assertEquals(0L, s.nextPayment())
         s.assertWarningMatchesQueue()
     }
 

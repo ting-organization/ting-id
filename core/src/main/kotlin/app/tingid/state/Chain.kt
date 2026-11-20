@@ -294,12 +294,9 @@ class Chain(
         val held = java.util.TreeMap<Long, MutableList<SubmittedTx>>()
         for (s in d.submitted) {
             if (s.state != TxState.Pending || (s.chain != null && s.chain != chainHex)) continue
-            val twin = d.outbox[s.id]?.twin
-            for (h in holdsOf(s, readSubmission(c, d.outbox, s.id))) {
+            for (h in holdsOf(s, readSubmission(c, d.outbox, s.id), d.outbox[s.id]?.twin, d.nonces)) {
                 if (h.queue != queue || now > h.clearsAt) continue
-                // Bytes the app cannot read name no nonce; the note does, for the last one signed.
-                val nonce = h.nonce ?: note?.takeIf { it.txId == s.id || it.txId == twin }?.nonce ?: continue
-                held.getOrPut(nonce) { ArrayList() }.add(s)
+                held.getOrPut(h.nonce ?: continue) { ArrayList() }.add(s)
             }
         }
         // The highest nonce held by a submission no block has: one in a block is counted in the chain's

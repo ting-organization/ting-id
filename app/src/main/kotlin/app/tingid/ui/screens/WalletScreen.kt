@@ -218,7 +218,7 @@ fun WalletScreen() {
             Banner("Waiting for the next block to create this identity.", BannerTone.Warning)
         }
         // Payments that look stuck clear on their own; anything signed before then only makes that later.
-        val stuckUntil = stuckQueues(pending, data.outbox, nowSeconds()).values.maxOfOrNull { it.clearsAt }
+        val stuckUntil = stuckQueues(pending, data, nowSeconds()).values.maxOfOrNull { it.clearsAt }
         if (user != null && stuckUntil != null) Banner(stuckWords(stuckUntil) { formatWhen(it) }, BannerTone.Warning)
         if (user == null) Welcome()
         if (startHere) FirstCoins(user, Links.netOf(info.status.chainId), w.coins.firstOrNull())
